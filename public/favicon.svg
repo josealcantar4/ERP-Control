@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="farmaciaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0f766e" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#0284c7" flood-opacity="0.3" />
+    </filter>
+  </defs>
+  <!-- Background squircle -->
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="url(#farmaciaGrad)" filter="url(#shadow)" />
+  <!-- Medical Plus / Cross -->
+  <path d="M224 128H288V224H384V288H288V384H224V288H128V224H224V128Z" fill="#FFFFFF" rx="16" />
+  <!-- ERP Pill Accent -->
+  <circle cx="256" cy="256" r="32" fill="#38bdf8" fill-opacity="0.25" />
+</svg>

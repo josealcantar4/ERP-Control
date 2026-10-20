@@ -1,0 +1,114 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Check, Package } from 'lucide-react';
+
+export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
+  const [cantidad, setCantidad] = useState('1');
+  const [errorMsg, setErrorMsg] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setCantidad('1');
+      setErrorMsg('');
+      const timer = setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.select();
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  if (!isOpen || !scannedItem) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const qty = parseInt(cantidad, 10);
+    if (!qty || qty <= 0) {
+      setErrorMsg('Ingresa una cantidad mayor a 0');
+      return;
+    }
+    onConfirmQuantity(qty);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
+        
+        {/* iOS Pull Indicator on Mobile */}
+        <div className="sm:hidden w-12 h-1 bg-slate-300 rounded-full mx-auto my-2.5"></div>
+
+        {/* Modal Header */}
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <Package className="w-4 h-4" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900">Medicamento Identificado</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scanned Drug Info Card */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1">
+            <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
+              CÓDIGO: {scannedItem.codigo}
+            </span>
+            <h4 className="text-base font-bold text-slate-900 leading-snug">
+              {scannedItem.descripcion}
+            </h4>
+          </div>
+
+          {/* Numeric Input */}
+          <div className="space-y-2 text-center">
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Cantidad a Solicitar
+            </label>
+            <div className="flex items-center justify-center gap-3">
+              <input
+                ref={inputRef}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                required
+                value={cantidad}
+                onChange={(e) => {
+                  setErrorMsg('');
+                  const val = e.target.value.replace(/\D/g, '');
+                  setCantidad(val);
+                }}
+                className="w-36 text-center text-4xl font-extrabold text-blue-600 bg-slate-100 border-2 border-transparent focus:border-blue-500 focus:bg-white rounded-2xl py-3 focus:outline-none transition-all font-mono"
+              />
+            </div>
+            {errorMsg ? (
+              <p className="text-xs text-red-500 font-semibold">{errorMsg}</p>
+            ) : (
+              <p className="text-[11px] text-slate-400">
+                Escribe las piezas requeridas
+              </p>
+            )}
+          </div>
+
+          {/* Action Button: "Listo" */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-semibold text-sm rounded-2xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Check className="w-5 h-5" />
+              <span>Listo</span>
+            </button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  );
+}

@@ -10,16 +10,15 @@ import {
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// Configuración dinámica usando variables de entorno de Vite
 const firebaseConfig = {
-  apiKey: "AIzaSyAttC-uThcBdOSoMhpUlqhiY5SvIJgmWrY",
-  authDomain: "erp-control-f45a8.firebaseapp.com",
-  projectId: "erp-control-f45a8",
-  storageBucket: "erp-control-f45a8.firebasestorage.app",
-  messagingSenderId: "281925818113",
-  appId: "1:281925818113:web:874275a8a5422fa1e2ed00",
-  measurementId: "G-NVY4M96CQ3"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 export const isFirebaseConfigured = true;

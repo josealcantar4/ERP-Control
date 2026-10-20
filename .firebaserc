@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "erp-control-f45a8"
+    "default": "erp-control-f45a8",
+    "development": "erp-control-f45a8",
+    "production": "erpcontrolproduction"
   }
 }

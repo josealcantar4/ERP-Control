@@ -94,16 +94,7 @@ export const catalogService = {
       };
     }
 
-    if (onProgress) {
-      onProgress({
-        phase: 'saving_local',
-        percent: 30,
-        message: `Guardando ${newItems.length} productos nuevos en almacenamiento local...`
-      });
-    }
-    await saveLocalBatch(STORE_BASE, newItems);
-
-    const BATCH_SIZE = 350; 
+    const BATCH_SIZE = 100; 
     const totalBatches = Math.ceil(newItems.length / BATCH_SIZE);
 
     for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
@@ -118,16 +109,41 @@ export const catalogService = {
           currentBatch,
           totalBatches,
           percent: batchPercent,
-          message: `Enviando paquete a Firebase: Lote ${currentBatch} de ${totalBatches} (${chunk.length} productos)...`
+          message: `Enviando paquete: Lote ${currentBatch} de ${totalBatches} (${chunk.length} productos)...`
         });
       }
 
       const batch = writeBatch(db);
-      chunk.forEach(item => {
+      
+      // Creamos una lista temporal de este lote con la sanitización aplicada
+      const sanitizedChunk = chunk.map(item => {
+          const safeCodigo = String(item.codigo).replace(/\//g, '-');
+          const safeDescripcion = item.descripcion || 'SIN DESCRIPCION';
+          return { codigo: safeCodigo, descripcion: safeDescripcion };
+      });
+
+      // Añadimos al batch
+      sanitizedChunk.forEach(item => {
         const docRef = doc(collection(db, 'catalogo_base'), item.codigo);
         batch.set(docRef, item);
       });
-      await batch.commit();
+      
+      try {
+        await Promise.race([
+          batch.commit(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase no responde (Timeout)')), 15000))
+        ]);
+        
+        // ¡CAMBIO CLAVE! Guardamos este lote específico en la memoria local SOLAMENTE después de que subió a Firebase con éxito
+        await saveLocalBatch(STORE_BASE, sanitizedChunk);
+        
+        // Pausa de 1 segundo
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+      } catch (error) {
+        console.error(`Error en el lote ${currentBatch}:`, error);
+        throw new Error(`Fallo en el lote ${currentBatch}: ${error.message}`);
+      }
     }
 
     if (onProgress) {
@@ -143,7 +159,7 @@ export const catalogService = {
 
   // 2. BÚSQUEDA INTELIGENTE CON CACHÉ LOCAL INDEXEDDB
   async findByBarcode(rawBarcode) {
-    const cleanBarcode = rawBarcode.replace(/^0+/, '').replace(/\s+/g, '');
+    const cleanBarcode = rawBarcode.replace(/^0+/, '').replace(/\s+/g, '').replace(/\//g, '-');
 
     const localLimpio = await getLocalItem(STORE_CLEAN, cleanBarcode);
     if (localLimpio) return localLimpio;
@@ -184,7 +200,7 @@ export const catalogService = {
 
   // 3. GUARDAR PRODUCTO EN CATÁLOGO LIMPIO
   async saveToCleanCatalog(barcode, descripcion) {
-    const cleanBarcode = barcode.replace(/^0+/, '').replace(/\s+/g, '');
+    const cleanBarcode = barcode.replace(/^0+/, '').replace(/\s+/g, '').replace(/\//g, '-');
     const cleanItem = {
       codigo: cleanBarcode,
       descripcion: descripcion.trim().toUpperCase()
@@ -207,7 +223,6 @@ export const catalogService = {
       if (!q || q.length < 2) return [];
 
       // ESTRATEGIA 1: Si es un número (EAN/Código), buscar coincidencia exacta primero
-      // Esto aprovecha findByBarcode que SÍ consulta a Firebase si no está local
       const isNumeric = /^\d+$/.test(q);
       let exactMatch = null;
       if (isNumeric) {
@@ -232,14 +247,11 @@ export const catalogService = {
         return desc.includes(q) || cod.includes(q);
       });
 
-      // Si encontramos un match exacto en Firebase, lo ponemos en la posición #1
       if (exactMatch) {
-        // Lo quitamos de la lista general por si estaba duplicado
         results = results.filter(r => r.codigo !== exactMatch.codigo);
-        results.unshift(exactMatch); // Lo insertamos al inicio
+        results.unshift(exactMatch);
       }
 
-      // Limitar a los mejores 30 resultados para que la UI no se ponga lenta
       return results.slice(0, 30);
 
     } catch (error) {

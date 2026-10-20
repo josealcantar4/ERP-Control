@@ -136,17 +136,16 @@ export function AdminUsersModule({ currentUser, onBack }) {
 
     setIsProcessing(true);
 
-    // Excluimos confirmPassword antes de guardar
     const { confirmPassword, ...payload } = userForm;
 
     try {
       if (editingUser) {
         await userService.updateUser(editingUser.id || editingUser.username, payload);
-        setUsersList(prev => prev.map(u => (u.id === editingUser.id || u.username === editingUser.username) ? { ...u, ...payload } : u));
+        // NOTA: Eliminamos setUsersList manual porque Firebase actualiza automáticamente en tiempo real
         setDialog({ isOpen: true, type: 'alert', title: 'Actualizado', message: `Usuario guardado.`, variant: 'success', onConfirm: closeDialog });
       } else {
-        const newUser = await userService.createUser(payload);
-        setUsersList(prev => [...prev, { id: newUser?.id || payload.username, ...payload }]);
+        await userService.createUser(payload);
+        // NOTA: Eliminamos setUsersList manual
         setDialog({ isOpen: true, type: 'alert', title: 'Creado', message: `Usuario registrado.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsUserModalOpen(false);
@@ -170,7 +169,7 @@ export function AdminUsersModule({ currentUser, onBack }) {
         setIsProcessing(true);
         try {
           await userService.deleteUser(user.id || user.username);
-          setUsersList(prev => prev.filter(u => u.username !== user.username));
+          // NOTA: Eliminamos setUsersList manual
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -202,10 +201,8 @@ export function AdminUsersModule({ currentUser, onBack }) {
     try {
       if (editingSede) {
         await organizationService.updateSede(editingSede.id, sedeForm.nombre, sedeForm.tipo);
-        setSedesList(prev => prev.map(s => s.id === editingSede.id ? { ...s, nombre: sedeForm.nombre, tipo: sedeForm.tipo } : s));
       } else {
-        const newId = await organizationService.createSede(sedeForm.nombre, sedeForm.tipo);
-        setSedesList(prev => [...prev, { id: newId || Date.now().toString(), nombre: sedeForm.nombre, tipo: sedeForm.tipo }]);
+        await organizationService.createSede(sedeForm.nombre, sedeForm.tipo);
       }
       setIsSedeModalOpen(false);
     } catch (err) {
@@ -224,7 +221,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
         setIsProcessing(true);
         try {
           await organizationService.deleteSede(sede.id);
-          setSedesList(prev => prev.filter(s => s.id !== sede.id));
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -256,10 +252,8 @@ export function AdminUsersModule({ currentUser, onBack }) {
     try {
       if (editingArea) {
         await organizationService.updateArea(editingArea.id, areaForm.nombre);
-        setAreasList(prev => prev.map(a => a.id === editingArea.id ? { ...a, nombre: areaForm.nombre } : a));
       } else {
-        const newId = await organizationService.createArea(areaForm.nombre);
-        setAreasList(prev => [...prev, { id: newId || Date.now().toString(), nombre: areaForm.nombre }]);
+        await organizationService.createArea(areaForm.nombre);
       }
       setIsAreaModalOpen(false);
     } catch (err) {
@@ -278,7 +272,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
         setIsProcessing(true);
         try {
           await organizationService.deleteArea(area.id);
-          setAreasList(prev => prev.filter(a => a.id !== area.id));
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -466,10 +459,10 @@ export function AdminUsersModule({ currentUser, onBack }) {
         </div>
       )}
 
-      {/* MODAL: USUARIO */}
+      {/* MODAL: USUARIO (Corregido alineación superior) */}
       {isUserModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
               <button onClick={() => setIsUserModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer">
@@ -491,7 +484,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 <input type="text" required disabled={Boolean(editingUser)} placeholder="Ej. juan.patente" value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${editingUser ? 'opacity-60 cursor-not-allowed' : ''}`} />
               </div>
               
-              {/* CAMPO DE CONTRASEÑA MASCARADO CON BOTÓN MOSTRAR/OCULTAR */}
               <div>
                 <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">{editingUser ? 'Modificar Contraseña' : 'Contraseña *'}</label>
                 <div className="relative">
@@ -514,7 +506,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 </div>
               </div>
 
-              {/* CAMPO DE CONFIRMAR CONTRASEÑA */}
               <div>
                 <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Confirmar Contraseña *</label>
                 <div className="relative">
@@ -552,7 +543,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 </div>
               </div>
 
-              {/* Roles checkboxes */}
               <div>
                 <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -571,7 +561,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 </div>
               </div>
 
-              {/* Checkbox Excluir Destinatario */}
               <div 
                 onClick={() => setUserForm({ ...userForm, excluirDestinatario: !userForm.excluirDestinatario })}
                 className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
@@ -601,10 +590,10 @@ export function AdminUsersModule({ currentUser, onBack }) {
         </div>
       )}
 
-      {/* MODAL: SEDE */}
+      {/* MODAL: SEDE (Corregido alineación superior) */}
       {isSedeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
               <button onClick={() => setIsSedeModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
@@ -632,10 +621,10 @@ export function AdminUsersModule({ currentUser, onBack }) {
         </div>
       )}
 
-      {/* MODAL: ÁREA */}
+      {/* MODAL: ÁREA (Corregido alineación superior) */}
       {isAreaModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
               <button onClick={() => setIsAreaModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>

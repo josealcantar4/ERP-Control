@@ -1,15 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { userService } from './services/userService';
-import { AppleNavbar } from './components/AppleNavbar';
-import { LoginScreen } from './components/LoginScreen';
-import { DashboardScreen } from './components/DashboardScreen';
-import { SolicitarModule } from './components/SolicitarModule';
-import { DespacharModule } from './components/DespacharModule';
-import { RecibirModule } from './components/RecibirModule'; // <-- Nuevo Módulo
-import { AdminUsersModule } from './components/AdminUsersModule';
-import { OfflineIndicator } from './components/OfflineIndicator';
-import { ReloadPrompt } from './components/ReloadPrompt';
-import { CatalogUploadModule } from './components/CatalogUploadModule';
+import { userService, AdminUsersModule, LoginScreen } from './modules/usuarios';
+import { catalogService, CatalogUploadModule, CatalogSyncModal } from './modules/catalogo';
+import { SolicitarModule } from './modules/solicitar';
+import { DespacharModule } from './modules/despachar';
+import { RecibirModule } from './modules/recibir';
+import { AppleNavbar, DashboardScreen, OfflineIndicator, ReloadPrompt } from './shared';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -17,6 +12,14 @@ export default function App() {
     return localStorage.getItem('currentScreen') || 'dashboard';
   });
   const [isLoading, setIsLoading] = useState(true);
+
+  // Estado del modal de sincronización automática de catálogo post-login
+  const [syncModal, setSyncModal] = useState({
+    isOpen: false,
+    status: 'checking',
+    progress: { percent: 0, currentBatch: 0, totalBatches: 0, message: '', totalRecords: 0 },
+    error: null
+  });
 
   // Solicitar permiso de notificaciones Push del navegador/dispositivo
   useEffect(() => {
@@ -32,6 +35,69 @@ export default function App() {
     }
   }, [currentScreen, currentUser]);
 
+  // Sincronización automática silenciosa post-login
+  const runCatalogAutoSync = async (force = false) => {
+    try {
+      if (!force) {
+        // Consulta silenciosa de metadatos al Servidor Central
+        const check = await catalogService.checkServerCatalogVersion();
+        
+        // Si ya está actualizado y hay datos locales: CERO descargas, acceso inmediato!
+        if (check.upToDate) {
+          return;
+        }
+      }
+
+      // Si hay archivo nuevo o la base local está vacía, mostrar modal transparente
+      setSyncModal({
+        isOpen: true,
+        status: 'downloading',
+        progress: {
+          percent: 5,
+          currentBatch: 0,
+          totalBatches: 0,
+          message: 'Conectando con el Servidor Central...',
+          totalRecords: 0
+        },
+        error: null
+      });
+
+      const result = await catalogService.syncCatalogFromServer((status) => {
+        setSyncModal(prev => ({
+          ...prev,
+          status: status.phase === 'done' ? 'done' : 'saving',
+          progress: status
+        }));
+      });
+
+      setSyncModal(prev => ({
+        ...prev,
+        status: 'done',
+        progress: {
+          percent: 100,
+          currentBatch: 0,
+          totalBatches: 0,
+          message: 'Sincronización completada con éxito.',
+          totalRecords: result.totalRecords
+        }
+      }));
+
+      // Cierre automático del modal tras éxito
+      setTimeout(() => {
+        setSyncModal(prev => ({ ...prev, isOpen: false }));
+      }, 1500);
+
+    } catch (err) {
+      console.warn('Error durante auto-sincronización del catálogo:', err);
+      setSyncModal(prev => ({
+        ...prev,
+        isOpen: true,
+        status: 'error',
+        error: err.message || 'Error al conectar con el Servidor Central.'
+      }));
+    }
+  };
+
   // 2. Verificar sesión guardada al iniciar la PWA
   useEffect(() => {
     const savedUser = userService.getCurrentUser();
@@ -43,6 +109,9 @@ export default function App() {
         if (savedUser.roles[0] === 'solicitar') setCurrentScreen('solicitar');
         if (savedUser.roles[0] === 'despachar') setCurrentScreen('despachar');
       }
+
+      // Disparar verificación silenciosa post-login
+      runCatalogAutoSync();
     }
     setIsLoading(false);
   }, []);
@@ -57,6 +126,9 @@ export default function App() {
       setCurrentScreen('dashboard');
       localStorage.setItem('currentScreen', 'dashboard');
     }
+
+    // Disparar verificación silenciosa post-login
+    runCatalogAutoSync();
   };
 
   const handleLogout = () => {
@@ -88,6 +160,16 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       <OfflineIndicator />
 
+      {/* Modal de Sincronización Automática Transparente */}
+      <CatalogSyncModal
+        isOpen={syncModal.isOpen}
+        status={syncModal.status}
+        progress={syncModal.progress}
+        error={syncModal.error}
+        onRetry={() => runCatalogAutoSync(true)}
+        onDismiss={() => setSyncModal(prev => ({ ...prev, isOpen: false }))}
+      />
+
       <AppleNavbar
         currentUser={currentUser}
         onLogout={handleLogout}
@@ -105,7 +187,6 @@ export default function App() {
         {currentScreen === 'despachar' && (
           <DespacharModule currentUser={currentUser} onBack={() => setCurrentScreen('dashboard')} />
         )}
-        {/* Nueva ruta de Recibir */}
         {currentScreen === 'recibir' && (
           <RecibirModule currentUser={currentUser} onBack={() => setCurrentScreen('dashboard')} />
         )}

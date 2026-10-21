@@ -5,7 +5,7 @@ import {
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
-import { auth, googleProvider } from '../config/firebase';
+import { auth, googleProvider } from '../../config/firebase';
 
 export const authService = {
   // Iniciar sesión con correo y contraseña

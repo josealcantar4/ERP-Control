@@ -1,4 +1,4 @@
-import { db } from '../config/firebase';
+import { db } from '../../config/firebase';
 import {
   collection,
   doc,
@@ -67,7 +67,6 @@ export const userService = {
   },
 
   // Inicio de sesión consultando Firestore
-// Inicio de sesión consultando Firestore
   async login(username, password) {
     const cleanUser = String(username || '').trim();
     const cleanPass = String(password || '').trim();
@@ -76,7 +75,6 @@ export const userService = {
       throw new Error('Por favor ingresa tu usuario y contraseña.');
     }
 
-    // AGREGAR ESTO: Si intentan entrar como administrador, asegúrate de que exista primero
     if (cleanUser.toLowerCase() === 'administrador') {
       await this.ensureAdminInitialized();
     }
@@ -167,10 +165,8 @@ export const userService = {
       updatedAt: new Date().toISOString()
     };
 
-    // Usamos merge: true para no sobreescribir datos accidentalmente
     await setDoc(docRef, updated, { merge: true });
 
-    // Actualizar la sesión activa si el usuario editado es el mismo que está logueado
     const active = this.getCurrentUser();
     if (active && active.username.toLowerCase() === userId.toLowerCase()) {
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify({

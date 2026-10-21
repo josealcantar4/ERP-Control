@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle } from 'lucide-react';
-import { transferService } from '../services/transferService';
-import { ModalDialog } from './ModalDialog';
+import { transferService } from '../transferencias/transferService';
+import { ModalDialog } from '../../shared/ModalDialog';
 
 export function RecibirModule({ currentUser, onBack }) {
   const [solicitudes, setSolicitudes] = useState([]);

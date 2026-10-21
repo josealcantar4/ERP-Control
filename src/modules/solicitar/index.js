@@ -1,0 +1,1 @@
+export { SolicitarModule } from './SolicitarModule';

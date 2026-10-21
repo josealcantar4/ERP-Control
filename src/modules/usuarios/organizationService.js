@@ -1,13 +1,11 @@
-import { db, isFirebaseConfigured } from '../config/firebase';
+import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
   collection,
   doc,
   setDoc,
   deleteDoc,
-  getDocs,
   onSnapshot,
-  query,
-  orderBy
+  query
 } from 'firebase/firestore';
 
 const LOCAL_SEDES_KEY = 'erp_control_sedes';
@@ -47,9 +45,24 @@ function saveLocalAreas(list) {
   window.dispatchEvent(new Event('erp_areas_changed'));
 }
 
+function generateCleanId(prefix, text) {
+  const slug = String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${prefix}-${slug || Date.now()}`;
+}
+
 export const organizationService = {
-  // Subscribe to Sedes in real-time
+  // Suscripción en tiempo real a Sedes
   subscribeSedes(onUpdate) {
+    const initialLocal = getLocalSedes();
+    if (initialLocal.length > 0) {
+      onUpdate(initialLocal);
+    }
+
     if (isFirebaseConfigured) {
       try {
         const q = query(collection(db, 'sedes'));
@@ -57,88 +70,78 @@ export const organizationService = {
           q,
           (snap) => {
             const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            // Sort alphabetically by nombre
             items.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
             onUpdate(items);
             saveLocalSedes(items);
           },
           (err) => {
-            console.warn('Error suscribiendo a sedes en Firebase:', err);
+            console.error('Error suscribiendo a sedes en Firebase:', err);
             onUpdate(getLocalSedes());
           }
         );
       } catch (err) {
-        console.warn('Error inicializando snap de sedes:', err);
+        console.error('Error inicializando snap de sedes:', err);
       }
     }
 
-    onUpdate(getLocalSedes());
     const handler = () => onUpdate(getLocalSedes());
     window.addEventListener('erp_sedes_changed', handler);
     return () => window.removeEventListener('erp_sedes_changed', handler);
   },
 
-  // Create or update a Sede
+  // Crear una nueva Sede
   async createSede(nombre, tipo = 'Sucursal') {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
 
-    const id = 'sede-' + cleanNombre.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const id = generateCleanId('sede', cleanNombre);
     const docData = {
       id,
       nombre: cleanNombre,
-      tipo,
+      tipo: tipo || 'Sucursal',
       createdAt: new Date().toISOString()
     };
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'sedes', id), docData, { merge: true });
-      } catch (err) {
-        console.warn('Error guardando sede en Firebase:', err);
-      }
+      await setDoc(doc(db, 'sedes', id), docData, { merge: true });
     }
 
     const current = getLocalSedes();
     const filtered = current.filter(s => s.id !== id);
-    saveLocalSedes([...filtered, docData]);
-    return id; // Retornamos el ID para la actualización optimista
+    const updated = [...filtered, docData].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    saveLocalSedes(updated);
+    return id;
   },
 
   // Actualizar una Sede existente
   async updateSede(id, nombre, tipo) {
-    const cleanNombre = nombre.trim();
     if (!id) throw new Error('El ID de la sede es obligatorio.');
+    const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
 
     const updateData = {
+      id,
       nombre: cleanNombre,
-      tipo,
+      tipo: tipo || 'Sucursal',
       updatedAt: new Date().toISOString()
     };
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'sedes', id), updateData, { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando sede en Firebase:', err);
-      }
+      await setDoc(doc(db, 'sedes', id), updateData, { merge: true });
     }
 
     const current = getLocalSedes();
-    const updated = current.map(s => s.id === id ? { ...s, ...updateData } : s);
+    const updated = current.map(s => (s.id === id ? { ...s, ...updateData } : s));
     saveLocalSedes(updated);
     return true;
   },
 
-  // Delete a Sede
+  // Eliminar una Sede
   async deleteSede(id) {
+    if (!id) throw new Error('El ID de la sede es obligatorio.');
+
     if (isFirebaseConfigured) {
-      try {
-        await deleteDoc(doc(db, 'sedes', id));
-      } catch (err) {
-        console.warn('Error eliminando sede en Firebase:', err);
-      }
+      await deleteDoc(doc(db, 'sedes', id));
     }
 
     const current = getLocalSedes();
@@ -146,8 +149,13 @@ export const organizationService = {
     return true;
   },
 
-  // Subscribe to Áreas in real-time
+  // Suscripción en tiempo real a Áreas
   subscribeAreas(onUpdate) {
+    const initialLocal = getLocalAreas();
+    if (initialLocal.length > 0) {
+      onUpdate(initialLocal);
+    }
+
     if (isFirebaseConfigured) {
       try {
         const q = query(collection(db, 'areas'));
@@ -160,27 +168,26 @@ export const organizationService = {
             saveLocalAreas(items);
           },
           (err) => {
-            console.warn('Error suscribiendo a áreas en Firebase:', err);
+            console.error('Error suscribiendo a áreas en Firebase:', err);
             onUpdate(getLocalAreas());
           }
         );
       } catch (err) {
-        console.warn('Error inicializando snap de áreas:', err);
+        console.error('Error inicializando snap de áreas:', err);
       }
     }
 
-    onUpdate(getLocalAreas());
     const handler = () => onUpdate(getLocalAreas());
     window.addEventListener('erp_areas_changed', handler);
     return () => window.removeEventListener('erp_areas_changed', handler);
   },
 
-  // Create or update an Área
+  // Crear una nueva Área
   async createArea(nombre) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
 
-    const id = 'area-' + cleanNombre.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const id = generateCleanId('area', cleanNombre);
     const docData = {
       id,
       nombre: cleanNombre,
@@ -188,52 +195,44 @@ export const organizationService = {
     };
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'areas', id), docData, { merge: true });
-      } catch (err) {
-        console.warn('Error guardando área en Firebase:', err);
-      }
+      await setDoc(doc(db, 'areas', id), docData, { merge: true });
     }
 
     const current = getLocalAreas();
     const filtered = current.filter(a => a.id !== id);
-    saveLocalAreas([...filtered, docData]);
-    return id; // Retornamos el ID para la actualización optimista
+    const updated = [...filtered, docData].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    saveLocalAreas(updated);
+    return id;
   },
 
   // Actualizar un Área existente
   async updateArea(id, nombre) {
-    const cleanNombre = nombre.trim();
     if (!id) throw new Error('El ID del área es obligatorio.');
+    const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
 
     const updateData = {
+      id,
       nombre: cleanNombre,
       updatedAt: new Date().toISOString()
     };
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'areas', id), updateData, { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando área en Firebase:', err);
-      }
+      await setDoc(doc(db, 'areas', id), updateData, { merge: true });
     }
 
     const current = getLocalAreas();
-    const updated = current.map(a => a.id === id ? { ...a, ...updateData } : a);
+    const updated = current.map(a => (a.id === id ? { ...a, ...updateData } : a));
     saveLocalAreas(updated);
     return true;
   },
 
-  // Delete an Área
+  // Eliminar un Área
   async deleteArea(id) {
+    if (!id) throw new Error('El ID del área es obligatorio.');
+
     if (isFirebaseConfigured) {
-      try {
-        await deleteDoc(doc(db, 'areas', id));
-      } catch (err) {
-        console.warn('Error eliminando área en Firebase:', err);
-      }
+      await deleteDoc(doc(db, 'areas', id));
     }
 
     const current = getLocalAreas();

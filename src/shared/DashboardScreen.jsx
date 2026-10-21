@@ -1,5 +1,5 @@
 import React from 'react';
-import { SendHorizontal, Boxes, ChevronRight, Building, Users, Shield, PackageOpen } from 'lucide-react';
+import { SendHorizontal, Boxes, ChevronRight, Building, Users, Shield, PackageOpen, Database } from 'lucide-react';
 
 export function DashboardScreen({ currentUser, onNavigate }) {
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
@@ -73,16 +73,21 @@ export function DashboardScreen({ currentUser, onNavigate }) {
 
         {/* CARD 3: ADMIN */}
         {isAdmin && (
-          <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-orange-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[180px] active:scale-[0.985] sm:col-span-2">
+          <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[160px] active:scale-[0.985] sm:col-span-2">
              <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-orange-500 to-amber-400 text-white flex items-center justify-center shadow-lg shadow-orange-500/20 group-hover:scale-105 transition-transform shrink-0">
-                  <Boxes className="w-7 h-7" />
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform shrink-0">
+                  <Database className="w-7 h-7" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 tracking-tight">Cargar Catálogo Base (CSV)</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-600">Catálogo Base</span>
+                  </div>
+                  <h2 className="text-lg font-bold text-slate-900 tracking-tight">Sincronizar Catálogo Central</h2>
+                  <p className="text-xs text-slate-500 mt-1">Verifica el estado del catálogo, consulta registros locales y fuerza actualizaciones desde el servidor central.</p>
                 </div>
               </div>
+              <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-blue-600 transition-colors mt-2" />
             </div>
           </div>
         )}

@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ScanBarcode, Send, Plus, Trash2, CheckCircle2, ArrowLeft, History
+  ScanBarcode, Send, Trash2, CheckCircle2, ArrowLeft, History, ChevronRight
 } from 'lucide-react';
-import { userService } from '../services/userService';
-import { catalogService } from '../services/catalogService';
-import { transferService } from '../services/transferService';
-import { BarcodeScannerModal } from './BarcodeScannerModal';
-import { CaptureQuantityModal } from './CaptureQuantityModal';
-import { ModalDialog } from './ModalDialog';
+import { userService } from '../usuarios/userService';
+import { catalogService } from '../catalogo/catalogService';
+import { transferService } from '../transferencias/transferService';
+import { TransferDetailModal } from '../transferencias/TransferDetailModal';
+import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
+import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
+import { ModalDialog } from '../../shared/ModalDialog';
 
 export function SolicitarModule({ currentUser, onBack }) {
   const [destinatarios, setDestinatarios] = useState([]);
@@ -15,6 +16,7 @@ export function SolicitarModule({ currentUser, onBack }) {
   
   // Agregamos el estado para el Folio (solo números)
   const [folioDigits, setFolioDigits] = useState('');
+  const [detailSolicitud, setDetailSolicitud] = useState(null);
 
   const [currentDraft, setCurrentDraft] = useState({
     id: 'sol-' + Date.now(),
@@ -163,6 +165,67 @@ export function SolicitarModule({ currentUser, onBack }) {
     });
   };
 
+  const handleDeleteDraft = (e, sol) => {
+    e.stopPropagation();
+    const isAdmin =
+      currentUser?.username?.toLowerCase() === 'administrador' ||
+      currentUser?.roles?.includes('admin');
+    const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
+
+    if (!canDelete) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Acción no permitida',
+        message: 'Solo el creador original del borrador o un Administrador tienen permiso para eliminarlo.',
+        variant: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
+
+    setDialog({
+      isOpen: true,
+      type: 'confirm',
+      title: 'Eliminar Borrador',
+      message: `¿Deseas eliminar permanentemente el borrador ${sol.folio || 'Sin Folio'} con ${sol.items?.length || 0} medicamentos?`,
+      variant: 'danger',
+      confirmText: 'Eliminar Borrador',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await transferService.deleteDraft(sol.id, currentUser);
+          if (currentDraft?.id === sol.id) {
+            setCurrentDraft({
+              id: 'sol-' + Date.now(),
+              sucursalOrigen: currentUser?.sede || 'Sucursal',
+              usuarioSolicitante: currentUser?.username,
+              usuarioDestino: destinatarios[0]?.username || '',
+              areaDestino: destinatarios[0]?.area || '',
+              estado: 'borrador',
+              fecha: new Date().toISOString(),
+              items: []
+            });
+            setFolioDigits('');
+          }
+        } catch (err) {
+          setDialog({
+            isOpen: true,
+            type: 'alert',
+            title: 'Error',
+            message: err.message,
+            variant: 'danger',
+            confirmText: 'Entendido',
+            onConfirm: closeDialog
+          });
+        }
+      },
+      onCancel: closeDialog
+    });
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-5 pb-20">
       <div className="flex items-center justify-between">
@@ -261,21 +324,108 @@ export function SolicitarModule({ currentUser, onBack }) {
         </>
       ) : (
         <div className="space-y-3">
-          {historialList.map((sol) => (
-            <div key={sol.id} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-900 font-mono text-blue-700">{sol.folio || 'Sin Folio'}</span>
-                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider bg-slate-100 text-slate-600">{sol.estado}</span>
-              </div>
-              <div className="text-xs text-slate-500">{sol.items?.length || 0} medicamentos solicitados</div>
+          {historialList.length === 0 ? (
+            <div className="bg-white rounded-3xl p-8 border border-slate-200/80 text-center space-y-1">
+              <History className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-sm font-semibold text-slate-700">No hay transferencias en el historial</p>
+              <p className="text-xs text-slate-400">Tus solicitudes y borradores aparecerán aquí.</p>
             </div>
-          ))}
+          ) : (
+            historialList.map((sol) => {
+              const isDraft = sol.estado === 'borrador';
+              const isAdmin =
+                currentUser?.username?.toLowerCase() === 'administrador' ||
+                currentUser?.roles?.includes('admin');
+              const canDeleteDraft = isDraft && (isAdmin || sol.usuarioSolicitante === currentUser?.username);
+
+              return (
+                <div
+                  key={sol.id}
+                  onClick={() => {
+                    if (isDraft) {
+                      // Cargar borrador para continuar capturando
+                      setCurrentDraft(sol);
+                      if (sol.usuarioDestino) setSelectedDestinatarioId(sol.usuarioDestino);
+                      if (sol.folio && sol.folio.startsWith('TR')) {
+                        setFolioDigits(sol.folio.replace('TR', ''));
+                      } else {
+                        setFolioDigits(sol.folio || '');
+                      }
+                      setActiveTab('captura');
+                    } else {
+                      // Abrir vista detallada para completadas o en tránsito
+                      setDetailSolicitud(sol);
+                    }
+                  }}
+                  className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-slate-900 font-mono text-blue-700">
+                        {sol.folio || 'Sin Folio'}
+                      </span>
+                      {sol.areaDestino && (
+                        <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full">
+                          Destino: {sol.areaDestino}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                          isDraft
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : sol.estado === 'completada' || sol.estado === 'recibida'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : sol.estado === 'recibida_incompleta'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}
+                      >
+                        {isDraft ? 'Borrador' : sol.estado}
+                      </span>
+
+                      {/* Botón de eliminar SOLO disponible para borradores */}
+                      {canDeleteDraft && (
+                        <button
+                          onClick={(e) => handleDeleteDraft(e, sol)}
+                          className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                          title="Eliminar borrador"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>
+                      {sol.items?.length || 0} medicamentos &bull;{' '}
+                      {new Date(sol.fecha).toLocaleDateString('es-MX')}
+                    </span>
+                    <span className="text-[11px] font-semibold text-blue-600 group-hover:underline flex items-center gap-1">
+                      {isDraft ? 'Continuar captura' : 'Ver detalle'}
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 
       <BarcodeScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleBarcodeDetected} />
       <CaptureQuantityModal isOpen={isQuantityOpen} scannedItem={scannedMedicine} onClose={() => setIsQuantityOpen(false)} onConfirmQuantity={handleConfirmQuantity} />
       <ModalDialog isOpen={dialog.isOpen} type={dialog.type} title={dialog.title} message={dialog.message} confirmText={dialog.confirmText} onConfirm={dialog.onConfirm} onCancel={dialog.onCancel} />
+      
+      {/* Modal de Detalle de Transferencia */}
+      <TransferDetailModal
+        isOpen={Boolean(detailSolicitud)}
+        solicitud={detailSolicitud}
+        onClose={() => setDetailSolicitud(null)}
+      />
     </div>
   );
 }

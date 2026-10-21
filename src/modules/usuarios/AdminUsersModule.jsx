@@ -19,9 +19,9 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { userService } from '../services/userService';
-import { organizationService } from '../services/organizationService';
-import { ModalDialog } from './ModalDialog';
+import { userService } from './userService';
+import { organizationService } from './organizationService';
+import { ModalDialog } from '../../shared/ModalDialog';
 
 export function AdminUsersModule({ currentUser, onBack }) {
   const [activeTab, setActiveTab] = useState('usuarios');
@@ -84,9 +84,16 @@ export function AdminUsersModule({ currentUser, onBack }) {
   // --- MÉTODOS DE USUARIOS ---
   const handleOpenCreateUser = () => {
     setEditingUser(null);
+    const initialSede = sedesList[0];
+    const isSuc = initialSede ? initialSede.tipo === 'Sucursal' : false;
+
     setUserForm({
-      username: '', password: '', confirmPassword: '', nombre: '', 
-      sede: sedesList[0]?.nombre || '', area: areasList[0]?.nombre || '', 
+      username: '',
+      password: '',
+      confirmPassword: '',
+      nombre: '',
+      sede: initialSede?.nombre || '',
+      area: isSuc ? 'Externo' : (areasList[0]?.nombre || ''),
       roles: ['solicitar'],
       excluirDestinatario: false
     });
@@ -98,9 +105,16 @@ export function AdminUsersModule({ currentUser, onBack }) {
 
   const handleOpenEditUser = (user) => {
     setEditingUser(user);
+    const sedeObj = sedesList.find(s => s.nombre === user.sede);
+    const isSuc = sedeObj ? sedeObj.tipo === 'Sucursal' : false;
+
     setUserForm({
-      username: user.username, password: user.password || '', confirmPassword: user.password || '', nombre: user.nombre,
-      sede: user.sede || sedesList[0]?.nombre || '', area: user.area || areasList[0]?.nombre || '',
+      username: user.username,
+      password: user.password || '',
+      confirmPassword: user.password || '',
+      nombre: user.nombre,
+      sede: user.sede || sedesList[0]?.nombre || '',
+      area: isSuc ? 'Externo' : (user.area || areasList[0]?.nombre || ''),
       roles: user.roles || ['solicitar'],
       excluirDestinatario: Boolean(user.excluirDestinatario)
     });
@@ -108,6 +122,17 @@ export function AdminUsersModule({ currentUser, onBack }) {
     setShowConfirmPassword(false);
     setFormError('');
     setIsUserModalOpen(true);
+  };
+
+  const handleSedeChange = (sedeNombre) => {
+    const sedeObj = sedesList.find(s => s.nombre === sedeNombre);
+    const isSuc = sedeObj ? sedeObj.tipo === 'Sucursal' : false;
+
+    setUserForm(prev => ({
+      ...prev,
+      sede: sedeNombre,
+      area: isSuc ? 'Externo' : (prev.area === 'Externo' ? (areasList[0]?.nombre || '') : prev.area)
+    }));
   };
 
   const toggleRole = (role) => {
@@ -136,16 +161,26 @@ export function AdminUsersModule({ currentUser, onBack }) {
 
     setIsProcessing(true);
 
-    const { confirmPassword, ...payload } = userForm;
+    const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+    const isSucursal = selectedSedeObj ? selectedSedeObj.tipo === 'Sucursal' : false;
+    const finalArea = isSucursal ? 'Externo' : (userForm.area || 'Externo');
+
+    const payload = {
+      username: userForm.username,
+      password: userForm.password,
+      nombre: userForm.nombre,
+      sede: userForm.sede,
+      area: finalArea,
+      roles: userForm.roles,
+      excluirDestinatario: userForm.excluirDestinatario
+    };
 
     try {
       if (editingUser) {
         await userService.updateUser(editingUser.id || editingUser.username, payload);
-        // NOTA: Eliminamos setUsersList manual porque Firebase actualiza automáticamente en tiempo real
         setDialog({ isOpen: true, type: 'alert', title: 'Actualizado', message: `Usuario guardado.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await userService.createUser(payload);
-        // NOTA: Eliminamos setUsersList manual
         setDialog({ isOpen: true, type: 'alert', title: 'Creado', message: `Usuario registrado.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsUserModalOpen(false);
@@ -528,20 +563,66 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Sede *</label>
-                  <select value={userForm.sede} onChange={(e) => setUserForm({ ...userForm, sede: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
-                    {sedesList.map((s) => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Área *</label>
-                  <select value={userForm.area} onChange={(e) => setUserForm({ ...userForm, area: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
-                    {areasList.map((a) => <option key={a.id} value={a.nombre}>{a.nombre}</option>)}
-                  </select>
-                </div>
-              </div>
+              {(() => {
+                const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+                const isCurrentSedeSucursal = selectedSedeObj ? selectedSedeObj.tipo === 'Sucursal' : false;
+
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Sede *</label>
+                      <select
+                        value={userForm.sede}
+                        onChange={(e) => handleSedeChange(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
+                      >
+                        {sedesList.map((s) => (
+                          <option key={s.id} value={s.nombre}>
+                            {s.nombre} ({s.tipo || 'Sucursal'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                          Área *
+                        </label>
+                        {isCurrentSedeSucursal && (
+                          <span className="text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                            Auto: Externo
+                          </span>
+                        )}
+                      </div>
+                      <select
+                        disabled={isCurrentSedeSucursal}
+                        value={isCurrentSedeSucursal ? 'Externo' : userForm.area}
+                        onChange={(e) => setUserForm({ ...userForm, area: e.target.value })}
+                        className={`w-full border rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none transition-all ${
+                          isCurrentSedeSucursal
+                            ? 'bg-slate-100/90 text-slate-500 border-slate-200 cursor-not-allowed font-medium'
+                            : 'bg-slate-50 border-slate-200 focus:border-blue-500'
+                        }`}
+                      >
+                        {isCurrentSedeSucursal ? (
+                          <option value="Externo">Externo (Sucursal)</option>
+                        ) : (
+                          areasList.map((a) => (
+                            <option key={a.id} value={a.nombre}>
+                              {a.nombre}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      {isCurrentSedeSucursal && (
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Las sucursales se asignan automáticamente al área "Externo".
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>

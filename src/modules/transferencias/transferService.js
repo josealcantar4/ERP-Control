@@ -1,6 +1,6 @@
-import { db, isFirebaseConfigured } from '../config/firebase';
+import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
-  collection, doc, setDoc, getDoc, updateDoc, onSnapshot, query, orderBy
+  collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy
 } from 'firebase/firestore';
 
 const LOCAL_STORAGE_KEY = 'erp_control_solicitudes';
@@ -242,6 +242,55 @@ export const transferService = {
     }
     const list = getLocalSolicitudes();
     saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, estado, reporteFaltantes: faltantes } : s));
+    return true;
+  },
+
+  // ELIMINAR BORRADOR: Permitido ÚNICAMENTE para su creador original o Administrador.
+  // ESTRICTAMENTE PROHIBIDO para solicitudes completadas o en cualquier otro estado.
+  async deleteDraft(solicitudId, currentUser) {
+    if (!solicitudId) throw new Error('ID de solicitud requerido.');
+
+    let solicitud = null;
+    if (isFirebaseConfigured) {
+      try {
+        const snap = await getDoc(doc(db, 'solicitudes', solicitudId));
+        if (snap.exists()) {
+          solicitud = snap.data();
+        }
+      } catch (e) {
+        console.warn('Error leyendo solicitud para eliminación:', e);
+      }
+    }
+
+    if (!solicitud) {
+      const list = getLocalSolicitudes();
+      solicitud = list.find(s => s.id === solicitudId);
+    }
+
+    if (!solicitud) {
+      throw new Error('La solicitud no existe.');
+    }
+
+    // Regla crítica: Las transferencias completadas no se pueden eliminar jamás
+    if (solicitud.estado !== 'borrador') {
+      throw new Error('Está estrictamente prohibido eliminar transferencias que no sean borradores.');
+    }
+
+    const isAdmin =
+      currentUser?.username?.toLowerCase() === 'administrador' ||
+      currentUser?.roles?.includes('admin');
+    const isOwner = solicitud.usuarioSolicitante === currentUser?.username;
+
+    if (!isAdmin && !isOwner) {
+      throw new Error('Solo el creador original o el Administrador pueden eliminar este borrador.');
+    }
+
+    if (isFirebaseConfigured) {
+      await deleteDoc(doc(db, 'solicitudes', solicitudId));
+    }
+
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.filter(s => s.id !== solicitudId));
     return true;
   }
 };

@@ -1,0 +1,1 @@
+export { RecibirModule } from './RecibirModule';

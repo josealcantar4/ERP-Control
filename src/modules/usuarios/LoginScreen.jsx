@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Pill, Lock, User, ArrowRight, AlertCircle } from 'lucide-react';
-import { userService } from '../services/userService';
+import { userService } from './userService';
 
 export function LoginScreen({ onLoginSuccess }) {
   const [username, setUsername] = useState('');

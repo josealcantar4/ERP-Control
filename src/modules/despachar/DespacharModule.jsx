@@ -13,15 +13,17 @@ import {
   Loader2,
   X
 } from 'lucide-react';
-import { transferService } from '../services/transferService';
-import { catalogService } from '../services/catalogService';
-import { BarcodeScannerModal } from './BarcodeScannerModal';
-import { CaptureQuantityModal } from './CaptureQuantityModal';
-import { ModalDialog } from './ModalDialog';
+import { transferService } from '../transferencias/transferService';
+import { catalogService } from '../catalogo/catalogService';
+import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
+import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
+import { ModalDialog } from '../../shared/ModalDialog';
+import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 
 export function DespacharModule({ currentUser, onBack }) {
   const [solicitudes, setSolicitudes] = useState([]);
   const [selectedSolicitud, setSelectedSolicitud] = useState(null);
+  const [detailSolicitud, setDetailSolicitud] = useState(null);
 
   // Estado global de carga
   const [isProcessing, setIsProcessing] = useState(false);
@@ -55,19 +57,49 @@ export function DespacharModule({ currentUser, onBack }) {
     setDialog(prev => ({ ...prev, isOpen: false }));
   };
 
+  const isAdmin =
+    currentUser?.username?.toLowerCase() === 'administrador' ||
+    currentUser?.roles?.includes('admin');
+
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      let relevant = list;
-      if (currentUser?.roles?.includes('despachar') && !currentUser?.roles?.includes('solicitar')) {
-        relevant = list.filter(
-          s => s.usuarioDestino === currentUser.username || s.areaDestino === currentUser.area
-        );
-        if (relevant.length === 0) relevant = list;
+      let filtered = list;
+
+      if (!isAdmin) {
+        const userArea = (currentUser?.area || '').toLowerCase();
+        const isPatente = userArea.includes('patente');
+        const isGenerico = userArea.includes('generic') || userArea.includes('genéric');
+
+        filtered = list.filter((s) => {
+          const areaDest = (s.areaDestino || '').toLowerCase();
+
+          // 1. Usuarios de Patente solo visualizan solicitudes y borradores destinados a Bodega de Patente
+          if (isPatente) {
+            return areaDest.includes('patente') || s.usuarioDestino === currentUser?.username;
+          }
+
+          // 2. Usuarios de Genérico solo visualizan solicitudes y borradores de Genérico
+          if (isGenerico) {
+            return (
+              areaDest.includes('generic') ||
+              areaDest.includes('genéric') ||
+              s.usuarioDestino === currentUser?.username
+            );
+          }
+
+          // Otras áreas específicas
+          if (userArea && userArea !== 'externo') {
+            return areaDest.includes(userArea) || s.usuarioDestino === currentUser?.username;
+          }
+
+          return s.usuarioDestino === currentUser?.username;
+        });
       }
-      setSolicitudes(relevant);
+
+      setSolicitudes(filtered);
 
       if (selectedSolicitud) {
-        const refreshed = relevant.find(s => s.id === selectedSolicitud.id);
+        const refreshed = filtered.find(s => s.id === selectedSolicitud.id);
         if (refreshed) {
           setSelectedSolicitud(refreshed);
         }
@@ -75,7 +107,56 @@ export function DespacharModule({ currentUser, onBack }) {
     });
 
     return () => unsubscribe();
-  }, [currentUser, selectedSolicitud?.id]);
+  }, [currentUser, selectedSolicitud?.id, isAdmin]);
+
+  // Borradores: Solo pueden ser eliminados por su creador original o Administrador
+  const handleDeleteDraft = (e, sol) => {
+    e.stopPropagation();
+    const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
+
+    if (!canDelete) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Acción no permitida',
+        message: 'Solo el creador original del borrador o un Administrador tienen permiso para eliminarlo.',
+        variant: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
+
+    setDialog({
+      isOpen: true,
+      type: 'confirm',
+      title: 'Eliminar Borrador',
+      message: `¿Estás seguro de eliminar el borrador de ${sol.sucursalOrigen} (${sol.folio || 'Sin Folio'})?`,
+      variant: 'danger',
+      confirmText: 'Eliminar Borrador',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        closeDialog();
+        setIsProcessing(true);
+        try {
+          await transferService.deleteDraft(sol.id, currentUser);
+        } catch (err) {
+          setDialog({
+            isOpen: true,
+            type: 'alert',
+            title: 'Error',
+            message: err.message,
+            variant: 'danger',
+            confirmText: 'Entendido',
+            onConfirm: closeDialog
+          });
+        } finally {
+          setIsProcessing(false);
+        }
+      },
+      onCancel: closeDialog
+    });
+  };
 
   // Classification of requests
   const readyToDispatch = solicitudes.filter(s => s.estado === 'enviada' || s.estado === 'en_despacho');
@@ -472,60 +553,102 @@ export function DespacharModule({ currentUser, onBack }) {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-2.5">
-                {inProgressDrafts.map((sol) => (
-                  <div
-                    key={sol.id}
-                    className="bg-white/80 rounded-2xl p-4 border border-slate-200/60 shadow-sm flex items-center justify-between gap-3 opacity-90"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-slate-800">
-                          {sol.folio ? `${sol.folio} (${sol.sucursalOrigen})` : sol.sucursalOrigen}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500 uppercase">
-                          Borrador en vivo
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        {sol.usuarioSolicitante} está capturando ({sol.items?.length || 0} medicamentos hasta ahora)
-                      </p>
-                    </div>
+                {inProgressDrafts.map((sol) => {
+                  const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
 
-                    <div className="text-right">
-                      <span className="text-[11px] font-mono text-slate-400">
-                        {new Date(sol.fecha).toLocaleTimeString('es-MX', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </span>
+                  return (
+                    <div
+                      key={sol.id}
+                      className="bg-white/80 rounded-2xl p-4 border border-slate-200/60 shadow-sm flex items-center justify-between gap-3 opacity-90"
+                    >
+                      <div className="space-y-0.5 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-slate-800">
+                            {sol.folio ? `${sol.folio} (${sol.sucursalOrigen})` : sol.sucursalOrigen}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500 uppercase">
+                            Borrador en vivo
+                          </span>
+                          {sol.areaDestino && (
+                            <span className="text-[10px] text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                              {sol.areaDestino}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          {sol.usuarioSolicitante} está capturando ({sol.items?.length || 0} medicamentos hasta ahora)
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {new Date(sol.fecha).toLocaleTimeString('es-MX', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </span>
+                        {canDelete && (
+                          <button
+                            onClick={(e) => handleDeleteDraft(e, sol)}
+                            className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                            title="Eliminar borrador"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* SECTION 3: COMPLETED */}
           {completedSolicitudes.length > 0 && (
-            <div className="pt-4 border-t border-slate-200/60">
-              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                Despachos Completados Recientemente ({completedSolicitudes.length})
-              </h4>
+            <div className="pt-4 border-t border-slate-200/60 space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Transferencias Realizadas ({completedSolicitudes.length})
+                </h4>
+                <span className="text-[11px] text-slate-400">Haz clic para ver el resumen detallado</span>
+              </div>
               <div className="space-y-2">
-                {completedSolicitudes.slice(0, 3).map((sol) => (
+                {completedSolicitudes.map((sol) => (
                   <div
                     key={sol.id}
-                    className="bg-white rounded-2xl p-3 border border-slate-100 text-xs flex items-center justify-between text-slate-500"
+                    onClick={() => setDetailSolicitud(sol)}
+                    className="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all text-xs flex items-center justify-between text-slate-500 cursor-pointer group"
                   >
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                      <span>
-                        <strong className="font-mono text-slate-700">{sol.folio || 'Sin Folio'}</strong> ({sol.sucursalOrigen}) &bull; {sol.items?.length} productos
-                      </span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                      <div className="truncate">
+                        <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm mr-2">
+                          {sol.folio || 'Sin Folio'}
+                        </span>
+                        <span className="text-slate-700 font-semibold mr-1">
+                          {sol.sucursalOrigen}
+                        </span>
+                        <span className="text-slate-400">
+                          &bull; {sol.items?.length || 0} productos
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      Surtido Completo
-                    </span>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        sol.estado === 'recibida_incompleta'
+                          ? 'bg-red-50 text-red-700 border border-red-200'
+                          : sol.estado === 'recibida'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      }`}>
+                        {sol.estado === 'recibida_incompleta' ? 'Incompleta' : sol.estado === 'recibida' ? 'Recibida' : 'Completada'}
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -765,6 +888,13 @@ export function DespacharModule({ currentUser, onBack }) {
         onInputChange={(val) => setDialog(prev => ({ ...prev, inputValue: val }))}
         onConfirm={dialog.onConfirm}
         onCancel={dialog.onCancel}
+      />
+
+      {/* Modal de Detalle de Transferencia Completada */}
+      <TransferDetailModal
+        isOpen={Boolean(detailSolicitud)}
+        solicitud={detailSolicitud}
+        onClose={() => setDetailSolicitud(null)}
       />
 
     </div>

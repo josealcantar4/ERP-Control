@@ -24,6 +24,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /catalogo_limpio/{document} {
+      allow read, write: if true;
+    }
+
     // Por defecto bloquear cualquier otra colección no definida
     match /{document=**} {
       allow read, write: if false;

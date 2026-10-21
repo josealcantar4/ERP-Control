@@ -12,8 +12,8 @@ const STORAGE_KEY_FILE_ID = 'erp_catalog_file_id';
 const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id'; // NUEVA CLAVE PARA EVITAR BUCLES
 const STORAGE_KEY_LAST_SYNC = 'erp_catalog_last_sync_date';
 const STORAGE_KEY_TOTAL_RECORDS = 'erp_catalog_total_records';
+const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size'; // AÑADIDO PARA VALIDAR CAMBIOS EN EL MISMO ID
 
-// Caché en memoria para búsquedas instantáneas
 let memoryCache = null;
 
 function openDB() {
@@ -160,14 +160,15 @@ export const catalogService = {
     };
   },
 
-  // 1. VERIFICACIÓN OPTIMIZADA: SÓLO DESCARGA SI EL ID ES DISTINTO
+
+  // 1. VERIFICACIÓN OPTIMIZADA: REVISA ID Y TAMAÑO DEL ARCHIVO
   async checkServerCatalogVersion() {
     try {
       const localCount = await getLocalCount(STORE_BASE);
       const currentConfiguredId = this.getCatalogFileId();
       const lastSyncedId = localStorage.getItem(STORAGE_KEY_SYNCED_ID);
+      const lastSize = localStorage.getItem(STORAGE_KEY_LAST_SIZE);
 
-      // Si no hay datos, o si el ID cambió, forzamos la actualización
       if (localCount === 0 || currentConfiguredId !== lastSyncedId) {
         return {
           upToDate: false,
@@ -176,7 +177,23 @@ export const catalogService = {
         };
       }
 
-      // Si el ID es el mismo y hay datos, asumimos que está perfectamente actualizado
+      const downloadUrl = this.getDownloadUrl();
+      const response = await fetch(downloadUrl, { method: 'HEAD' });
+      
+      if (response.ok) {
+        const currentSize = response.headers.get('content-length');
+        
+        // Si el tamaño existe y es diferente al guardado, hay una nueva versión
+        if (currentSize && currentSize !== lastSize) {
+           return {
+            upToDate: false,
+            reason: 'file_modified',
+            localCount
+          };
+        }
+      }
+
+      // Si el ID es el mismo, hay datos y el tamaño no cambió, está actualizado
       return {
         upToDate: true,
         localCount,
@@ -300,10 +317,11 @@ export const catalogService = {
 
     await clearAndSaveBaseCatalog(validItems, onProgress);
 
-    // GUARDAMOS EL ID ACTUAL COMO "YA SINCRONIZADO" PARA EVITAR EL BUCLE FUTURO
+    // GUARDAMOS EL ID ACTUAL COMO "YA SINCRONIZADO" PARA EVITAR EL BUCLE FUTURO Y EL TAMAÑO
     localStorage.setItem(STORAGE_KEY_SYNCED_ID, this.getCatalogFileId());
     localStorage.setItem(STORAGE_KEY_LAST_SYNC, new Date().toISOString());
     localStorage.setItem(STORAGE_KEY_TOTAL_RECORDS, String(validItems.length));
+    localStorage.setItem(STORAGE_KEY_LAST_SIZE, serverContentLength || '0');
 
     if (onProgress) {
       onProgress({

@@ -24,7 +24,9 @@ import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
 
 export function AdminUsersModule({ currentUser, onBack }) {
-  const [activeTab, setActiveTab] = useState('usuarios');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('erp_admin_active_tab') || 'usuarios';
+  });
   const [isProcessing, setIsProcessing] = useState(false);
   
   // Data states
@@ -68,7 +70,6 @@ export function AdminUsersModule({ currentUser, onBack }) {
 
   const closeDialog = () => setDialog(prev => ({ ...prev, isOpen: false }));
 
-  // Subscriptions
   useEffect(() => {
     const unsubUsers = userService.subscribeUsers((list) => setUsersList(list));
     const unsubSedes = organizationService.subscribeSedes((list) => setSedesList(list));
@@ -80,6 +81,10 @@ export function AdminUsersModule({ currentUser, onBack }) {
       if (typeof unsubAreas === 'function') unsubAreas();
     };
   }, []);
+  
+  useEffect(() => {
+    localStorage.setItem('erp_admin_active_tab', activeTab);
+  }, [activeTab]);
 
   // --- MÉTODOS DE USUARIOS ---
   const handleOpenCreateUser = () => {

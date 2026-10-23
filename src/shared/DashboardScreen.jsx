@@ -1,19 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { SendHorizontal, Boxes, ChevronRight, PackageOpen, Database } from 'lucide-react';
+import { SendHorizontal, Boxes, ChevronRight, PackageOpen, Database, ClipboardCheck } from 'lucide-react';
 import { transferService } from '../modules/transferencias/transferService';
+import { materialService } from '../modules/material/materialService';
 
 export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => transferService.getLocalSolicitudes() || []);
+  const [materiales, setMateriales] = useState(() => materialService.getLocalMateriales());
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
   const hasDespachar = currentUser?.roles?.includes('despachar');
-  const isAdmin = currentUser?.username?.toLowerCase() === 'administrador';
+  const isAdmin = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
+  const hasMaterial = currentUser?.roles?.includes('material') || isAdmin;
 
   useEffect(() => {
     const unsub = transferService.subscribeSolicitudes((list) => {
       setSolicitudes(list);
     });
-    return () => unsub();
+    const unsubMat = materialService.subscribeMateriales((list) => {
+      setMateriales(list);
+    });
+    return () => {
+      if (unsub) unsub();
+      if (unsubMat) unsubMat();
+    };
   }, []);
+
+  // Notificaciones de reemplazo de material
+  const pendingMaterialAlerts = materialService.calculateNotifications(materiales).length;
 
   // Conteos en vivo
   const entrantesCount = solicitudes.filter(
@@ -109,6 +121,30 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
               </div>
               <h2 className="text-xl font-bold text-slate-900 mt-1 tracking-tight">Despachar Pedido</h2>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">Revisa pedidos, surte productos físicos y agrega extras.</p>
+            </div>
+          </div>
+        )}
+
+        {/* CARD 2B: REGISTRO DE MATERIAL BRINDADO */}
+        {hasMaterial && (
+          <div onClick={() => onNavigate('material')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
+            <div>
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-400 text-white flex items-center justify-center shadow-lg shadow-amber-500/20 mb-5 group-hover:scale-105 transition-transform">
+                <ClipboardCheck className="w-7 h-7" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-600">Control Interno</span>
+                {pendingMaterialAlerts > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 animate-fade-in flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></span>
+                    {pendingMaterialAlerts} {pendingMaterialAlerts === 1 ? 'alerta' : 'alertas'}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 mt-1 tracking-tight">Material Brindado</h2>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                Control de papelería, cómputo, herramientas y material entregado con alertas de reemplazo.
+              </p>
             </div>
           </div>
         )}

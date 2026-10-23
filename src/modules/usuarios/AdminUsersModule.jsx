@@ -455,9 +455,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span>{user.sede || 'Sin sede'}</span><span>&bull;</span><span>{user.area || 'Sin área'}</span>
                       </div>
-                      <div className="flex items-center gap-1 pt-1">
+                      <div className="flex items-center gap-1 pt-1 flex-wrap">
                         {user.roles?.includes('solicitar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700">Solicitar</span>}
                         {user.roles?.includes('despachar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">Despachar</span>}
+                        {user.roles?.includes('material') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">Material</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -685,17 +686,23 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
               <div>
                 <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div onClick={() => toggleRole('solicitar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('solicitar') ? 'bg-blue-50/70 border-blue-400 text-blue-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                    <span className="font-semibold">Solicitar Pedido</span>
+                    <span className="font-semibold text-xs">Solicitar Pedido</span>
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('solicitar') ? 'bg-blue-600 text-white' : 'border border-slate-300'}`}>
                       {userForm.roles.includes('solicitar') && <Check className="w-3 h-3 stroke-[3]" />}
                     </div>
                   </div>
                   <div onClick={() => toggleRole('despachar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('despachar') ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                    <span className="font-semibold">Despachar Pedido</span>
+                    <span className="font-semibold text-xs">Despachar Pedido</span>
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('despachar') ? 'bg-emerald-600 text-white' : 'border border-slate-300'}`}>
                       {userForm.roles.includes('despachar') && <Check className="w-3 h-3 stroke-[3]" />}
+                    </div>
+                  </div>
+                  <div onClick={() => toggleRole('material')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('material') ? 'bg-amber-50/70 border-amber-400 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                    <span className="font-semibold text-xs">Material Brindado</span>
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('material') ? 'bg-amber-600 text-white' : 'border border-slate-300'}`}>
+                      {userForm.roles.includes('material') && <Check className="w-3 h-3 stroke-[3]" />}
                     </div>
                   </div>
                 </div>

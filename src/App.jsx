@@ -5,12 +5,14 @@ import { transferService } from './modules/transferencias';
 import { SolicitarModule } from './modules/solicitar';
 import { DespacharModule } from './modules/despachar';
 import { RecibirModule } from './modules/recibir';
+import { MaterialModule, materialService } from './modules/material';
 import {
   AppleNavbar,
   DashboardScreen,
   OfflineIndicator,
   ReloadPrompt,
-  ScreenRefreshSpinner
+  ScreenRefreshSpinner,
+  NotificationsModal
 } from './shared';
 
 export default function App() {
@@ -28,6 +30,21 @@ export default function App() {
     progress: { percent: 0, currentBatch: 0, totalBatches: 0, message: '', totalRecords: 0 },
     error: null
   });
+
+  // Estado del modal y alertas de notificaciones
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [notificationsList, setNotificationsList] = useState([]);
+
+  // Suscripción reactiva en tiempo real a notificaciones de material
+  useEffect(() => {
+    if (currentUser) {
+      const unsub = materialService.subscribeMateriales((items) => {
+        const notifs = materialService.calculateNotifications(items);
+        setNotificationsList(notifs);
+      });
+      return () => unsub && unsub();
+    }
+  }, [currentUser]);
 
   // Verificación de información nueva en segundo plano al abrir cualquier pantalla
   // EXCLUSIÓN: El módulo 'upload-catalog' no muestra spinner ni ejecuta esta verificación.
@@ -53,10 +70,16 @@ export default function App() {
           userService.refreshUsers(),
           organizationService.refreshSedesAndAreas()
         ]);
+      } else if (screen === 'material') {
+        await Promise.all([
+          materialService.refreshAll(),
+          organizationService.refreshSedesAndAreas()
+        ]);
       } else if (screen === 'dashboard') {
         await Promise.all([
           transferService.refreshSolicitudes(),
-          userService.getMatrizDestinatarios()
+          userService.getMatrizDestinatarios(),
+          materialService.refreshAll()
         ]);
       }
     } catch (err) {
@@ -169,7 +192,9 @@ export default function App() {
       if (storedScreen) {
         targetScreen = storedScreen;
       } else if (savedUser.roles?.length === 1) {
-        targetScreen = savedUser.roles[0] === 'solicitar' ? 'solicitar' : 'despachar';
+        if (savedUser.roles[0] === 'solicitar') targetScreen = 'solicitar';
+        else if (savedUser.roles[0] === 'despachar') targetScreen = 'despachar';
+        else if (savedUser.roles[0] === 'material') targetScreen = 'material';
       }
 
       setCurrentScreen(targetScreen);
@@ -187,7 +212,10 @@ export default function App() {
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
     if (user.roles?.length === 1) {
-      const defaultScreen = user.roles[0] === 'solicitar' ? 'solicitar' : 'despachar';
+      let defaultScreen = 'dashboard';
+      if (user.roles[0] === 'solicitar') defaultScreen = 'solicitar';
+      else if (user.roles[0] === 'despachar') defaultScreen = 'despachar';
+      else if (user.roles[0] === 'material') defaultScreen = 'material';
       navigateTo(defaultScreen);
     } else {
       navigateTo('dashboard');
@@ -255,6 +283,21 @@ export default function App() {
         onLogout={handleLogout}
         onNavigate={navigateTo}
         currentScreen={currentScreen}
+        notificationCount={notificationsList.length}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+      />
+
+      {/* Modal Independiente de Notificaciones y Alertas de Reemplazo */}
+      <NotificationsModal
+        isOpen={isNotificationsOpen}
+        notifications={notificationsList}
+        onClose={() => setIsNotificationsOpen(false)}
+        onMarkAsReplaced={async (materialId) => {
+          await materialService.markAsStatus(materialId, 'reemplazado');
+        }}
+        onNavigateToMaterial={() => {
+          navigateTo('material');
+        }}
       />
 
       {/* Indicador de actualización de pantalla discreto estilo iOS (sin opacar el fondo) */}
@@ -288,6 +331,13 @@ export default function App() {
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
               onRefresh={() => performScreenRefresh('recibir')}
+            />
+          )}
+          {currentScreen === 'material' && (
+            <MaterialModule
+              currentUser={currentUser}
+              onBack={() => navigateTo('dashboard')}
+              onRefresh={() => performScreenRefresh('material')}
             />
           )}
           {currentScreen === 'admin' && (

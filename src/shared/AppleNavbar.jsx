@@ -1,9 +1,16 @@
 import React from 'react';
-import { Pill, LogOut, Wifi, WifiOff, Users } from 'lucide-react';
+import { Pill, LogOut, Wifi, WifiOff, Users, Bell } from 'lucide-react';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
 
-export function AppleNavbar({ currentUser, onLogout, onNavigate, currentScreen }) {
+export function AppleNavbar({
+  currentUser,
+  onLogout,
+  onNavigate,
+  currentScreen,
+  notificationCount = 0,
+  onOpenNotifications
+}) {
   const { isOnline } = useOnlineStatus();
   const isAdmin = currentUser?.username?.toLowerCase() === 'administrador';
 
@@ -31,6 +38,24 @@ export function AppleNavbar({ currentUser, onLogout, onNavigate, currentScreen }
 
         {/* Right Status & Actions */}
         <div className="flex items-center gap-2.5">
+          {/* Notifications button with Live Badge Dot */}
+          <button
+            onClick={onOpenNotifications}
+            className={`p-2 rounded-2xl transition-all cursor-pointer relative ${
+              notificationCount > 0
+                ? 'bg-amber-50 hover:bg-amber-100 text-amber-700'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+            }`}
+            title="Notificaciones y Alertas de Reemplazo"
+          >
+            <Bell className="w-4 h-4" />
+            {notificationCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-extrabold flex items-center justify-center shadow-sm animate-scale-in">
+                {notificationCount > 99 ? '99+' : notificationCount}
+              </span>
+            )}
+          </button>
+
           {/* Admin shortcut button */}
           {isAdmin && onNavigate && (
             <button

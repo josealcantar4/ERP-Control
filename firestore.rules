@@ -28,6 +28,18 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /material_brindado/{document} {
+      allow read, write: if true;
+    }
+
+    match /material_tipos/{document} {
+      allow read, write: if true;
+    }
+
+    match /material_personal/{document} {
+      allow read, write: if true;
+    }
+
     // Por defecto bloquear cualquier otra colección no definida
     match /{document=**} {
       allow read, write: if false;

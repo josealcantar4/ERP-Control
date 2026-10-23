@@ -8,3 +8,4 @@ export { PWAInstallPrompt } from './PWAInstallPrompt';
 export { ReloadPrompt } from './ReloadPrompt';
 export { ErrorBoundary } from './ErrorBoundary';
 export { ScreenRefreshSpinner } from './ScreenRefreshSpinner';
+export { NotificationsModal } from './NotificationsModal';

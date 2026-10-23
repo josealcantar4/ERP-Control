@@ -14,7 +14,7 @@ export function OfflineIndicator() {
       <div className="bg-amber-500 text-white px-4 py-2 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-300">
         <WifiOff className="w-4 h-4 shrink-0 animate-pulse" />
         <span>
-          Modo Offline: Sin conexión a internet. Los medicamentos escaneados se guardan en tu dispositivo y se sincronizarán al reconectar.
+          Modo Offline: Sin conexión a internet. Los productos escaneados se guardan en tu dispositivo y se sincronizarán al reconectar.
         </span>
       </div>
     );

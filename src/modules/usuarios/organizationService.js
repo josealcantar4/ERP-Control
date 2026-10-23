@@ -5,7 +5,8 @@ import {
   setDoc,
   deleteDoc,
   onSnapshot,
-  query
+  query,
+  getDocs
 } from 'firebase/firestore';
 
 const LOCAL_SEDES_KEY = 'erp_control_sedes';
@@ -87,6 +88,31 @@ export const organizationService = {
     const handler = () => onUpdate(getLocalSedes());
     window.addEventListener('erp_sedes_changed', handler);
     return () => window.removeEventListener('erp_sedes_changed', handler);
+  },
+
+  // Forzar verificación y obtención de sedes y áreas actualizadas
+  async refreshSedesAndAreas() {
+    const result = { sedes: [], areas: [] };
+    if (isFirebaseConfigured) {
+      try {
+        const [snapSedes, snapAreas] = await Promise.all([
+          getDocs(collection(db, 'sedes')),
+          getDocs(collection(db, 'areas'))
+        ]);
+        const sedes = snapSedes.docs.map(d => ({ id: d.id, ...d.data() }));
+        sedes.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        saveLocalSedes(sedes);
+        result.sedes = sedes;
+
+        const areas = snapAreas.docs.map(d => ({ id: d.id, ...d.data() }));
+        areas.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+        saveLocalAreas(areas);
+        result.areas = areas;
+      } catch (err) {
+        console.warn('Error refrescando sedes y áreas desde Firebase:', err);
+      }
+    }
+    return result;
   },
 
   // Crear una nueva Sede

@@ -66,6 +66,32 @@ export const userService = {
     );
   },
 
+  // Forzar verificación y obtención de usuarios actualizados
+  async refreshUsers() {
+    try {
+      const snap = await getDocs(collection(db, 'usuarios'));
+      const list = snap.docs.map(d => {
+        const data = d.data();
+        const userRoles = data.roles || data.rol || ['solicitar'];
+        return {
+          id: d.id,
+          username: data.username || d.id,
+          password: data.password,
+          nombre: data.nombre || data.username || d.id,
+          sede: data.sede || 'Sin sede',
+          area: data.area || 'Sin área',
+          roles: Array.isArray(userRoles) ? userRoles : [userRoles],
+          excluirDestinatario: Boolean(data.excluirDestinatario)
+        };
+      });
+      window.dispatchEvent(new CustomEvent('erp_users_refreshed', { detail: list }));
+      return list;
+    } catch (err) {
+      console.warn('Error al verificar usuarios en Firebase:', err);
+      return [];
+    }
+  },
+
   // Inicio de sesión consultando Firestore
   async login(username, password) {
     const cleanUser = String(username || '').trim();

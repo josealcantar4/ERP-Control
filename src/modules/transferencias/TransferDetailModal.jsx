@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   CheckCircle2,
@@ -30,9 +31,9 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
     0
   );
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fade-in select-none">
-      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 max-h-[90dvh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+  const modalContent = (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto">
+      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 max-h-[92dvh] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200">
         
         {/* HEADER */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between gap-3 shrink-0 bg-slate-50/60">
@@ -136,7 +137,7 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
           </div>
         )}
 
-        {/* LISTADO DE MEDICAMENTOS */}
+        {/* LISTADO DE PRODUCTOS */}
         <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-3">
           <div className="flex items-center justify-between text-xs font-bold text-slate-600">
             <span>Productos Despachados ({totalItems})</span>
@@ -195,4 +196,6 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

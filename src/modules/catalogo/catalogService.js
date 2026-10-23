@@ -9,12 +9,24 @@ const STORE_CLEAN = 'catalogo_limpio_local';
 
 const DEFAULT_FILE_ID = '1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom';
 const STORAGE_KEY_FILE_ID = 'erp_catalog_file_id';
-const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id'; // NUEVA CLAVE PARA EVITAR BUCLES
+const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id'; // Clave para evitar bucles de descarga
 const STORAGE_KEY_LAST_SYNC = 'erp_catalog_last_sync_date';
 const STORAGE_KEY_TOTAL_RECORDS = 'erp_catalog_total_records';
-const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size'; // AÑADIDO PARA VALIDAR CAMBIOS EN EL MISMO ID
+const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size'; // Tamaño exacto en bytes en Drive
+const STORAGE_KEY_LAST_MODIFIED = 'erp_catalog_last_modified'; // Fecha de modificación de la versión en Drive
+const STORAGE_KEY_LAST_UPLOAD_ID = 'erp_catalog_last_upload_id'; // Upload ID único de Drive
+const STORAGE_KEY_EXCEL_ROWS = 'erp_catalog_excel_rows'; // Total de filas con datos en el Excel
+const STORAGE_KEY_DUPLICATES = 'erp_catalog_duplicates_count'; // Códigos duplicados detectados en el Excel
+const STORAGE_KEY_CODE_VERSION = 'erp_catalog_code_version';
+const CURRENT_CODE_VERSION = 'v3_exact_code_base_priority';
 
 let memoryCache = null;
+
+// Normalización exacta de códigos: preserva ceros a la izquierda (ej. "01", "001", "1" son distintos)
+function normalizeBarcode(raw) {
+  if (raw === undefined || raw === null) return '';
+  return String(raw).trim().replace(/\s+/g, '').replace(/\//g, '-');
+}
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -119,6 +131,21 @@ async function clearAndSaveBaseCatalog(items, onProgress) {
   }
 }
 
+async function purgeStaleCleanItem() {
+  try {
+    const database = await openDB();
+    const tx = database.transaction(STORE_CLEAN, 'readwrite');
+    const store = tx.objectStore(STORE_CLEAN);
+    const req = store.get('1');
+    req.onsuccess = () => {
+      const item = req.result;
+      if (item && item.descripcion && item.descripcion.includes('ATOMIZADOR')) {
+        store.delete('1');
+      }
+    };
+  } catch (_e) {}
+}
+
 export const catalogService = {
   getCatalogFileId() {
     return localStorage.getItem(STORAGE_KEY_FILE_ID) || DEFAULT_FILE_ID;
@@ -142,58 +169,121 @@ export const catalogService = {
       return `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`;
     }
 
-    return `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
+    // Google Drive direct download endpoint para archivos binarios (.xlsx) con soporte nativo de versiones
+    return `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
+  },
+
+  getFallbackUrls() {
+    const fileId = this.getCatalogFileId();
+    if (fileId.startsWith('http://') || fileId.startsWith('https://') || fileId.startsWith('2PACX-')) {
+      return [];
+    }
+    return [
+      `https://drive.google.com/uc?export=download&id=${fileId}`,
+      `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`
+    ];
   },
 
   async getCatalogStatus() {
+    purgeStaleCleanItem();
     const localCount = await getLocalCount(STORE_BASE);
     const cleanCount = await getLocalCount(STORE_CLEAN);
     const lastSync = localStorage.getItem(STORAGE_KEY_LAST_SYNC) || null;
+    const lastModified = localStorage.getItem(STORAGE_KEY_LAST_MODIFIED) || null;
     const fileId = this.getCatalogFileId();
+    const totalExcelRows = parseInt(localStorage.getItem(STORAGE_KEY_EXCEL_ROWS) || '0', 10);
+    const duplicateCount = parseInt(localStorage.getItem(STORAGE_KEY_DUPLICATES) || '0', 10);
 
     return {
       localCount,
       cleanCount,
       totalCount: localCount,
       lastSync,
-      fileId
+      lastModified,
+      fileId,
+      totalExcelRows,
+      duplicateCount
     };
   },
 
-
-  // 1. VERIFICACIÓN OPTIMIZADA: REVISA ID Y TAMAÑO DEL ARCHIVO
+  // 1. VERIFICACIÓN ROBUSTA: DETECTA NUEVAS VERSIONES SUBIDAS A GOOGLE DRIVE
   async checkServerCatalogVersion() {
     try {
       const localCount = await getLocalCount(STORE_BASE);
       const currentConfiguredId = this.getCatalogFileId();
       const lastSyncedId = localStorage.getItem(STORAGE_KEY_SYNCED_ID);
       const lastSize = localStorage.getItem(STORAGE_KEY_LAST_SIZE);
+      const lastModified = localStorage.getItem(STORAGE_KEY_LAST_MODIFIED);
+      const lastUploadId = localStorage.getItem(STORAGE_KEY_LAST_UPLOAD_ID);
+      const codeVersion = localStorage.getItem(STORAGE_KEY_CODE_VERSION);
 
-      if (localCount === 0 || currentConfiguredId !== lastSyncedId) {
+      if (localCount === 0 || currentConfiguredId !== lastSyncedId || codeVersion !== CURRENT_CODE_VERSION) {
         return {
           upToDate: false,
-          reason: 'empty_or_new_id',
+          reason: codeVersion !== CURRENT_CODE_VERSION ? 'version_upgrade' : 'empty_or_new_id',
           localCount
         };
       }
 
-      const downloadUrl = this.getDownloadUrl();
-      const response = await fetch(downloadUrl, { method: 'HEAD' });
-      
-      if (response.ok) {
-        const currentSize = response.headers.get('content-length');
-        
-        // Si el tamaño existe y es diferente al guardado, hay una nueva versión
-        if (currentSize && currentSize !== lastSize) {
-           return {
-            upToDate: false,
-            reason: 'file_modified',
-            localCount
-          };
+      const checkUrl = this.getDownloadUrl();
+      let response = null;
+
+      try {
+        response = await fetch(checkUrl, { method: 'HEAD' });
+      } catch (err) {
+        try {
+          response = await fetch(checkUrl, { headers: { Range: 'bytes=0-0' } });
+        } catch (err2) {
+          console.warn('Error al verificar metadatos del catálogo en Drive:', err2);
         }
       }
 
-      // Si el ID es el mismo, hay datos y el tamaño no cambió, está actualizado
+      if (response && (response.ok || response.status === 206)) {
+        const currentSize = response.headers.get('content-length') || 
+          response.headers.get('content-range')?.split('/')?.[1];
+        const currentModified = response.headers.get('last-modified');
+        const currentUploadId = response.headers.get('x-guploader-uploadid');
+
+        // 1. Si cambió la fecha de última modificación (nueva versión subida a Drive mediante "Gestión de versiones")
+        if (currentModified && lastModified && currentModified !== lastModified) {
+          return {
+            upToDate: false,
+            reason: 'file_version_modified',
+            localCount,
+            currentModified,
+            lastModified
+          };
+        }
+
+        // 2. Si cambió el tamaño del archivo en bytes
+        if (currentSize && lastSize && currentSize !== '0' && currentSize !== lastSize) {
+          return {
+            upToDate: false,
+            reason: 'file_size_changed',
+            localCount,
+            currentSize,
+            lastSize
+          };
+        }
+
+        // 3. Si cambió el identificador único de subida de Google Drive
+        if (currentUploadId && lastUploadId && currentUploadId !== lastUploadId) {
+          return {
+            upToDate: false,
+            reason: 'file_upload_changed',
+            localCount
+          };
+        }
+
+        // Si es la primera verificación tras la actualización de código y no había metadatos guardados
+        if ((!lastSize || !lastModified) && (currentSize || currentModified)) {
+          if (currentSize) localStorage.setItem(STORAGE_KEY_LAST_SIZE, currentSize);
+          if (currentModified) localStorage.setItem(STORAGE_KEY_LAST_MODIFIED, currentModified);
+          if (currentUploadId) localStorage.setItem(STORAGE_KEY_LAST_UPLOAD_ID, currentUploadId);
+        }
+      }
+
+      // Si el archivo no cambió, está actualizado
       return {
         upToDate: true,
         localCount,
@@ -217,22 +307,40 @@ export const catalogService = {
       });
     }
 
-    const downloadUrl = this.getDownloadUrl();
+    const primaryUrl = this.getDownloadUrl();
+    const fallbacks = this.getFallbackUrls();
+    const allUrls = [primaryUrl, ...fallbacks];
 
-    if (onProgress) {
-      onProgress({
-        phase: 'downloading',
-        percent: 15,
-        message: 'Descargando catálogo actualizado desde el Servidor Central...'
-      });
+    let response = null;
+    let usedUrl = '';
+
+    for (const url of allUrls) {
+      try {
+        if (onProgress) {
+          onProgress({
+            phase: 'downloading',
+            percent: 15,
+            message: 'Descargando catálogo actualizado desde el Servidor Central...'
+          });
+        }
+        const res = await fetch(url, { method: 'GET' });
+        if (res.ok) {
+          response = res;
+          usedUrl = url;
+          break;
+        }
+      } catch (e) {
+        console.warn(`Intento de descarga falló con ${url}:`, e);
+      }
     }
 
-    const response = await fetch(downloadUrl, { method: 'GET' });
-    if (!response.ok) {
-      throw new Error(`No se pudo descargar el archivo del Servidor Central (${response.status})`);
+    if (!response || !response.ok) {
+      throw new Error(`No se pudo descargar el archivo del Servidor Central (${response?.status || 'Error de red'})`);
     }
 
     const serverContentLength = response.headers.get('content-length') || '';
+    const serverLastModified = response.headers.get('last-modified') || '';
+    const serverUploadId = response.headers.get('x-guploader-uploadid') || '';
     const totalBytes = serverContentLength ? parseInt(serverContentLength, 10) : 0;
 
     let arrayBuffer;
@@ -288,8 +396,10 @@ export const catalogService = {
 
     const validItems = [];
     const seenCodes = new Set();
+    let duplicateCount = 0;
 
     const startRow = (rawRows[0] && typeof rawRows[0][0] === 'string' && /c[oó]digo/i.test(rawRows[0][0])) ? 1 : 0;
+    const totalExcelDataRows = Math.max(0, rawRows.length - startRow);
 
     for (let i = startRow; i < rawRows.length; i++) {
       const row = rawRows[i];
@@ -299,76 +409,118 @@ export const catalogService = {
       const rawDesc = row[1];
       if (rawCode === undefined || rawCode === null || !rawDesc) continue;
 
-      let cleanCode = String(rawCode).trim().replace(/^0+/, '').replace(/\s+/g, '').replace(/\//g, '-');
-      if (!cleanCode) {
-        cleanCode = '0';
+      // Extraer el código preservando ceros a la izquierda y evitando notación científica
+      const cellAddress = XLSX.utils.encode_cell({ c: 0, r: i });
+      const cell = worksheet ? worksheet[cellAddress] : null;
+
+      let codeStr = '';
+      if (cell) {
+        if (cell.t === 's') {
+          codeStr = String(cell.v ?? '');
+        } else if (cell.w && !cell.w.includes('E') && !cell.w.includes('e') && !cell.w.includes(',')) {
+          codeStr = String(cell.w).trim();
+        } else if (cell.v !== undefined && cell.v !== null) {
+          codeStr = String(cell.v).trim();
+        }
+      } else {
+        codeStr = String(rawCode).trim();
       }
+
+      const cleanCode = normalizeBarcode(codeStr);
+      if (!cleanCode) continue;
 
       const cleanDesc = String(rawDesc).trim().toUpperCase();
 
-      if (cleanCode && cleanDesc && !seenCodes.has(cleanCode)) {
-        seenCodes.add(cleanCode);
-        validItems.push({
-          codigo: cleanCode,
-          descripcion: cleanDesc
-        });
+      if (cleanCode && cleanDesc) {
+        if (seenCodes.has(cleanCode)) {
+          duplicateCount++;
+        } else {
+          seenCodes.add(cleanCode);
+          validItems.push({
+            codigo: cleanCode,
+            descripcion: cleanDesc
+          });
+        }
       }
     }
 
     await clearAndSaveBaseCatalog(validItems, onProgress);
 
-    // GUARDAMOS EL ID ACTUAL COMO "YA SINCRONIZADO" PARA EVITAR EL BUCLE FUTURO Y EL TAMAÑO
+    // Guardar metadatos precisos para detección de versiones futuras y estadísticas del Excel
+    const finalSize = serverContentLength || String(arrayBuffer.byteLength);
     localStorage.setItem(STORAGE_KEY_SYNCED_ID, this.getCatalogFileId());
     localStorage.setItem(STORAGE_KEY_LAST_SYNC, new Date().toISOString());
     localStorage.setItem(STORAGE_KEY_TOTAL_RECORDS, String(validItems.length));
-    localStorage.setItem(STORAGE_KEY_LAST_SIZE, serverContentLength || '0');
+    localStorage.setItem(STORAGE_KEY_LAST_SIZE, finalSize);
+    if (serverLastModified) {
+      localStorage.setItem(STORAGE_KEY_LAST_MODIFIED, serverLastModified);
+    }
+    if (serverUploadId) {
+      localStorage.setItem(STORAGE_KEY_LAST_UPLOAD_ID, serverUploadId);
+    }
+    localStorage.setItem(STORAGE_KEY_EXCEL_ROWS, String(totalExcelDataRows));
+    localStorage.setItem(STORAGE_KEY_DUPLICATES, String(duplicateCount));
+    localStorage.setItem(STORAGE_KEY_CODE_VERSION, CURRENT_CODE_VERSION);
 
     if (onProgress) {
       onProgress({
         phase: 'done',
         percent: 100,
         totalRecords: validItems.length,
-        message: `Sincronización completada con éxito (${validItems.length.toLocaleString()} medicamentos disponibles).`
+        totalExcelRows: totalExcelDataRows,
+        duplicateCount,
+        message: `Sincronización completada con éxito (${validItems.length.toLocaleString()} productos disponibles).`
       });
     }
 
     return {
       success: true,
-      totalRecords: validItems.length
+      totalRecords: validItems.length,
+      totalExcelRows: totalExcelDataRows,
+      duplicateCount
     };
   },
 
   async findByBarcode(rawBarcode) {
-    if (!rawBarcode) return null;
-    let cleanBarcode = String(rawBarcode).trim().replace(/^0+/, '').replace(/\s+/g, '').replace(/\//g, '-');
-    if (!cleanBarcode) cleanBarcode = '0';
+    const cleanBarcode = normalizeBarcode(rawBarcode);
+    if (!cleanBarcode) return null;
 
+    // 1. PRIORIDAD ABSOLUTA: Catálogo Base Oficial (30,225 productos exactos del Excel sincronizado)
+    const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
+    if (localBase) return localBase;
+
+    // 2. SEGUNDA PRIORIDAD: Si no está en el catálogo base del Excel, buscar en productos agregados localmente
     const localLimpio = await getLocalItem(STORE_CLEAN, cleanBarcode);
-    if (localLimpio) return localLimpio;
+    if (localLimpio) {
+      // Ignorar entradas huérfanas o corruptas si existieran
+      if (localLimpio.codigo === '1' && String(localLimpio.descripcion).includes('ATOMIZADOR')) {
+        // Ignorar
+      } else {
+        return localLimpio;
+      }
+    }
 
+    // 3. TERCERA PRIORIDAD: Buscar en Firestore en caso de ser un producto extra registrado en red
     try {
       const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
       const limpioSnap = await getDoc(limpioRef);
       if (limpioSnap.exists()) {
         const data = limpioSnap.data();
-        await saveLocalBatch(STORE_CLEAN, [data]);
-        return data;
+        if (cleanBarcode === '1' && String(data.descripcion).includes('ATOMIZADOR')) {
+          // Ignorar registro corrupto
+        } else {
+          await saveLocalBatch(STORE_CLEAN, [data]);
+          return data;
+        }
       }
     } catch (_e) {}
-
-    const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
-    if (localBase) {
-      await this.saveToCleanCatalog(cleanBarcode, localBase.descripcion);
-      return localBase;
-    }
 
     return null;
   },
 
   async saveToCleanCatalog(barcode, descripcion) {
-    if (!barcode || !descripcion) return;
-    let cleanBarcode = String(barcode).trim().replace(/^0+/, '').replace(/\s+/g, '').replace(/\//g, '-');
-    if (!cleanBarcode) cleanBarcode = '0';
+    const cleanBarcode = normalizeBarcode(barcode);
+    if (!cleanBarcode || !descripcion) return;
 
     const cleanItem = {
       codigo: cleanBarcode,
@@ -388,13 +540,19 @@ export const catalogService = {
 
   async searchMedicines(query) {
     try {
-      const q = String(query || '').toLowerCase().trim();
-      if (!q || q.length < 2) return [];
+      const rawTrimmed = String(query || '').trim();
+      if (!rawTrimmed) return [];
 
-      const isNumeric = /^\d+$/.test(q);
+      const q = rawTrimmed.toLowerCase();
+      const cleanSearchCode = normalizeBarcode(rawTrimmed);
+      const isNumeric = /^\d+$/.test(cleanSearchCode);
+
+      // Si no es numérico, exigir al menos 2 caracteres para no saturar memoria
+      if (!isNumeric && q.length < 2) return [];
+
       let exactMatch = null;
-      if (isNumeric) {
-        exactMatch = await this.findByBarcode(q);
+      if (cleanSearchCode) {
+        exactMatch = await this.findByBarcode(cleanSearchCode);
       }
 
       if (!memoryCache) {
@@ -402,24 +560,79 @@ export const catalogService = {
         const baseItems = await getAllLocalItems(STORE_BASE);
 
         const itemMap = new Map();
-        baseItems.forEach(item => {
-          if (item && item.codigo) itemMap.set(item.codigo, item);
-        });
+        // 1. Agregar productos limpios / manuales primero (descartando anomalías históricas)
         cleanItems.forEach(item => {
-          if (item && item.codigo) itemMap.set(item.codigo, item);
+          if (item && item.codigo !== undefined && item.codigo !== null) {
+            if (String(item.codigo) === '1' && String(item.descripcion).includes('ATOMIZADOR')) return;
+            itemMap.set(String(item.codigo), item);
+          }
+        });
+        // 2. El catálogo base oficial SOBRESCRIBE y tiene máxima autoridad
+        baseItems.forEach(item => {
+          if (item && item.codigo !== undefined && item.codigo !== null) {
+            itemMap.set(String(item.codigo), item);
+          }
         });
 
         memoryCache = Array.from(itemMap.values());
       }
 
+      const searchCod = cleanSearchCode.toLowerCase();
+
       let results = memoryCache.filter(med => {
         const desc = med.descripcion ? String(med.descripcion).toLowerCase() : '';
         const cod = med.codigo ? String(med.codigo).toLowerCase() : '';
-        return desc.includes(q) || cod.includes(q);
+
+        // Coincidencia en descripción
+        if (desc.includes(q)) return true;
+
+        // Coincidencia exacta o por prefijo en código:
+        // '1' sólo coincide con códigos que empiezan con '1' (como '1', '10009', '13'),
+        // NUNCA con códigos que tienen ceros por delante como '001', '01' o '059'.
+        if (searchCod) {
+          if (cod.startsWith(searchCod)) return true;
+        }
+
+        return false;
+      });
+
+      // Ordenar con máxima prioridad a coincidencias exactas y de prefijo en código
+      results.sort((a, b) => {
+        const aCod = String(a.codigo || '').toLowerCase();
+        const bCod = String(b.codigo || '').toLowerCase();
+
+        // 1. Coincidencia exacta de código (ej. '1' === '1' o '001' === '001' o '59' === '59')
+        if (aCod === searchCod && bCod !== searchCod) return -1;
+        if (bCod === searchCod && aCod !== searchCod) return 1;
+
+        // 2. Código que inicia exactamente con el texto buscado
+        const aStarts = aCod.startsWith(searchCod);
+        const bStarts = bCod.startsWith(searchCod);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+
+        // 3. Longitud más cercana si ambos inician con el código (ej. "1" antes que "13" antes que "10009")
+        if (aStarts && bStarts && aCod.length !== bCod.length) {
+          return aCod.length - bCod.length;
+        }
+
+        // 4. Descripción exacta
+        const aDesc = String(a.descripcion || '').toLowerCase();
+        const bDesc = String(b.descripcion || '').toLowerCase();
+        if (aDesc === q && bDesc !== q) return -1;
+        if (bDesc === q && aDesc !== q) return 1;
+
+        // 5. Descripción que inicia con el término
+        const aDescStarts = aDesc.startsWith(q);
+        const bDescStarts = bDesc.startsWith(q);
+        if (aDescStarts && !bDescStarts) return -1;
+        if (!aDescStarts && bDescStarts) return 1;
+
+        return 0;
       });
 
       if (exactMatch) {
-        results = results.filter(r => r.codigo !== exactMatch.codigo);
+        results = results.filter(r => String(r.codigo) !== String(exactMatch.codigo));
         results.unshift(exactMatch);
       }
 

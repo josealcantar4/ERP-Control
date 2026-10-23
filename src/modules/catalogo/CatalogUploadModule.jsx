@@ -20,7 +20,9 @@ export function CatalogUploadModule({ onBack }) {
     cleanCount: 0,
     lastSync: null,
     lastModified: null,
-    fileId: ''
+    fileId: '',
+    totalExcelRows: 0,
+    duplicateCount: 0
   });
   const [isVerifying, setIsVerifying] = useState(false);
   const [serverState, setServerState] = useState('checking'); // 'up_to_date' | 'server_updated' | 'offline' | 'checking'
@@ -82,9 +84,10 @@ export function CatalogUploadModule({ onBack }) {
         setSyncProgress(status);
       });
 
+      const dupText = result.duplicateCount > 0 ? ` (${result.duplicateCount} códigos duplicados colapsados)` : '';
       setFeedback({
         type: 'success',
-        message: `Sincronización completada con éxito. Se indexaron ${result.totalRecords.toLocaleString()} medicamentos.`
+        message: `Sincronización completada con éxito. Se indexaron ${result.totalRecords.toLocaleString()} productos únicos de ${result.totalExcelRows?.toLocaleString() || result.totalRecords} filas del Excel${dupText}.`
       });
       await loadStatus();
     } catch (err) {
@@ -204,7 +207,7 @@ export function CatalogUploadModule({ onBack }) {
         {/* TARJETAS DE ESTADO */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           
-          {/* Tarjeta 1: Medicamentos Locales */}
+          {/* Tarjeta 1: Productos Locales */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
             <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
               <Database className="w-3.5 h-3.5 text-blue-600" />
@@ -213,7 +216,11 @@ export function CatalogUploadModule({ onBack }) {
             <div className="text-xl font-mono font-bold text-slate-900">
               {catalogStatus.localCount.toLocaleString()}
             </div>
-            <p className="text-[10px] text-slate-400">Medicamentos indexados</p>
+            <p className="text-[10px] text-slate-400">
+              {catalogStatus.totalExcelRows > 0
+                ? `${catalogStatus.localCount.toLocaleString()} productos únicos (${catalogStatus.totalExcelRows.toLocaleString()} filas en Excel)`
+                : 'Productos indexados'}
+            </p>
           </div>
 
           {/* Tarjeta 2: Última Sincronización */}
@@ -240,11 +247,11 @@ export function CatalogUploadModule({ onBack }) {
             </div>
             <div className="text-xs font-bold">
               {isVerifying ? (
-                <span className="text-slate-400">Verificando...</span>
+                <span className="text-slate-400">Verificando en Drive...</span>
               ) : serverState === 'up_to_date' ? (
                 <span className="text-emerald-700">Actualizado</span>
               ) : serverState === 'server_updated' ? (
-                <span className="text-blue-600">Nueva versión</span>
+                <span className="text-blue-600">Nueva versión en Drive</span>
               ) : (
                 <span className="text-amber-600">Sin conexión</span>
               )}
@@ -303,7 +310,7 @@ export function CatalogUploadModule({ onBack }) {
                   Lote {syncProgress.currentBatch} de {syncProgress.totalBatches}
                 </span>
                 <span className="text-[10px] text-slate-400">
-                  {syncProgress.totalRecords?.toLocaleString()} medicamentos procesados
+                  {syncProgress.totalRecords?.toLocaleString()} productos procesados
                 </span>
               </div>
             )}
@@ -321,7 +328,7 @@ export function CatalogUploadModule({ onBack }) {
               <span>Forzar Sincronización Manual</span>
             </button>
             <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-              Descarga la versión más reciente del archivo desde el Servidor Central y reconstruye el índice local de medicamentos en este dispositivo.
+              Descarga la versión más reciente del archivo desde el Servidor Central y reconstruye el índice local de productos en este dispositivo.
             </p>
           </div>
         )}

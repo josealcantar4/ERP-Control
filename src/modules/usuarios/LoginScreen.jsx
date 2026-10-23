@@ -35,7 +35,7 @@ export function LoginScreen({ onLoginSuccess }) {
           ERP Control
         </h1>
         <p className="text-xs text-slate-500 font-medium">
-          Control de Transferencias de Medicamentos
+          Control de Transferencias de Productos
         </p>
       </div>
 

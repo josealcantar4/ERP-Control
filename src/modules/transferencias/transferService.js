@@ -1,6 +1,6 @@
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
-  collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy
+  collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs
 } from 'firebase/firestore';
 
 const LOCAL_STORAGE_KEY = 'erp_control_solicitudes';
@@ -8,13 +8,24 @@ const LOCAL_STORAGE_KEY = 'erp_control_solicitudes';
 function getLocalSolicitudes() {
   const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
   if (raw) {
-    try { return JSON.parse(raw); } catch { return []; }
+    try {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        // Excluir automáticamente cualquier borrador sin productos ("borrador basura")
+        return list.filter(s => !(s.estado === 'borrador' && (!s.items || s.items.length === 0)));
+      }
+      return [];
+    } catch {
+      return [];
+    }
   }
   return [];
 }
 
 function saveLocalSolicitudes(list) {
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+  // Asegurar que nunca se persistan en el almacenamiento local borradores vacíos
+  const cleanList = (list || []).filter(s => !(s.estado === 'borrador' && (!s.items || s.items.length === 0)));
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cleanList));
   window.dispatchEvent(new Event('erp_solicitudes_changed'));
 }
 
@@ -27,6 +38,69 @@ function showNotification(title, body) {
 let isInitialLoad = true;
 
 export const transferService = {
+  getLocalSolicitudes() {
+    return getLocalSolicitudes();
+  },
+
+  // Elimina de forma silenciosa un borrador vacío de Firebase y almacenamiento local
+  async deleteEmptyDraft(solicitudId) {
+    if (!solicitudId) return;
+    if (isFirebaseConfigured) {
+      try {
+        await deleteDoc(doc(db, 'solicitudes', solicitudId));
+      } catch (err) {
+        console.warn('Error eliminando borrador vacío en Firebase:', err);
+      }
+    }
+    const current = getLocalSolicitudes();
+    saveLocalSolicitudes(current.filter(s => s.id !== solicitudId));
+  },
+
+  // Purgar múltiples borradores vacíos detectados
+  async purgeEmptyDrafts(ids) {
+    if (!ids || ids.length === 0) return;
+    for (const id of ids) {
+      if (isFirebaseConfigured) {
+        try {
+          await deleteDoc(doc(db, 'solicitudes', id));
+        } catch (e) {
+          console.warn('Error purgando borrador basura de Firebase:', id, e);
+        }
+      }
+    }
+  },
+
+  // Forzar verificación y obtención de solicitudes actualizadas desde Firebase
+  async refreshSolicitudes() {
+    if (isFirebaseConfigured) {
+      try {
+        const q = query(collection(db, 'solicitudes'), orderBy('fecha', 'desc'));
+        const snap = await getDocs(q);
+        const rawItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const validItems = [];
+        const emptyDraftIds = [];
+        for (const item of rawItems) {
+          if (item.estado === 'borrador' && (!item.items || item.items.length === 0)) {
+            emptyDraftIds.push(item.id);
+          } else {
+            validItems.push(item);
+          }
+        }
+
+        if (emptyDraftIds.length > 0) {
+          this.purgeEmptyDrafts(emptyDraftIds);
+        }
+
+        saveLocalSolicitudes(validItems);
+        return validItems;
+      } catch (err) {
+        console.warn('Error al verificar nuevas solicitudes en Firebase:', err);
+      }
+    }
+    return getLocalSolicitudes();
+  },
+
   subscribeSolicitudes(onUpdate) {
     const currentUser = JSON.parse(localStorage.getItem('erp_current_user') || '{}');
 
@@ -61,8 +135,23 @@ export const transferService = {
               isInitialLoad = false;
             }
 
-            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            onUpdate(items);
+            const rawItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const validItems = [];
+            const emptyDraftIds = [];
+            for (const item of rawItems) {
+              if (item.estado === 'borrador' && (!item.items || item.items.length === 0)) {
+                emptyDraftIds.push(item.id);
+              } else {
+                validItems.push(item);
+              }
+            }
+
+            if (emptyDraftIds.length > 0) {
+              this.purgeEmptyDrafts(emptyDraftIds);
+            }
+
+            saveLocalSolicitudes(validItems);
+            onUpdate(validItems);
           },
           (err) => {
             console.warn('Fallback a almacenamiento local de solicitudes:', err);
@@ -87,10 +176,19 @@ export const transferService = {
 
   async getActiveDraft(username) {
     const list = getLocalSolicitudes();
-    return list.find(s => s.usuarioSolicitante === username && s.estado === 'borrador') || null;
+    return list.find(s => s.usuarioSolicitante === username && s.estado === 'borrador' && s.items && s.items.length > 0) || null;
   },
 
   async saveDraft(solicitud) {
+    // REGLA CRÍTICA: No guardar si no tiene al menos un producto agregado
+    // Si está vacío, se elimina de inmediato para no generar borradores basura
+    if (!solicitud || !solicitud.items || solicitud.items.length === 0) {
+      if (solicitud && solicitud.id) {
+        await this.deleteEmptyDraft(solicitud.id);
+      }
+      return null;
+    }
+
     const docData = {
       id: solicitud.id,
       folio: solicitud.folio || '',

@@ -6,3 +6,5 @@ export { CaptureQuantityModal } from './CaptureQuantityModal';
 export { OfflineIndicator } from './OfflineIndicator';
 export { PWAInstallPrompt } from './PWAInstallPrompt';
 export { ReloadPrompt } from './ReloadPrompt';
+export { ErrorBoundary } from './ErrorBoundary';
+export { ScreenRefreshSpinner } from './ScreenRefreshSpinner';

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Check, Package } from 'lucide-react';
 
 export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
@@ -32,9 +33,9 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
     onConfirmQuantity(qty);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
+  const modalContent = (
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto">
         
         {/* iOS Pull Indicator on Mobile */}
         <div className="sm:hidden w-12 h-1 bg-slate-300 rounded-full mx-auto my-2.5"></div>
@@ -45,7 +46,7 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
             <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
               <Package className="w-4 h-4" />
             </div>
-            <h3 className="text-sm font-semibold text-slate-900">Medicamento Identificado</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Producto Identificado</h3>
           </div>
           <button
             onClick={onClose}
@@ -111,4 +112,6 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

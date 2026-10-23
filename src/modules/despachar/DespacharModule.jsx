@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -20,13 +21,29 @@ import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 
-export function DespacharModule({ currentUser, onBack }) {
-  const [solicitudes, setSolicitudes] = useState([]);
+export function DespacharModule({ currentUser, onBack, onRefresh }) {
+  const [solicitudes, setSolicitudes] = useState(() => {
+    return transferService.getLocalSolicitudes() || [];
+  });
   const [selectedSolicitud, setSelectedSolicitud] = useState(null);
   const [detailSolicitud, setDetailSolicitud] = useState(null);
+  const [isLoadingSolicitudes, setIsLoadingSolicitudes] = useState(() => {
+    return (transferService.getLocalSolicitudes() || []).length === 0;
+  });
 
   // Estado global de carga
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Helper para persistir orden seleccionada en sessionStorage y restaurar scroll
+  const handleSelectSolicitud = (sol) => {
+    setSelectedSolicitud(sol);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    if (sol && sol.id) {
+      sessionStorage.setItem('erp_despachar_solicitud_id', sol.id);
+    } else {
+      sessionStorage.removeItem('erp_despachar_solicitud_id');
+    }
+  };
 
   // Extra medicine states
   const [isExtraModalOpen, setIsExtraModalOpen] = useState(false);
@@ -97,11 +114,16 @@ export function DespacharModule({ currentUser, onBack }) {
       }
 
       setSolicitudes(filtered);
+      setIsLoadingSolicitudes(false);
 
-      if (selectedSolicitud) {
-        const refreshed = filtered.find(s => s.id === selectedSolicitud.id);
+      const savedId = sessionStorage.getItem('erp_despachar_solicitud_id');
+      const targetId = selectedSolicitud?.id || savedId;
+      if (targetId) {
+        const refreshed = filtered.find(s => s.id === targetId);
         if (refreshed) {
           setSelectedSolicitud(refreshed);
+        } else if (!filtered.some(s => s.id === targetId)) {
+          sessionStorage.removeItem('erp_despachar_solicitud_id');
         }
       }
     });
@@ -189,22 +211,19 @@ export function DespacharModule({ currentUser, onBack }) {
 
     setIsSearching(true);
     try {
-      // 1. MEJORA: Si escribes un número (EAN exacto), lo busca y lo auto-selecciona
-      const isNumeric = /^\d+$/.test(query);
-      if (isNumeric) {
-        const exactItem = await catalogService.findByBarcode(query);
-        if (exactItem) {
-          handleSelectExtraItem(exactItem); // Se salta la lista y abre la ventana de cantidad
-          setIsSearching(false);
-          return;
-        }
+      // 1. Si coincide exactamente con un código de producto (ej. "01", "001", "1", EAN), auto-seleccionar
+      const exactItem = await catalogService.findByBarcode(query);
+      if (exactItem) {
+        handleSelectExtraItem(exactItem); // Se salta la lista y abre la ventana de cantidad
+        setIsSearching(false);
+        return;
       }
 
-      // 2. Si es texto, busca la lista de coincidencias normales
+      // 2. Si no es un código exacto, busca la lista de coincidencias en catálogo
       const results = await catalogService.searchMedicines(query);
       setExtraResults(results || []);
     } catch (err) {
-      console.error('Error al buscar medicamento:', err);
+      console.error('Error al buscar producto:', err);
       setExtraResults([]);
     } finally {
       setIsSearching(false);
@@ -235,7 +254,7 @@ export function DespacharModule({ currentUser, onBack }) {
         isOpen: true,
         type: 'alert',
         title: 'Error',
-        message: err.message || 'No se pudo agregar el medicamento extra.',
+        message: err.message || 'No se pudo agregar el producto extra.',
         confirmText: 'Entendido',
         onConfirm: closeDialog
       });
@@ -251,7 +270,7 @@ export function DespacharModule({ currentUser, onBack }) {
       isOpen: true,
       type: 'confirm',
       title: 'Eliminar Extra',
-      message: '¿Estás seguro que deseas quitar este medicamento extra de la lista de envío?',
+      message: '¿Estás seguro que deseas quitar este producto extra de la lista de envío?',
       variant: 'danger',
       confirmText: 'Eliminar',
       cancelText: 'Cancelar',
@@ -268,18 +287,15 @@ export function DespacharModule({ currentUser, onBack }) {
     });
   };
 
-  const handleExtraScanDetected = async (barcode) => {
+  const handleExtraScanDetected = async (barcode, itemObject) => {
     setIsScannerOpen(false);
     setIsProcessing(true);
 
     try {
-      let item = await catalogService.findByBarcode(barcode);
-
-      if (!item) {
-        const results = await catalogService.searchMedicines(barcode);
-        if (results && results.length > 0) {
-          item = results[0];
-        }
+      const cleanBarcode = String(barcode || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
+      let item = itemObject;
+      if (!item && cleanBarcode) {
+        item = await catalogService.findByBarcode(cleanBarcode);
       }
 
       if (item) {
@@ -288,8 +304,8 @@ export function DespacharModule({ currentUser, onBack }) {
         setDialog({
           isOpen: true,
           type: 'prompt',
-          title: 'Medicamento Extra no encontrado',
-          message: `El código "${barcode}" no se encuentra registrado.\nEscribe el nombre del producto extra:`,
+          title: 'Producto Extra no encontrado',
+          message: `El código "${cleanBarcode}" no se encuentra registrado.\nEscribe el nombre del producto extra:`,
           inputPlaceholder: 'Ej. Solución Fisiológica 500ml',
           inputValue: '',
           confirmText: 'Seleccionar',
@@ -298,9 +314,9 @@ export function DespacharModule({ currentUser, onBack }) {
             const desc = dialog.inputValue?.trim();
             closeDialog();
             if (desc) {
-              const newItem = { codigo: barcode, descripcion: desc };
+              const newItem = { codigo: cleanBarcode, descripcion: desc };
               handleSelectExtraItem(newItem);
-              await catalogService.saveToCleanCatalog(barcode, desc);
+              await catalogService.saveToCleanCatalog(cleanBarcode, desc);
             }
           },
           onCancel: closeDialog
@@ -322,7 +338,7 @@ export function DespacharModule({ currentUser, onBack }) {
         isOpen: true,
         type: 'confirm',
         title: 'Productos pendientes en caja',
-        message: 'Aún tienes medicamentos sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho de todas formas?',
+        message: 'Aún tienes productos sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho de todas formas?',
         confirmText: 'Finalizar de todos modos',
         cancelText: 'Continuar empacando',
         variant: 'danger',
@@ -331,7 +347,7 @@ export function DespacharModule({ currentUser, onBack }) {
           setIsProcessing(true);
           try {
             await transferService.completeSolicitud(selectedSolicitud.id);
-            setSelectedSolicitud(null);
+            handleSelectSolicitud(null);
           } finally {
             setIsProcessing(false);
           }
@@ -354,7 +370,7 @@ export function DespacharModule({ currentUser, onBack }) {
         setIsProcessing(true);
         try {
           await transferService.completeSolicitud(selectedSolicitud.id);
-          setSelectedSolicitud(null);
+          handleSelectSolicitud(null);
         } finally {
           setIsProcessing(false);
         }
@@ -367,13 +383,14 @@ export function DespacharModule({ currentUser, onBack }) {
     <div className="max-w-3xl mx-auto space-y-6 pb-20 relative">
 
       {/* PANTALLA DE CARGA GLOBAL */}
-      {isProcessing && (
+      {isProcessing && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fade-in">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             <span className="text-sm font-bold text-slate-800">Procesando...</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Top Header Navigation */}
@@ -381,7 +398,7 @@ export function DespacharModule({ currentUser, onBack }) {
         <button
           onClick={() => {
             if (selectedSolicitud) {
-              setSelectedSolicitud(null);
+              handleSelectSolicitud(null);
             } else {
               onBack();
             }
@@ -399,7 +416,7 @@ export function DespacharModule({ currentUser, onBack }) {
 
       {!selectedSolicitud ? (
         /* MAIN LIST VIEW */
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-in">
 
           {/* REPORTE DE FALTANTES */}
           {reportesIncompletos.length > 0 && (
@@ -453,7 +470,17 @@ export function DespacharModule({ currentUser, onBack }) {
               </span>
             </div>
 
-            {readyToDispatch.length === 0 ? (
+            {isLoadingSolicitudes ? (
+              <div className="grid grid-cols-1 gap-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3 animate-pulse">
+                    <div className="h-5 bg-slate-200 rounded-xl w-1/3"></div>
+                    <div className="h-4 bg-slate-100 rounded-xl w-1/2"></div>
+                    <div className="h-6 bg-slate-100 rounded-2xl w-2/3"></div>
+                  </div>
+                ))}
+              </div>
+            ) : readyToDispatch.length === 0 ? (
               <div className="bg-white rounded-3xl p-8 border border-slate-200/80 text-center space-y-1">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-70" />
                 <p className="text-sm font-semibold text-slate-700">Sin pedidos pendientes de surtido</p>
@@ -471,7 +498,7 @@ export function DespacharModule({ currentUser, onBack }) {
                   return (
                     <div
                       key={sol.id}
-                      onClick={() => setSelectedSolicitud(sol)}
+                      onClick={() => handleSelectSolicitud(sol)}
                       className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group ios-card-hover"
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -576,7 +603,7 @@ export function DespacharModule({ currentUser, onBack }) {
                           )}
                         </div>
                         <p className="text-xs text-slate-400">
-                          {sol.usuarioSolicitante} está capturando ({sol.items?.length || 0} medicamentos hasta ahora)
+                          {sol.usuarioSolicitante} está capturando ({sol.items?.length || 0} productos hasta ahora)
                         </p>
                       </div>
 
@@ -658,7 +685,7 @@ export function DespacharModule({ currentUser, onBack }) {
         </div>
       ) : (
         /* DETAIL TO-DO CHECKLIST VIEW */
-        <div className="space-y-4">
+        <div key={selectedSolicitud.id} className="space-y-4 animate-fade-in">
 
           {/* Header Card */}
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
@@ -791,11 +818,11 @@ export function DespacharModule({ currentUser, onBack }) {
       )}
 
       {/* Extra Medicine Search Modal */}
-      {isExtraModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
+      {isExtraModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto max-h-[90vh]">
             <div className="p-5 pb-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900">Agregar Medicamento Extra</h3>
+              <h3 className="text-base font-bold text-slate-900">Agregar Producto Extra</h3>
               <button
                 onClick={resetExtraModal}
                 className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer"
@@ -822,8 +849,21 @@ export function DespacharModule({ currentUser, onBack }) {
                     placeholder="Buscar por nombre o fármaco..."
                     value={extraQuery}
                     onChange={(e) => setExtraQuery(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500"
                   />
+                  {extraQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtraQuery('');
+                        setExtraResults([]);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+                      title="Limpiar búsqueda"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
                 <button
                   type="submit"
@@ -856,7 +896,8 @@ export function DespacharModule({ currentUser, onBack }) {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Modal de Cantidad (Mismo componente usado en Solicitar) */}

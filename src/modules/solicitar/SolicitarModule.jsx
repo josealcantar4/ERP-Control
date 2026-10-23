@@ -10,7 +10,7 @@ import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 
-export function SolicitarModule({ currentUser, onBack }) {
+export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [destinatarios, setDestinatarios] = useState([]);
   const [selectedDestinatarioId, setSelectedDestinatarioId] = useState('');
   
@@ -26,11 +26,21 @@ export function SolicitarModule({ currentUser, onBack }) {
   });
 
   const [savingStatus, setSavingStatus] = useState('saved');
-  const [activeTab, setActiveTab] = useState('captura');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('erp_solicitar_active_tab') || 'captura';
+  });
   const [historialList, setHistorialList] = useState([]);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [scannedMedicine, setScannedMedicine] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('erp_solicitar_active_tab', activeTab);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    if (activeTab === 'historial' && onRefresh) {
+      onRefresh();
+    }
+  }, [activeTab]);
 
   const [dialog, setDialog] = useState({
     isOpen: false, type: 'alert', title: '', message: '', variant: 'primary', confirmText: 'Aceptar', onConfirm: () => {}
@@ -42,7 +52,6 @@ export function SolicitarModule({ currentUser, onBack }) {
     async function init() {
       const matrizUsers = await userService.getMatrizDestinatarios();
       setDestinatarios(matrizUsers);
-      if (matrizUsers.length > 0) setSelectedDestinatarioId(matrizUsers[0].username);
 
       const draft = await transferService.getActiveDraft(currentUser.username);
       if (draft && draft.items && draft.items.length > 0) {
@@ -54,44 +63,75 @@ export function SolicitarModule({ currentUser, onBack }) {
     init();
 
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      setHistorialList(list.filter(s => s.usuarioSolicitante === currentUser.username));
+      setHistorialList(
+        list.filter(s => {
+          if (s.usuarioSolicitante !== currentUser.username) return false;
+          if (s.estado === 'borrador' && (!s.items || s.items.length === 0)) return false;
+          return true;
+        })
+      );
     });
     return () => unsubscribe();
   }, [currentUser]);
 
   const triggerAutoSave = async (draft, folioInput = folioDigits) => {
+    // REGLA: Si no hay productos, NO guardar borrador. Si ya existía, eliminarlo de inmediato.
+    if (!draft || !draft.items || draft.items.length === 0) {
+      if (draft?.id) {
+        await transferService.deleteEmptyDraft(draft.id);
+      }
+      setSavingStatus('saved');
+      return;
+    }
+
     setSavingStatus('saving');
     try {
       const fullFolio = folioInput ? `TR${folioInput}` : '';
       await transferService.saveDraft({ ...draft, folio: fullFolio });
       setSavingStatus('saved');
-    } catch (e) { setSavingStatus('saved'); }
+    } catch (e) {
+      setSavingStatus('saved');
+    }
   };
 
   const handleDestinatarioChange = (username) => {
     setSelectedDestinatarioId(username);
+    if (!username) {
+      const updated = { ...currentDraft, usuarioDestino: '', areaDestino: '' };
+      setCurrentDraft(updated);
+      if (updated.items && updated.items.length > 0) {
+        triggerAutoSave(updated);
+      }
+      return;
+    }
     const destUser = destinatarios.find(d => d.username === username);
     if (destUser) {
       const updated = { ...currentDraft, usuarioDestino: destUser.username, areaDestino: destUser.area };
       setCurrentDraft(updated);
-      triggerAutoSave(updated);
+      if (updated.items && updated.items.length > 0) {
+        triggerAutoSave(updated);
+      }
     }
   };
 
-  const handleBarcodeDetected = async (barcode) => {
+  const handleBarcodeDetected = async (barcode, itemObject) => {
     setIsScannerOpen(false);
-    const item = await catalogService.findByBarcode(barcode);
+    const cleanBarcode = String(barcode || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
+    let item = itemObject;
+    if (!item && cleanBarcode) {
+      item = await catalogService.findByBarcode(cleanBarcode);
+    }
     if (!item) {
       setDialog({
-        isOpen: true, type: 'prompt', title: 'Medicamento no registrado',
-        message: `El código "${barcode}" no se encontró en el catálogo.\nEscribe la descripción del producto para agregarlo:`,
+        isOpen: true, type: 'prompt', title: 'Producto no registrado',
+        message: `El código "${cleanBarcode}" no se encontró en el catálogo.\nEscribe la descripción del producto para agregarlo:`,
         inputPlaceholder: 'Ej. Paracetamol 500mg', confirmText: 'Continuar', cancelText: 'Cancelar',
         onConfirm: async () => {
           const val = dialog.inputValue?.trim();
           closeDialog();
           if (val) {
-            setScannedMedicine({ codigo: barcode, descripcion: val });
-            await catalogService.saveToCleanCatalog(barcode, val);
+            setScannedMedicine({ codigo: cleanBarcode, descripcion: val });
+            await catalogService.saveToCleanCatalog(cleanBarcode, val);
             setIsQuantityOpen(true);
           }
         }, onCancel: closeDialog
@@ -106,7 +146,7 @@ export function SolicitarModule({ currentUser, onBack }) {
     setIsQuantityOpen(false);
     if (!scannedMedicine) return;
 
-    const existingIndex = currentDraft.items.findIndex(i => i.codigo === scannedMedicine.codigo);
+    const existingIndex = currentDraft.items.findIndex(i => String(i.codigo) === String(scannedMedicine.codigo));
     let newItems = [...currentDraft.items];
 
     if (existingIndex >= 0) {
@@ -128,23 +168,47 @@ export function SolicitarModule({ currentUser, onBack }) {
     triggerAutoSave(updated);
   };
 
-  const handleRemoveItem = (index) => {
+  const handleRemoveItem = async (index) => {
     const newItems = currentDraft.items.filter((_, i) => i !== index);
     const updated = { ...currentDraft, items: newItems };
     setCurrentDraft(updated);
-    triggerAutoSave(updated);
+
+    if (newItems.length === 0) {
+      // Si se quedó sin productos, eliminar el borrador de inmediato para no dejar basura
+      if (currentDraft?.id) {
+        await transferService.deleteEmptyDraft(currentDraft.id);
+      }
+      setSavingStatus('saved');
+    } else {
+      triggerAutoSave(updated);
+    }
   };
 
   const handleSubmitSolicitud = async () => {
+    if (!selectedDestinatarioId) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Destinatario Requerido',
+        message: 'Por favor selecciona a quién solicitas la transferencia en el menú desplegable.',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
     if (!folioDigits.trim()) {
       setDialog({ isOpen: true, type: 'alert', title: 'Folio Requerido', message: 'Debes ingresar los dígitos numéricos del folio de transferencia.', confirmText: 'Entendido', onConfirm: closeDialog });
       return;
     }
     if (!currentDraft.items || currentDraft.items.length === 0) {
-      setDialog({ isOpen: true, type: 'alert', title: 'Lista vacía', message: 'Agrega al menos un medicamento escaneando su código.', confirmText: 'Entendido', onConfirm: closeDialog });
+      setDialog({ isOpen: true, type: 'alert', title: 'Lista vacía', message: 'Agrega al menos un producto escaneando su código.', confirmText: 'Entendido', onConfirm: closeDialog });
       return;
     }
-    const destUser = destinatarios.find(d => d.username === selectedDestinatarioId) || destinatarios[0];
+    const destUser = destinatarios.find(d => d.username === selectedDestinatarioId);
+    if (!destUser) {
+      setDialog({ isOpen: true, type: 'alert', title: 'Destinatario Inválido', message: 'El destinatario seleccionado no es válido. Por favor selecciona uno de la lista.', confirmText: 'Entendido', onConfirm: closeDialog });
+      return;
+    }
 
     setDialog({
       isOpen: true, type: 'confirm', title: 'Confirmar Envío a Matriz',
@@ -157,7 +221,17 @@ export function SolicitarModule({ currentUser, onBack }) {
           await transferService.saveDraft(finalized);
           await transferService.submitSolicitud(finalized.id);
 
-          setCurrentDraft({ id: 'sol-' + Date.now(), sucursalOrigen: currentUser?.sede, usuarioSolicitante: currentUser?.username, usuarioDestino: destUser.username, areaDestino: destUser.area, estado: 'borrador', fecha: new Date().toISOString(), items: [] });
+          setCurrentDraft({
+            id: 'sol-' + Date.now(),
+            sucursalOrigen: currentUser?.sede,
+            usuarioSolicitante: currentUser?.username,
+            usuarioDestino: '',
+            areaDestino: '',
+            estado: 'borrador',
+            fecha: new Date().toISOString(),
+            items: []
+          });
+          setSelectedDestinatarioId('');
           setFolioDigits('');
           setActiveTab('historial');
         } catch (e) {}
@@ -189,7 +263,7 @@ export function SolicitarModule({ currentUser, onBack }) {
       isOpen: true,
       type: 'confirm',
       title: 'Eliminar Borrador',
-      message: `¿Deseas eliminar permanentemente el borrador ${sol.folio || 'Sin Folio'} con ${sol.items?.length || 0} medicamentos?`,
+      message: `¿Deseas eliminar permanentemente el borrador ${sol.folio || 'Sin Folio'} con ${sol.items?.length || 0} productos?`,
       variant: 'danger',
       confirmText: 'Eliminar Borrador',
       cancelText: 'Cancelar',
@@ -202,12 +276,13 @@ export function SolicitarModule({ currentUser, onBack }) {
               id: 'sol-' + Date.now(),
               sucursalOrigen: currentUser?.sede || 'Sucursal',
               usuarioSolicitante: currentUser?.username,
-              usuarioDestino: destinatarios[0]?.username || '',
-              areaDestino: destinatarios[0]?.area || '',
+              usuarioDestino: '',
+              areaDestino: '',
               estado: 'borrador',
               fecha: new Date().toISOString(),
               items: []
             });
+            setSelectedDestinatarioId('');
             setFolioDigits('');
           }
         } catch (err) {
@@ -233,15 +308,32 @@ export function SolicitarModule({ currentUser, onBack }) {
           <ArrowLeft className="w-3.5 h-3.5" /><span>Volver al Inicio</span>
         </button>
         <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium">
-          <button onClick={() => setActiveTab('captura')} className={`px-3 py-1 rounded-full cursor-pointer ${activeTab === 'captura' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'}`}>Captura</button>
-          <button onClick={() => setActiveTab('historial')} className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer ${activeTab === 'historial' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'}`}>
-            <History className="w-3 h-3" /><span>Historial ({historialList.length})</span>
+          <button
+            onClick={() => setActiveTab('captura')}
+            className={`px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
+              activeTab === 'captura'
+                ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Captura
+          </button>
+          <button
+            onClick={() => setActiveTab('historial')}
+            className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all duration-200 ${
+              activeTab === 'historial'
+                ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <History className="w-3 h-3" />
+            <span>Historial ({historialList.length})</span>
           </button>
         </div>
       </div>
 
       {activeTab === 'captura' ? (
-        <>
+        <div key="tab-captura" className="space-y-5 animate-fade-in">
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Detalles de Envío</span>
@@ -249,9 +341,20 @@ export function SolicitarModule({ currentUser, onBack }) {
 
             {/* Selector de Destinatario */}
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">¿A quién solicitas la transferencia?</label>
-              <select value={selectedDestinatarioId} onChange={(e) => handleDestinatarioChange(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-900 focus:outline-none focus:border-blue-500">
-                {destinatarios.map((d) => <option key={d.username} value={d.username}>{d.nombre} — {d.area}</option>)}
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                ¿A quién solicitas la transferencia? *
+              </label>
+              <select
+                value={selectedDestinatarioId}
+                onChange={(e) => handleDestinatarioChange(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-slate-900 focus:outline-none focus:border-blue-500 transition-colors"
+              >
+                <option value="">-- Seleccionar destinatario --</option>
+                {destinatarios.map((d) => (
+                  <option key={d.username} value={d.username}>
+                    {d.nombre} — {d.area}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -267,7 +370,9 @@ export function SolicitarModule({ currentUser, onBack }) {
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '');
                     setFolioDigits(val);
-                    triggerAutoSave(currentDraft, val);
+                    if (currentDraft.items && currentDraft.items.length > 0) {
+                      triggerAutoSave(currentDraft, val);
+                    }
                   }}
                   className="w-full bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:bg-white"
                 />
@@ -278,13 +383,13 @@ export function SolicitarModule({ currentUser, onBack }) {
           <div className="text-center space-y-2">
             <button onClick={() => setIsScannerOpen(true)} className="w-full py-5 px-6 rounded-3xl bg-blue-600 hover:bg-blue-500 text-white shadow-xl shadow-blue-500/25 flex flex-col items-center justify-center gap-2 cursor-pointer group">
               <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform"><ScanBarcode className="w-8 h-8 text-white" /></div>
-              <div className="space-y-0.5"><span className="text-base font-bold tracking-tight">Escanear Código de Barras</span><p className="text-xs text-blue-100">Toca para capturar medicamentos</p></div>
+              <div className="space-y-0.5"><span className="text-base font-bold tracking-tight">Escanear Código de Barras</span><p className="text-xs text-blue-100">Toca para capturar productos</p></div>
             </button>
           </div>
 
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
             <div className="px-5 py-3.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Medicamentos ({currentDraft.items?.length || 0})</h3>
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Productos ({currentDraft.items?.length || 0})</h3>
               <div className="text-[11px] text-slate-500">
                 {savingStatus === 'saving' ? <span className="text-blue-600 animate-pulse">Guardando...</span> : <span className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Guardado</span>}
               </div>
@@ -321,9 +426,9 @@ export function SolicitarModule({ currentUser, onBack }) {
               </div>
             )}
           </div>
-        </>
+        </div>
       ) : (
-        <div className="space-y-3">
+        <div key="tab-historial" className="space-y-3 animate-fade-in">
           {historialList.length === 0 ? (
             <div className="bg-white rounded-3xl p-8 border border-slate-200/80 text-center space-y-1">
               <History className="w-8 h-8 text-slate-300 mx-auto" />
@@ -352,6 +457,7 @@ export function SolicitarModule({ currentUser, onBack }) {
                         setFolioDigits(sol.folio || '');
                       }
                       setActiveTab('captura');
+                      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
                     } else {
                       // Abrir vista detallada para completadas o en tránsito
                       setDetailSolicitud(sol);
@@ -401,7 +507,7 @@ export function SolicitarModule({ currentUser, onBack }) {
 
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span>
-                      {sol.items?.length || 0} medicamentos &bull;{' '}
+                      {sol.items?.length || 0} productos &bull;{' '}
                       {new Date(sol.fecha).toLocaleDateString('es-MX')}
                     </span>
                     <span className="text-[11px] font-semibold text-blue-600 group-hover:underline flex items-center gap-1">

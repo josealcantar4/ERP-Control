@@ -1,13 +1,45 @@
-import React from 'react';
-import { SendHorizontal, Boxes, ChevronRight, Building, Users, Shield, PackageOpen, Database } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { SendHorizontal, Boxes, ChevronRight, PackageOpen, Database } from 'lucide-react';
+import { transferService } from '../modules/transferencias/transferService';
 
-export function DashboardScreen({ currentUser, onNavigate }) {
+export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
+  const [solicitudes, setSolicitudes] = useState(() => transferService.getLocalSolicitudes() || []);
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
   const hasDespachar = currentUser?.roles?.includes('despachar');
   const isAdmin = currentUser?.username?.toLowerCase() === 'administrador';
 
+  useEffect(() => {
+    const unsub = transferService.subscribeSolicitudes((list) => {
+      setSolicitudes(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Conteos en vivo
+  const entrantesCount = solicitudes.filter(
+    s => s.estado === 'completada' && s.usuarioSolicitante === currentUser?.username
+  ).length;
+
+  const isAdminOrNoRestrictions =
+    currentUser?.username?.toLowerCase() === 'administrador' ||
+    currentUser?.roles?.includes('admin');
+
+  const pendientesDespachoCount = solicitudes.filter(s => {
+    if (s.estado !== 'enviada' && s.estado !== 'en_despacho') return false;
+    if (isAdminOrNoRestrictions) return true;
+    const userArea = (currentUser?.area || '').toLowerCase();
+    const areaDest = (s.areaDestino || '').toLowerCase();
+    if (userArea.includes('patente')) {
+      return areaDest.includes('patente') || s.usuarioDestino === currentUser?.username;
+    }
+    if (userArea.includes('generic') || userArea.includes('genéric')) {
+      return (areaDest.includes('generic') || areaDest.includes('genéric')) || s.usuarioDestino === currentUser?.username;
+    }
+    return true;
+  }).length;
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 pt-2 pb-16">
+    <div className="max-w-3xl mx-auto space-y-6 pt-2 pb-16 animate-fade-in select-none">
       
       <div className="space-y-1">
         <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">
@@ -25,7 +57,7 @@ export function DashboardScreen({ currentUser, onNavigate }) {
         
         {/* CARD 1: SOLICITAR PEDIDO */}
         {hasSolicitar && (
-          <div onClick={() => onNavigate('solicitar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985]">
+          <div onClick={() => onNavigate('solicitar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-sky-400 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 mb-5 group-hover:scale-105 transition-transform">
                 <SendHorizontal className="w-7 h-7" />
@@ -41,13 +73,18 @@ export function DashboardScreen({ currentUser, onNavigate }) {
 
         {/* CARD 1B: RECIBIR PEDIDO (Aparece si tiene rol de Solicitar) */}
         {hasSolicitar && (
-          <div onClick={() => onNavigate('recibir')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985]">
+          <div onClick={() => onNavigate('recibir')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-400 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-5 group-hover:scale-105 transition-transform">
                 <PackageOpen className="w-7 h-7" />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">Sucursal</span>
+                {entrantesCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 animate-fade-in">
+                    {entrantesCount} {entrantesCount === 1 ? 'por recibir' : 'por recibir'}
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-bold text-slate-900 mt-1 tracking-tight">Recibir Pedido</h2>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">Confirma las cajas de transferencia enviadas desde la matriz y reporta faltantes.</p>
@@ -57,13 +94,18 @@ export function DashboardScreen({ currentUser, onNavigate }) {
 
         {/* CARD 2: DESPACHAR PEDIDO */}
         {hasDespachar && (
-          <div onClick={() => onNavigate('despachar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985]">
+          <div onClick={() => onNavigate('despachar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-5 group-hover:scale-105 transition-transform">
                 <Boxes className="w-7 h-7" />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-emerald-600">Matriz / Bodega</span>
+                {pendientesDespachoCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 animate-fade-in">
+                    {pendientesDespachoCount} {pendientesDespachoCount === 1 ? 'pendiente' : 'pendientes'}
+                  </span>
+                )}
               </div>
               <h2 className="text-xl font-bold text-slate-900 mt-1 tracking-tight">Despachar Pedido</h2>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">Revisa pedidos, surte productos físicos y agrega extras.</p>
@@ -73,7 +115,7 @@ export function DashboardScreen({ currentUser, onNavigate }) {
 
         {/* CARD 3: ADMIN */}
         {isAdmin && (
-          <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[160px] active:scale-[0.985] sm:col-span-2">
+          <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[160px] active:scale-[0.985] sm:col-span-2 ios-card-hover">
              <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform shrink-0">

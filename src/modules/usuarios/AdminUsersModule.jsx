@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   Users,
@@ -23,7 +24,7 @@ import { userService } from './userService';
 import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
 
-export function AdminUsersModule({ currentUser, onBack }) {
+export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem('erp_admin_active_tab') || 'usuarios';
   });
@@ -75,30 +76,36 @@ export function AdminUsersModule({ currentUser, onBack }) {
     const unsubSedes = organizationService.subscribeSedes((list) => setSedesList(list));
     const unsubAreas = organizationService.subscribeAreas((list) => setAreasList(list));
 
+    const handleRefreshedUsers = (e) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setUsersList(e.detail);
+      }
+    };
+    window.addEventListener('erp_users_refreshed', handleRefreshedUsers);
+
     return () => {
       if (typeof unsubUsers === 'function') unsubUsers();
       if (typeof unsubSedes === 'function') unsubSedes();
       if (typeof unsubAreas === 'function') unsubAreas();
+      window.removeEventListener('erp_users_refreshed', handleRefreshedUsers);
     };
   }, []);
   
   useEffect(() => {
     localStorage.setItem('erp_admin_active_tab', activeTab);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [activeTab]);
 
   // --- MÉTODOS DE USUARIOS ---
   const handleOpenCreateUser = () => {
     setEditingUser(null);
-    const initialSede = sedesList[0];
-    const isSuc = initialSede ? initialSede.tipo === 'Sucursal' : false;
-
     setUserForm({
       username: '',
       password: '',
       confirmPassword: '',
       nombre: '',
-      sede: initialSede?.nombre || '',
-      area: isSuc ? 'Externo' : (areasList[0]?.nombre || ''),
+      sede: '',
+      area: '',
       roles: ['solicitar'],
       excluirDestinatario: false
     });
@@ -118,8 +125,8 @@ export function AdminUsersModule({ currentUser, onBack }) {
       password: user.password || '',
       confirmPassword: user.password || '',
       nombre: user.nombre,
-      sede: user.sede || sedesList[0]?.nombre || '',
-      area: isSuc ? 'Externo' : (user.area || areasList[0]?.nombre || ''),
+      sede: user.sede || '',
+      area: isSuc ? 'Externo' : (user.area || ''),
       roles: user.roles || ['solicitar'],
       excluirDestinatario: Boolean(user.excluirDestinatario)
     });
@@ -130,13 +137,17 @@ export function AdminUsersModule({ currentUser, onBack }) {
   };
 
   const handleSedeChange = (sedeNombre) => {
+    if (!sedeNombre) {
+      setUserForm(prev => ({ ...prev, sede: '', area: '' }));
+      return;
+    }
     const sedeObj = sedesList.find(s => s.nombre === sedeNombre);
     const isSuc = sedeObj ? sedeObj.tipo === 'Sucursal' : false;
 
     setUserForm(prev => ({
       ...prev,
       sede: sedeNombre,
-      area: isSuc ? 'Externo' : (prev.area === 'Externo' ? (areasList[0]?.nombre || '') : prev.area)
+      area: isSuc ? 'Externo' : (prev.area === 'Externo' ? '' : prev.area)
     }));
   };
 
@@ -159,15 +170,25 @@ export function AdminUsersModule({ currentUser, onBack }) {
     e.preventDefault();
     setFormError('');
 
+    if (!userForm.sede) {
+      setFormError('Por favor selecciona una sede para el usuario.');
+      return;
+    }
+
+    const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+    const isSucursal = selectedSedeObj ? selectedSedeObj.tipo === 'Sucursal' : false;
+
+    if (!isSucursal && !userForm.area) {
+      setFormError('Por favor selecciona un área para el usuario.');
+      return;
+    }
+
     if (userForm.password !== userForm.confirmPassword) {
       setFormError('Las contraseñas no coinciden. Por favor verifica.');
       return;
     }
 
     setIsProcessing(true);
-
-    const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
-    const isSucursal = selectedSedeObj ? selectedSedeObj.tipo === 'Sucursal' : false;
     const finalArea = isSucursal ? 'Externo' : (userForm.area || 'Externo');
 
     const payload = {
@@ -223,7 +244,7 @@ export function AdminUsersModule({ currentUser, onBack }) {
   // --- MÉTODOS DE SEDES ---
   const handleOpenCreateSede = () => {
     setEditingSede(null);
-    setSedeForm({ nombre: '', tipo: 'Sucursal' });
+    setSedeForm({ nombre: '', tipo: '' });
     setIsSedeModalOpen(true);
   };
 
@@ -236,6 +257,18 @@ export function AdminUsersModule({ currentUser, onBack }) {
   const handleSaveSede = async (e) => {
     e.preventDefault();
     if (!sedeForm.nombre.trim()) return;
+    if (!sedeForm.tipo) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Tipo Requerido',
+        message: 'Por favor selecciona el tipo de sede (Sucursal o Matriz).',
+        variant: 'primary',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
     setIsProcessing(true);
 
     try {
@@ -332,13 +365,14 @@ export function AdminUsersModule({ currentUser, onBack }) {
     <div className="max-w-3xl mx-auto space-y-6 pb-20 relative">
       
       {/* PANTALLA DE CARGA GLOBAL */}
-      {isProcessing && (
+      {isProcessing && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm animate-fade-in">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             <span className="text-sm font-bold text-slate-800">Procesando...</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Top Header */}
@@ -371,7 +405,23 @@ export function AdminUsersModule({ currentUser, onBack }) {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
             <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input type="text" placeholder="Buscar por nombre, usuario o sede..." value={searchUser} onChange={(e) => setSearchUser(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
+              <input
+                type="text"
+                placeholder="Buscar por nombre, usuario o sede..."
+                value={searchUser}
+                onChange={(e) => setSearchUser(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+              />
+              {searchUser && (
+                <button
+                  type="button"
+                  onClick={() => setSearchUser('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+                  title="Limpiar búsqueda"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
             <button onClick={handleOpenCreateUser} className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer shrink-0">
               <Plus className="w-4 h-4" />
@@ -499,10 +549,10 @@ export function AdminUsersModule({ currentUser, onBack }) {
         </div>
       )}
 
-      {/* MODAL: USUARIO (Corregido alineación superior) */}
-      {isUserModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
+      {/* MODAL: USUARIO */}
+      {isUserModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
               <button onClick={() => setIsUserModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer">
@@ -581,6 +631,7 @@ export function AdminUsersModule({ currentUser, onBack }) {
                         onChange={(e) => handleSedeChange(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
                       >
+                        <option value="">-- Seleccionar Sede --</option>
                         {sedesList.map((s) => (
                           <option key={s.id} value={s.nombre}>
                             {s.nombre} ({s.tipo || 'Sucursal'})
@@ -612,11 +663,14 @@ export function AdminUsersModule({ currentUser, onBack }) {
                         {isCurrentSedeSucursal ? (
                           <option value="Externo">Externo (Sucursal)</option>
                         ) : (
-                          areasList.map((a) => (
-                            <option key={a.id} value={a.nombre}>
-                              {a.nombre}
-                            </option>
-                          ))
+                          <>
+                            <option value="">-- Seleccionar Área --</option>
+                            {areasList.map((a) => (
+                              <option key={a.id} value={a.nombre}>
+                                {a.nombre}
+                              </option>
+                            ))}
+                          </>
                         )}
                       </select>
                       {isCurrentSedeSucursal && (
@@ -673,13 +727,14 @@ export function AdminUsersModule({ currentUser, onBack }) {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* MODAL: SEDE (Corregido alineación superior) */}
-      {isSedeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
+      {/* MODAL: SEDE */}
+      {isSedeModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
               <button onClick={() => setIsSedeModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
@@ -690,8 +745,9 @@ export function AdminUsersModule({ currentUser, onBack }) {
                 <input type="text" required placeholder="Ej. Sucursal San Jorge" value={sedeForm.nombre} onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo</label>
+                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo *</label>
                 <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
+                  <option value="">-- Seleccionar Tipo --</option>
                   <option value="Sucursal">Sucursal</option>
                   <option value="Matriz">Matriz / Bodega Central</option>
                 </select>
@@ -704,13 +760,14 @@ export function AdminUsersModule({ currentUser, onBack }) {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* MODAL: ÁREA (Corregido alineación superior) */}
-      {isAreaModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 pt-10 sm:pt-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[85dvh] overflow-y-auto">
+      {/* MODAL: ÁREA */}
+      {isAreaModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
               <button onClick={() => setIsAreaModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
@@ -728,7 +785,8 @@ export function AdminUsersModule({ currentUser, onBack }) {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Pop-up dialog */}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
 
 export function CatalogSyncModal({
@@ -15,10 +16,10 @@ export function CatalogSyncModal({
   const isError = status === 'error';
   const percent = progress?.percent || 0;
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 select-none">
+  const modalContent = (
+    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 select-none overflow-y-auto">
       {/* SE AGREGÓ max-h-[90vh] y overflow-y-auto PARA EVITAR QUE SE CORTE EN CELULARES */}
-      <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100 text-center space-y-5 my-auto animate-in fade-in zoom-in-95 duration-200">
         
         {/* ICONO DE ESTADO */}
         <div>
@@ -48,10 +49,10 @@ export function CatalogSyncModal({
           </h3>
           <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
             {isDone
-              ? 'La base de datos de medicamentos está completamente actualizada y lista para trabajar.'
+              ? 'La base de datos de productos está completamente actualizada y lista para trabajar.'
               : isError
               ? 'No pudimos conectar con el Servidor Central. Puedes reintentar o seguir trabajando con tu base de datos local.'
-              : 'Optimizando el índice de medicamentos en este dispositivo para consultas instantáneas y modo offline.'}
+              : 'Optimizando el índice de productos en este dispositivo para consultas instantáneas y modo offline.'}
           </p>
         </div>
 
@@ -88,7 +89,7 @@ export function CatalogSyncModal({
         {isDone && (
           <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs text-emerald-800 space-y-1">
             <div className="font-bold flex items-center justify-center gap-1.5">
-              <span>{progress?.totalRecords?.toLocaleString()} medicamentos indexados</span>
+              <span>{progress?.totalRecords?.toLocaleString()} productos indexados</span>
             </div>
             <p className="text-[11px] text-emerald-600">Disponibles para escaneo de códigos de barra y búsquedas rápidas.</p>
           </div>
@@ -128,4 +129,6 @@ export function CatalogSyncModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

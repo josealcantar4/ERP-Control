@@ -12,6 +12,7 @@ import {
   Calendar,
   ArrowRight
 } from 'lucide-react';
+import { useBodyScrollLock } from '../hooks';
 
 export function NotificationsModal({
   isOpen,
@@ -20,6 +21,8 @@ export function NotificationsModal({
   onMarkAsReplaced,
   onNavigateToMaterial
 }) {
+  useBodyScrollLock(isOpen);
+
   const [filterTab, setFilterTab] = useState('todas'); // 'todas' | 'vencidas' | 'proximas'
 
   if (!isOpen) return null;
@@ -34,8 +37,8 @@ export function NotificationsModal({
     : notifications;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto">
-      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain">
         
         {/* HEADER */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">

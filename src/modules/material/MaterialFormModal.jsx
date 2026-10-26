@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, User, Package, Check, AlertCircle, PlusCircle, Building2, Tag } from 'lucide-react';
+import { useBodyScrollLock } from '../../hooks';
 
 export function MaterialFormModal({
   isOpen,
@@ -13,6 +14,8 @@ export function MaterialFormModal({
   onOpenManageTipos,
   onOpenManagePersonal
 }) {
+  useBodyScrollLock(isOpen);
+
   const [formData, setFormData] = useState({
     tipoControl: '',
     personal: '',
@@ -120,8 +123,8 @@ export function MaterialFormModal({
   if (!isOpen) return null;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto">
-      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain">
         
         {/* ENCABEZADO */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">

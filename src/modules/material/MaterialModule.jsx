@@ -32,6 +32,13 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
   const [personalList, setPersonalList] = useState(() => materialService.getLocalPersonal());
   const [areasList, setAreasList] = useState([]);
 
+  // Permisos de usuario
+  const userArea = (currentUser?.area || '').toLowerCase();
+  const isGeneralAdmin = currentUser?.username?.toLowerCase() === 'administrador';
+  const isAdminRole = isGeneralAdmin || currentUser?.roles?.includes('admin');
+  const isAreaAdmin = userArea.includes('administra');
+  const hasAccess = currentUser?.roles?.includes('material') || isAdminRole || isAreaAdmin;
+
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -133,12 +140,40 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleOpenEdit = (item) => {
+    const canEdit = isGeneralAdmin || (item.createdBy && item.createdBy.toLowerCase() === currentUser?.username?.toLowerCase());
+    if (!canEdit) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        variant: 'danger',
+        title: 'Permiso Denegado',
+        message: 'Solo el Administrador General o el usuario que creó este registro pueden editarlo.',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog,
+        onCancel: closeDialog
+      });
+      return;
+    }
     setEditingItem(item);
     setIsFormModalOpen(true);
   };
 
   const handleSaveMaterial = async (formData) => {
     if (editingItem) {
+      const canEdit = isGeneralAdmin || (editingItem.createdBy && editingItem.createdBy.toLowerCase() === currentUser?.username?.toLowerCase());
+      if (!canEdit) {
+        setDialog({
+          isOpen: true,
+          type: 'alert',
+          variant: 'danger',
+          title: 'Permiso Denegado',
+          message: 'No tienes permisos para modificar este registro.',
+          confirmText: 'Entendido',
+          onConfirm: closeDialog,
+          onCancel: closeDialog
+        });
+        return;
+      }
       await materialService.updateMaterial(editingItem.id, formData, currentUser);
     } else {
       await materialService.createMaterial(formData, currentUser);
@@ -146,6 +181,20 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleDeleteMaterial = (item) => {
+    if (!isGeneralAdmin) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        variant: 'danger',
+        title: 'Acción No Permitida',
+        message: 'Solo el Administrador General puede eliminar registros de entrega.',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog,
+        onCancel: closeDialog
+      });
+      return;
+    }
+
     setDialog({
       isOpen: true,
       type: 'confirm',
@@ -170,6 +219,28 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
     const nextStatus = item.estado === 'activo' ? 'reemplazado' : 'activo';
     await materialService.markAsStatus(item.id, nextStatus);
   };
+
+  if (!hasAccess) {
+    return (
+      <div className="max-w-md mx-auto my-12 bg-white rounded-3xl p-8 border border-slate-200/80 shadow-sm text-center space-y-4">
+        <div className="w-14 h-14 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center">
+          <AlertTriangle className="w-7 h-7" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-bold text-slate-900">Acceso Restringido</h2>
+          <p className="text-xs text-slate-500">
+            Solo los usuarios del área Administrador o con permisos de Material tienen acceso a este módulo.
+          </p>
+        </div>
+        <button
+          onClick={onBack}
+          className="px-5 py-2.5 bg-slate-900 text-white rounded-2xl text-xs font-bold transition-all cursor-pointer hover:bg-slate-800"
+        >
+          Volver al Inicio
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-5 pb-20 select-none animate-fade-in font-sans">
@@ -465,30 +536,36 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
                   </p>
                 )}
 
-                {/* ACCIONES DE EDICIÓN Y BORRADO */}
+                {/* ACCIONES DE EDICIÓN Y BORRADO CON CONTROL DE PERMISOS */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                   <div className="text-[10px] text-slate-400">
-                    Registrado por: @{item.createdBy}
+                    Registrado por: @{item.createdBy || 'sistema'}
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEdit(item)}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>Editar</span>
-                    </button>
+                    {/* Solo el Administrador General o el creador del registro pueden editar */}
+                    {(isGeneralAdmin || (item.createdBy && item.createdBy.toLowerCase() === currentUser?.username?.toLowerCase())) && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(item)}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMaterial(item)}
-                      className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer"
-                      title="Eliminar registro"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {/* Solo el Administrador General puede eliminar registros */}
+                    {isGeneralAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMaterial(item)}
+                        className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer"
+                        title="Eliminar registro"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -523,7 +600,9 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
         tipos={tipos}
         onClose={() => setIsTypesModalOpen(false)}
         onAddTipo={materialService.createTipo.bind(materialService)}
+        onUpdateTipo={materialService.updateTipo.bind(materialService)}
         onDeleteTipo={materialService.deleteTipo.bind(materialService)}
+        canDelete={isGeneralAdmin}
       />
 
       {/* MODAL 3: GESTIÓN DE PERSONAL */}
@@ -533,7 +612,9 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
         areasList={areasList}
         onClose={() => setIsPersonalModalOpen(false)}
         onAddPersonal={materialService.createPersonal.bind(materialService)}
+        onUpdatePersonal={materialService.updatePersonal.bind(materialService)}
         onDeletePersonal={materialService.deletePersonal.bind(materialService)}
+        canDelete={isGeneralAdmin}
       />
 
       {/* MODAL 4: DIÁLOGO DE CONFIRMACIÓN */}

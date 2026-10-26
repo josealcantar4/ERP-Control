@@ -23,6 +23,7 @@ import {
 import { userService } from './userService';
 import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
+import { useBodyScrollLock } from '../../hooks';
 
 export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [activeTab, setActiveTab] = useState(() => {
@@ -55,6 +56,9 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [isAreaModalOpen, setIsAreaModalOpen] = useState(false);
   const [editingArea, setEditingArea] = useState(null);
   const [areaForm, setAreaForm] = useState({ nombre: '' });
+
+  // Bloquear scroll de fondo cuando cualquiera de los modales de administración esté abierto
+  useBodyScrollLock(isUserModalOpen || isSedeModalOpen || isAreaModalOpen);
 
   // Pop-up dialog state
   const [dialog, setDialog] = useState({
@@ -552,8 +556,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
       {/* MODAL: USUARIO */}
       {isUserModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
               <button onClick={() => setIsUserModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer">
@@ -740,8 +744,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
       {/* MODAL: SEDE */}
       {isSedeModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
               <button onClick={() => setIsSedeModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
@@ -773,8 +777,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
       {/* MODAL: ÁREA */}
       {isAreaModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
               <button onClick={() => setIsAreaModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>

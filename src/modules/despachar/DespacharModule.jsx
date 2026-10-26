@@ -21,6 +21,7 @@ import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
+import { useBodyScrollLock } from '../../hooks';
 
 export function DespacharModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
@@ -39,6 +40,14 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   // Folio de transferencia capturado por el despachador
   const [dispatchFolioDigits, setDispatchFolioDigits] = useState('');
 
+  // Extra medicine states
+  const [isExtraModalOpen, setIsExtraModalOpen] = useState(false);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isQtyModalOpen, setIsQtyModalOpen] = useState(false);
+
+  // Bloquear scroll del fondo cuando el modal de agregar producto extra está abierto
+  useBodyScrollLock(isExtraModalOpen);
+
   // Helper para persistir orden seleccionada en sessionStorage y restaurar scroll
   const handleSelectSolicitud = (sol) => {
     setSelectedSolicitud(sol);
@@ -54,11 +63,6 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       sessionStorage.removeItem('erp_despachar_solicitud_id');
     }
   };
-
-  // Extra medicine states
-  const [isExtraModalOpen, setIsExtraModalOpen] = useState(false);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
-  const [isQtyModalOpen, setIsQtyModalOpen] = useState(false);
 
   const [extraQuery, setExtraQuery] = useState('');
   const [extraResults, setExtraResults] = useState([]);
@@ -950,8 +954,8 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
       {/* Extra Medicine Search Modal */}
       {isExtraModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto max-h-[90vh]">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto max-h-[90vh] overscroll-contain">
             <div className="p-5 pb-4 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-base font-bold text-slate-900">Agregar Producto Extra</h3>
               <button

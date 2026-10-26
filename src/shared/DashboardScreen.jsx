@@ -8,8 +8,10 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   const [materiales, setMateriales] = useState(() => materialService.getLocalMateriales());
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
   const hasDespachar = currentUser?.roles?.includes('despachar');
+  const userArea = (currentUser?.area || '').toLowerCase();
   const isAdmin = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
-  const hasMaterial = currentUser?.roles?.includes('material') || isAdmin;
+  const isAreaAdmin = userArea.includes('administra');
+  const hasMaterial = currentUser?.roles?.includes('material') || isAdmin || isAreaAdmin;
 
   useEffect(() => {
     const unsub = transferService.subscribeSolicitudes((list) => {

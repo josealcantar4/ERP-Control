@@ -262,6 +262,45 @@ export const materialService = {
     return newTipo;
   },
 
+  async updateTipo(id, nombre, color = 'blue') {
+    if (!id) throw new Error('ID no válido.');
+    const cleanNombre = (nombre || '').trim();
+    if (!cleanNombre) throw new Error('El nombre del tipo de control es obligatorio.');
+
+    const current = this.getLocalTipos();
+    const existing = current.find(t => t.id === id);
+    if (!existing) throw new Error('El tipo de control no fue encontrado.');
+
+    if (current.some(t => t.id !== id && t.nombre.toLowerCase() === cleanNombre.toLowerCase())) {
+      throw new Error(`Ya existe otro tipo de control con el nombre "${cleanNombre}".`);
+    }
+
+    const updatedTipo = {
+      ...existing,
+      nombre: cleanNombre,
+      color: color || existing.color || 'blue',
+      updatedAt: new Date().toISOString()
+    };
+
+    if (isFirebaseConfigured) {
+      await setDoc(doc(db, 'material_tipos', id), updatedTipo, { merge: true });
+    }
+
+    const updated = current.map(t => (t.id === id ? updatedTipo : t)).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    saveLocalData(LOCAL_TIPOS_KEY, updated, 'erp_material_tipos_changed');
+
+    // Sincronizar registros de material existentes si cambió el nombre
+    if (existing.nombre !== cleanNombre) {
+      const materiales = this.getLocalMateriales();
+      const affected = materiales.filter(m => m.tipoControl === existing.nombre);
+      for (const m of affected) {
+        this.updateMaterial(m.id, { ...m, tipoControl: cleanNombre }).catch(e => console.warn(e));
+      }
+    }
+
+    return updatedTipo;
+  },
+
   async deleteTipo(id) {
     if (!id) return;
     if (isFirebaseConfigured) {
@@ -330,6 +369,46 @@ export const materialService = {
     const updated = [...current, newPerson].sort((a, b) => a.nombre.localeCompare(b.nombre));
     saveLocalData(LOCAL_PERSONAL_KEY, updated, 'erp_material_personal_changed');
     return newPerson;
+  },
+
+  async updatePersonal(id, nombre, puesto = '', area = '') {
+    if (!id) throw new Error('ID no válido.');
+    const cleanNombre = (nombre || '').trim();
+    if (!cleanNombre) throw new Error('El nombre de la persona es obligatorio.');
+
+    const current = this.getLocalPersonal();
+    const existing = current.find(p => p.id === id);
+    if (!existing) throw new Error('La persona no fue encontrada.');
+
+    const updatedPerson = {
+      ...existing,
+      nombre: cleanNombre,
+      puesto: (puesto || '').trim(),
+      area: (area || '').trim(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (isFirebaseConfigured) {
+      await setDoc(doc(db, 'material_personal', id), updatedPerson, { merge: true });
+    }
+
+    const updated = current.map(p => (p.id === id ? updatedPerson : p)).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    saveLocalData(LOCAL_PERSONAL_KEY, updated, 'erp_material_personal_changed');
+
+    // Sincronizar registros de material existentes si cambió el nombre o el área
+    if (existing.nombre !== cleanNombre || existing.area !== updatedPerson.area) {
+      const materiales = this.getLocalMateriales();
+      const affected = materiales.filter(m => m.personal === existing.nombre);
+      for (const m of affected) {
+        this.updateMaterial(m.id, {
+          ...m,
+          personal: cleanNombre,
+          area: updatedPerson.area || m.area
+        }).catch(e => console.warn(e));
+      }
+    }
+
+    return updatedPerson;
   },
 
   async deletePersonal(id) {

@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Check, Package } from 'lucide-react';
+import { useBodyScrollLock } from '../hooks';
 
 export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
+  useBodyScrollLock(isOpen);
+
   const [cantidad, setCantidad] = useState('1');
   const [errorMsg, setErrorMsg] = useState('');
   const inputRef = useRef(null);
@@ -34,8 +37,8 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto overscroll-contain">
         
         {/* iOS Pull Indicator on Mobile */}
         <div className="sm:hidden w-12 h-1 bg-slate-300 rounded-full mx-auto my-2.5"></div>

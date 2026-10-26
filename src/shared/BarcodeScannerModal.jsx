@@ -3,8 +3,11 @@ import { createPortal } from 'react-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import { X, AlertCircle, ScanBarcode, Search, Loader2 } from 'lucide-react';
 import { catalogService } from '../modules/catalogo';
+import { useBodyScrollLock } from '../hooks';
 
 export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
+  useBodyScrollLock(isOpen);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -143,8 +146,8 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   if (!isOpen) return null;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[92vh] my-auto">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[92vh] my-auto overscroll-contain">
         
         {/* ENCABEZADO */}
         <div className="px-5 py-3.5 flex items-center justify-between border-b border-slate-100 bg-white shrink-0">

@@ -35,14 +35,19 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notificationsList, setNotificationsList] = useState([]);
 
-  // Suscripción reactiva en tiempo real a notificaciones de material
+  // Suscripción reactiva en tiempo real a notificaciones de material y catálogo limpio de Firebase
   useEffect(() => {
     if (currentUser) {
       const unsub = materialService.subscribeMateriales((items) => {
         const notifs = materialService.calculateNotifications(items);
         setNotificationsList(notifs);
       });
-      return () => unsub && unsub();
+      const unsubClean = catalogService.subscribeCleanCatalog();
+
+      return () => {
+        if (unsub) unsub();
+        if (unsubClean) unsubClean();
+      };
     }
   }, [currentUser]);
 
@@ -61,10 +66,14 @@ export default function App() {
       if (screen === 'solicitar') {
         await Promise.all([
           transferService.refreshSolicitudes(),
-          userService.getMatrizDestinatarios()
+          userService.getMatrizDestinatarios(),
+          catalogService.syncCleanCatalogFromFirestore()
         ]);
       } else if (screen === 'despachar' || screen === 'recibir') {
-        await transferService.refreshSolicitudes();
+        await Promise.all([
+          transferService.refreshSolicitudes(),
+          catalogService.syncCleanCatalogFromFirestore()
+        ]);
       } else if (screen === 'admin') {
         await Promise.all([
           userService.refreshUsers(),
@@ -79,7 +88,8 @@ export default function App() {
         await Promise.all([
           transferService.refreshSolicitudes(),
           userService.getMatrizDestinatarios(),
-          materialService.refreshAll()
+          materialService.refreshAll(),
+          catalogService.syncCleanCatalogFromFirestore()
         ]);
       }
     } catch (err) {

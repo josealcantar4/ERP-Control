@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import * as XLSX from 'xlsx';
 
@@ -169,8 +169,8 @@ export const catalogService = {
       return `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`;
     }
 
-    // Google Drive direct download endpoint para archivos binarios (.xlsx) con soporte nativo de versiones
-    return `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
+    // Endpoint principal con soporte CORS completo y exportación binaria .xlsx
+    return `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
   },
 
   getFallbackUrls() {
@@ -180,14 +180,36 @@ export const catalogService = {
     }
     return [
       `https://drive.google.com/uc?export=download&id=${fileId}`,
-      `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`
+      `https://drive.usercontent.google.com/download?id=${fileId}&export=download`
     ];
   },
 
   async getCatalogStatus() {
-    purgeStaleCleanItem();
+    let cleanCount = 0;
+    try {
+      const snap = await getDocs(collection(db, 'catalogo_limpio'));
+      const firestoreItems = snap.docs
+        .map(d => ({ codigo: d.id, ...d.data() }))
+        .filter(it => it && it.codigo);
+      cleanCount = firestoreItems.length;
+
+      // Mantener STORE_CLEAN en IndexedDB como reflejo exacto de Firestore
+      const database = await openDB();
+      await new Promise((resolve, reject) => {
+        const tx = database.transaction(STORE_CLEAN, 'readwrite');
+        const store = tx.objectStore(STORE_CLEAN);
+        const clearReq = store.clear();
+        clearReq.onsuccess = () => {
+          firestoreItems.forEach(item => store.put(item));
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (_e) {
+      cleanCount = await getLocalCount(STORE_CLEAN);
+    }
+
     const localCount = await getLocalCount(STORE_BASE);
-    const cleanCount = await getLocalCount(STORE_CLEAN);
     const lastSync = localStorage.getItem(STORAGE_KEY_LAST_SYNC) || null;
     const lastModified = localStorage.getItem(STORAGE_KEY_LAST_MODIFIED) || null;
     const fileId = this.getCatalogFileId();
@@ -230,11 +252,11 @@ export const catalogService = {
 
       try {
         response = await fetch(checkUrl, { method: 'HEAD' });
-      } catch (err) {
+      } catch (_err) {
         try {
           response = await fetch(checkUrl, { headers: { Range: 'bytes=0-0' } });
-        } catch (err2) {
-          console.warn('Error al verificar metadatos del catálogo en Drive:', err2);
+        } catch (_err2) {
+          // Si el proveedor restringe pre-vuelo de metadatos CORS, se mantiene el catálogo local
         }
       }
 
@@ -524,17 +546,154 @@ export const catalogService = {
 
     const cleanItem = {
       codigo: cleanBarcode,
-      descripcion: String(descripcion).trim().toUpperCase()
+      descripcion: String(descripcion).trim().toUpperCase(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
-
-    await saveLocalBatch(STORE_CLEAN, [cleanItem]);
-    memoryCache = null;
 
     try {
       const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
-      await setDoc(limpioRef, cleanItem);
+      await setDoc(limpioRef, cleanItem, { merge: true });
     } catch (e) {
-      console.warn('Guardado localmente. Pendiente de sincronización en red:', e);
+      console.warn('Error guardando en Firestore catalogo_limpio:', e);
+    }
+
+    await saveLocalBatch(STORE_CLEAN, [cleanItem]);
+    memoryCache = null;
+    return cleanItem;
+  },
+
+  async updateCleanCatalogItem(barcode, newDesc) {
+    const cleanBarcode = normalizeBarcode(barcode);
+    if (!cleanBarcode || !newDesc?.trim()) return;
+
+    const cleanItem = {
+      codigo: cleanBarcode,
+      descripcion: String(newDesc).trim().toUpperCase(),
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
+      await setDoc(limpioRef, cleanItem, { merge: true });
+    } catch (e) {
+      console.warn('Error actualizando en Firestore catalogo_limpio:', e);
+    }
+
+    await saveLocalBatch(STORE_CLEAN, [cleanItem]);
+    memoryCache = null;
+    return cleanItem;
+  },
+
+  async deleteFromCleanCatalog(barcode) {
+    const cleanBarcode = normalizeBarcode(barcode);
+    if (!cleanBarcode) return;
+
+    try {
+      const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
+      await deleteDoc(limpioRef);
+    } catch (e) {
+      console.warn('Error eliminando de Firestore catalogo_limpio:', e);
+    }
+
+    const database = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = database.transaction(STORE_CLEAN, 'readwrite');
+      const store = tx.objectStore(STORE_CLEAN);
+      store.delete(cleanBarcode);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    memoryCache = null;
+    return true;
+  },
+
+  async getCleanCatalogItems() {
+    try {
+      const snap = await getDocs(collection(db, 'catalogo_limpio'));
+      const items = snap.docs
+        .map(d => ({ codigo: d.id, ...d.data() }))
+        .filter(it => it && it.codigo);
+
+      // Reconciliar con IndexedDB
+      const database = await openDB();
+      await new Promise((resolve, reject) => {
+        const tx = database.transaction(STORE_CLEAN, 'readwrite');
+        const store = tx.objectStore(STORE_CLEAN);
+        const clearReq = store.clear();
+        clearReq.onsuccess = () => {
+          items.forEach(item => store.put(item));
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+
+      return items.sort((a, b) => (a.codigo || '').localeCompare(b.codigo || ''));
+    } catch (e) {
+      return await getAllLocalItems(STORE_CLEAN);
+    }
+  },
+
+  // Sincronizar catálogo limpio desde Firestore hacia la memoria local (reemplazo completo)
+  async syncCleanCatalogFromFirestore() {
+    try {
+      const snap = await getDocs(collection(db, 'catalogo_limpio'));
+      const items = snap.docs
+        .map(d => ({ codigo: d.id, ...d.data() }))
+        .filter(it => it && it.codigo);
+
+      const database = await openDB();
+      await new Promise((resolve, reject) => {
+        const tx = database.transaction(STORE_CLEAN, 'readwrite');
+        const store = tx.objectStore(STORE_CLEAN);
+        const clearReq = store.clear();
+        clearReq.onsuccess = () => {
+          items.forEach(item => store.put(item));
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+
+      memoryCache = null;
+      return items.length;
+    } catch (err) {
+      console.warn('Sincronización de catalogo_limpio desde Firebase no disponible:', err);
+      return await getLocalCount(STORE_CLEAN);
+    }
+  },
+
+  // Suscripción reactiva en tiempo real al catálogo limpio en Firestore
+  subscribeCleanCatalog(onUpdate) {
+    try {
+      return onSnapshot(
+        collection(db, 'catalogo_limpio'),
+        async (snap) => {
+          const items = snap.docs
+            .map(d => ({ codigo: d.id, ...d.data() }))
+            .filter(it => it && it.codigo);
+
+          const database = await openDB();
+          await new Promise((resolve, reject) => {
+            const tx = database.transaction(STORE_CLEAN, 'readwrite');
+            const store = tx.objectStore(STORE_CLEAN);
+            const clearReq = store.clear();
+            clearReq.onsuccess = () => {
+              items.forEach(item => store.put(item));
+            };
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+
+          memoryCache = null;
+          if (onUpdate) onUpdate(items);
+        },
+        (err) => {
+          console.warn('Fallback suscripción catalogo_limpio:', err);
+        }
+      );
+    } catch (e) {
+      console.warn('Error suscribiendo a catalogo_limpio en Firebase:', e);
+      return () => {};
     }
   },
 

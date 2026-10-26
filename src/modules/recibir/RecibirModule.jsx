@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X } from 'lucide-react';
 import { transferService, formatTransferFolio } from '../transferencias';
+import { useBodyScrollLock } from '../../hooks';
 
 export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
@@ -17,6 +18,9 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [checkedNewFaltantes, setCheckedNewFaltantes] = useState({});
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [confirmIncomplete, setConfirmIncomplete] = useState(false);
+
+  // Bloquear scroll de fondo cuando el modal de reporte de faltantes esté abierto
+  useBodyScrollLock(isReportModalOpen);
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
     return (
@@ -377,8 +381,8 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
 
       {/* MODAL INLINE: REPORTE DE FALTANTES */}
       {isReportModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-5 animate-scale-in my-auto max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-5 animate-scale-in my-auto max-h-[90vh] overflow-y-auto overscroll-contain">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5" />

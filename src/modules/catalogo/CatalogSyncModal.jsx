@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
+import { useBodyScrollLock } from '../../hooks';
 
 export function CatalogSyncModal({
   isOpen,
@@ -10,6 +11,8 @@ export function CatalogSyncModal({
   onRetry,
   onDismiss
 }) {
+  useBodyScrollLock(isOpen);
+
   if (!isOpen) return null;
 
   const isDone = status === 'done';
@@ -17,9 +20,9 @@ export function CatalogSyncModal({
   const percent = progress?.percent || 0;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 select-none overflow-y-auto">
+    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 select-none overflow-y-auto overscroll-contain">
       {/* SE AGREGÓ max-h-[90vh] y overflow-y-auto PARA EVITAR QUE SE CORTE EN CELULARES */}
-      <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100 text-center space-y-5 my-auto animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[90vh] overflow-y-auto overscroll-contain shadow-2xl border border-slate-100 text-center space-y-5 my-auto animate-in fade-in zoom-in-95 duration-200">
         
         {/* ICONO DE ESTADO */}
         <div>

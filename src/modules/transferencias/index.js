@@ -1,2 +1,2 @@
-export { transferService } from './transferService';
+export { transferService, formatTransferFolio } from './transferService';
 export { TransferDetailModal } from './TransferDetailModal';

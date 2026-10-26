@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { userService } from '../usuarios/userService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService } from '../transferencias/transferService';
+import { transferService, formatTransferFolio } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
@@ -13,16 +13,17 @@ import { ModalDialog } from '../../shared/ModalDialog';
 export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [destinatarios, setDestinatarios] = useState([]);
   const [selectedDestinatarioId, setSelectedDestinatarioId] = useState('');
-  
-  // Agregamos el estado para el Folio (solo números)
-  const [folioDigits, setFolioDigits] = useState('');
   const [detailSolicitud, setDetailSolicitud] = useState(null);
 
   const [currentDraft, setCurrentDraft] = useState({
     id: 'sol-' + Date.now(),
     sucursalOrigen: currentUser?.sede || 'Sucursal',
     usuarioSolicitante: currentUser?.username,
-    usuarioDestino: '', areaDestino: '', estado: 'borrador', fecha: new Date().toISOString(), items: []
+    usuarioDestino: '',
+    areaDestino: '',
+    estado: 'borrador',
+    fecha: new Date().toISOString(),
+    items: []
   });
 
   const [savingStatus, setSavingStatus] = useState('saved');
@@ -57,7 +58,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       if (draft && draft.items && draft.items.length > 0) {
         setCurrentDraft(draft);
         if (draft.usuarioDestino) setSelectedDestinatarioId(draft.usuarioDestino);
-        if (draft.folio && draft.folio.startsWith('TR')) setFolioDigits(draft.folio.replace('TR', ''));
       }
     }
     init();
@@ -74,7 +74,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     return () => unsubscribe();
   }, [currentUser]);
 
-  const triggerAutoSave = async (draft, folioInput = folioDigits) => {
+  const triggerAutoSave = async (draft) => {
     // REGLA: Si no hay productos, NO guardar borrador. Si ya existía, eliminarlo de inmediato.
     if (!draft || !draft.items || draft.items.length === 0) {
       if (draft?.id) {
@@ -86,8 +86,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
 
     setSavingStatus('saving');
     try {
-      const fullFolio = folioInput ? `TR${folioInput}` : '';
-      await transferService.saveDraft({ ...draft, folio: fullFolio });
+      await transferService.saveDraft({ ...draft, folio: draft.folio || '' });
       setSavingStatus('saved');
     } catch (e) {
       setSavingStatus('saved');
@@ -196,10 +195,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       });
       return;
     }
-    if (!folioDigits.trim()) {
-      setDialog({ isOpen: true, type: 'alert', title: 'Folio Requerido', message: 'Debes ingresar los dígitos numéricos del folio de transferencia.', confirmText: 'Entendido', onConfirm: closeDialog });
-      return;
-    }
     if (!currentDraft.items || currentDraft.items.length === 0) {
       setDialog({ isOpen: true, type: 'alert', title: 'Lista vacía', message: 'Agrega al menos un producto escaneando su código.', confirmText: 'Entendido', onConfirm: closeDialog });
       return;
@@ -212,12 +207,18 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
 
     setDialog({
       isOpen: true, type: 'confirm', title: 'Confirmar Envío a Matriz',
-      message: `¿Deseas enviar el pedido TR${folioDigits} con ${currentDraft.items.length} productos a ${destUser.nombre}?`,
+      message: `¿Deseas enviar la solicitud de transferencia con ${currentDraft.items.length} productos a ${destUser.nombre}?`,
       confirmText: 'Enviar Pedido', cancelText: 'Revisar',
       onConfirm: async () => {
         closeDialog();
         try {
-          const finalized = { ...currentDraft, folio: `TR${folioDigits}`, usuarioDestino: destUser.username, areaDestino: destUser.area, fecha: new Date().toISOString() };
+          const finalized = {
+            ...currentDraft,
+            folio: currentDraft.folio || '',
+            usuarioDestino: destUser.username,
+            areaDestino: destUser.area,
+            fecha: new Date().toISOString()
+          };
           await transferService.saveDraft(finalized);
           await transferService.submitSolicitud(finalized.id);
 
@@ -232,7 +233,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
             items: []
           });
           setSelectedDestinatarioId('');
-          setFolioDigits('');
           setActiveTab('historial');
         } catch (e) {}
       }, onCancel: closeDialog
@@ -259,11 +259,12 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
+    const solRef = formatTransferFolio(sol);
     setDialog({
       isOpen: true,
       type: 'confirm',
       title: 'Eliminar Borrador',
-      message: `¿Deseas eliminar permanentemente el borrador ${sol.folio || 'Sin Folio'} con ${sol.items?.length || 0} productos?`,
+      message: `¿Deseas eliminar permanentemente el borrador (${solRef}) con ${sol.items?.length || 0} productos?`,
       variant: 'danger',
       confirmText: 'Eliminar Borrador',
       cancelText: 'Cancelar',
@@ -283,7 +284,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
               items: []
             });
             setSelectedDestinatarioId('');
-            setFolioDigits('');
           }
         } catch (err) {
           setDialog({
@@ -356,27 +356,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                   </option>
                 ))}
               </select>
-            </div>
-
-            {/* Nuevo Campo Folio */}
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Identificador / Folio de Transferencia *</label>
-              <div className="flex items-stretch shadow-sm rounded-2xl overflow-hidden border border-slate-200 focus-within:border-blue-500">
-                <div className="bg-slate-100 px-4 py-3 text-slate-600 font-bold text-sm border-r border-slate-200 flex items-center justify-center">
-                  TR
-                </div>
-                <input
-                  type="text" inputMode="numeric" value={folioDigits} placeholder="000123"
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '');
-                    setFolioDigits(val);
-                    if (currentDraft.items && currentDraft.items.length > 0) {
-                      triggerAutoSave(currentDraft, val);
-                    }
-                  }}
-                  className="w-full bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:bg-white"
-                />
-              </div>
             </div>
           </div>
 
@@ -451,11 +430,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                       // Cargar borrador para continuar capturando
                       setCurrentDraft(sol);
                       if (sol.usuarioDestino) setSelectedDestinatarioId(sol.usuarioDestino);
-                      if (sol.folio && sol.folio.startsWith('TR')) {
-                        setFolioDigits(sol.folio.replace('TR', ''));
-                      } else {
-                        setFolioDigits(sol.folio || '');
-                      }
                       setActiveTab('captura');
                       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
                     } else {
@@ -468,7 +442,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-slate-900 font-mono text-blue-700">
-                        {sol.folio || 'Sin Folio'}
+                        {sol.folio ? sol.folio : `Ref: ${formatTransferFolio(sol)}`}
                       </span>
                       {sol.areaDestino && (
                         <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full">
@@ -482,14 +456,28 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                         className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
                           isDraft
                             ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : sol.estado === 'completada' || sol.estado === 'recibida'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : sol.estado === 'faltantes_despachados'
+                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                            : sol.estado === 'cerrada_con_faltantes'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
                             : sol.estado === 'recibida_incompleta'
                             ? 'bg-red-50 text-red-700 border border-red-200'
+                            : sol.estado === 'completada' || sol.estado === 'recibida'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-blue-50 text-blue-700 border border-blue-200'
                         }`}
                       >
-                        {isDraft ? 'Borrador' : sol.estado}
+                        {isDraft
+                          ? 'Borrador'
+                          : sol.estado === 'faltantes_despachados'
+                          ? 'Faltantes en camino'
+                          : sol.estado === 'cerrada_con_faltantes'
+                          ? 'Cerrada c/ faltantes'
+                          : sol.estado === 'recibida_incompleta'
+                          ? 'Incompleta'
+                          : sol.estado === 'recibida' && sol.reporteFaltantes?.length > 0
+                          ? 'Recibida c/ Faltantes'
+                          : sol.estado}
                       </span>
 
                       {/* Botón de eliminar SOLO disponible para borradores */}

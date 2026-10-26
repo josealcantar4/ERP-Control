@@ -1,26 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle } from 'lucide-react';
-import { transferService } from '../transferencias/transferService';
+import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X } from 'lucide-react';
+import { transferService, formatTransferFolio } from '../transferencias';
 
 export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
-    return list.filter(s => s.estado === 'completada' && s.usuarioSolicitante === currentUser?.username);
+    return list.filter(
+      s =>
+        (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
+        s.usuarioSolicitante === currentUser?.username
+    );
   });
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({});
+  const [checkedNewFaltantes, setCheckedNewFaltantes] = useState({});
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [confirmIncomplete, setConfirmIncomplete] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
-    return list.filter(s => s.estado === 'completada' && s.usuarioSolicitante === currentUser?.username).length === 0;
+    return (
+      list.filter(
+        s =>
+          (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
+          s.usuarioSolicitante === currentUser?.username
+      ).length === 0
+    );
   });
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      // Mostrar solo los pedidos que Matriz ya despachó ("completada") para esta sucursal
-      const validos = list.filter(s => s.estado === 'completada' && s.usuarioSolicitante === currentUser.username);
+      // Mostrar pedidos despachados inicialmente y re-despachos de faltantes
+      const validos = list.filter(
+        s =>
+          (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
+          s.usuarioSolicitante === currentUser.username
+      );
       setSolicitudes(validos);
       setIsLoadingOrders(false);
 
@@ -42,6 +57,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     setSelectedOrder(sol);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     setCheckedItems({});
+    setCheckedNewFaltantes({});
     if (sol && sol.id) {
       sessionStorage.setItem('erp_recibir_order_id', sol.id);
     } else {
@@ -53,11 +69,16 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     setSelectedOrder(null);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     setCheckedItems({});
+    setCheckedNewFaltantes({});
     sessionStorage.removeItem('erp_recibir_order_id');
   };
 
   const toggleItem = (index) => {
     setCheckedItems(prev => ({ ...prev, [index]: !prev[index] }));
+  };
+
+  const toggleNewFaltante = (index) => {
+    setCheckedNewFaltantes(prev => ({ ...prev, [index]: !prev[index] }));
   };
 
   const handleListo = () => {
@@ -81,6 +102,34 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     const faltantes = selectedOrder.items.filter((_, i) => !checkedItems[i]);
     finalizeReceive(faltantes);
   };
+
+  // Manejo de finalización de recepción para re-despacho de faltantes
+  const handleListoFaltantes = async () => {
+    const itemsResolucion = selectedOrder.resolucionFaltantes?.itemsResolucion || [];
+    const newlyDispatched = itemsResolucion.filter(i => i.despachado);
+
+    const isAllChecked = newlyDispatched.every((_, i) => checkedNewFaltantes[i]);
+
+    if (!isAllChecked) {
+      const itemsAunFaltantes = newlyDispatched.filter((_, i) => !checkedNewFaltantes[i]);
+      const itemsRecibidos = newlyDispatched.filter((_, i) => checkedNewFaltantes[i]);
+
+      await transferService.receiveFaltantes(selectedOrder.id, {
+        itemsRecibidos,
+        itemsAunFaltantes,
+        usuarioRecepcion: currentUser?.username || 'sucursal'
+      });
+    } else {
+      await transferService.receiveFaltantes(selectedOrder.id, {
+        itemsRecibidos: newlyDispatched,
+        itemsAunFaltantes: [],
+        usuarioRecepcion: currentUser?.username || 'sucursal'
+      });
+    }
+    closeOrder();
+  };
+
+  const isReDespacho = selectedOrder?.estado === 'faltantes_despachados';
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
@@ -117,26 +166,189 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3">
-              {solicitudes.map(sol => (
-                <div key={sol.id} className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm flex items-center justify-between gap-3 hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer group ios-card-hover">
-                  <div>
-                    <h4 className="text-lg font-bold text-indigo-700 font-mono tracking-tight">{sol.folio || 'Sin Folio'}</h4>
-                    <p className="text-xs text-slate-500 mt-0.5">Enviado por: {sol.usuarioDestino}</p>
-                    <p className="text-[11px] font-semibold text-slate-400 mt-1">{sol.items?.length || 0} productos en total</p>
+              {solicitudes.map(sol => {
+                const isFaltante = sol.estado === 'faltantes_despachados';
+                return (
+                  <div
+                    key={sol.id}
+                    className={`bg-white rounded-3xl p-5 border shadow-sm flex items-center justify-between gap-3 hover:shadow-md transition-all cursor-pointer group ios-card-hover ${
+                      isFaltante ? 'border-purple-200 hover:border-purple-400' : 'border-slate-200/80 hover:border-indigo-400'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className={`text-lg font-bold font-mono tracking-tight ${
+                          isFaltante ? 'text-purple-700' : 'text-indigo-700'
+                        }`}>
+                          {sol.resolucionFaltantes?.folioEnvio || sol.folio || formatTransferFolio(sol)}
+                        </h4>
+                        {isFaltante && (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-700 uppercase tracking-wider">
+                            Reenvío de Faltantes
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {isFaltante
+                          ? 'Matriz envió los productos faltantes reportados'
+                          : `Enviado por: ${sol.usuarioDestino}`}
+                      </p>
+                      <p className="text-[11px] font-semibold text-slate-400">
+                        {isFaltante
+                          ? `${sol.resolucionFaltantes?.itemsResolucion?.filter(i => i.despachado).length || 0} ítems en este reenvío`
+                          : `${sol.items?.length || 0} productos en total`}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => openOrder(sol)}
+                      className={`px-4 py-2.5 text-white font-bold text-xs rounded-2xl shadow-sm cursor-pointer transition-all active:scale-95 ${
+                        isFaltante ? 'bg-purple-600 hover:bg-purple-500' : 'bg-indigo-600 hover:bg-indigo-500'
+                      }`}
+                    >
+                      {isFaltante ? 'Revisar Faltantes' : 'Revisar Caja'}
+                    </button>
                   </div>
-                  <button onClick={() => openOrder(sol)} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-sm cursor-pointer transition-all active:scale-95">
-                    Revisar Caja
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
+      ) : isReDespacho ? (
+        /* VISTA DE RECEPCIÓN PARA RE-DESPACHO DE FALTANTES */
+        <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
+          {/* Header Card Re-despacho */}
+          <div className="bg-white rounded-3xl p-5 border border-purple-200/80 shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-purple-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Truck className="w-4 h-4" />
+                Recepción de Faltantes Despachados
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-mono">
+                Reenvío Activo
+              </span>
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-900 font-mono">
+              {selectedOrder.resolucionFaltantes?.folioEnvio || selectedOrder.folio || formatTransferFolio(selectedOrder)}
+            </h2>
+            <p className="text-xs text-slate-500">
+              Verifica los productos nuevos enviados en esta caja. Lo recibido en la entrega anterior se mantiene conservado y bloqueado.
+            </p>
+          </div>
+
+          {/* Listado Diferenciado: Lo nuevo para checar + lo pasado inmutable */}
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
+            {/* 1. SECCIÓN: LO NUEVO MANDADO PARA VOLVER A CHECAR */}
+            {selectedOrder.resolucionFaltantes?.itemsResolucion
+              ?.filter(i => i.despachado)
+              .map((item, idx) => (
+                <div
+                  key={'new-' + idx}
+                  onClick={() => toggleNewFaltante(idx)}
+                  className={`p-4 flex items-center gap-3.5 cursor-pointer transition-all duration-200 active:scale-[0.99] border-l-4 border-l-purple-500 ${
+                    checkedNewFaltantes[idx] ? 'bg-purple-50/40' : 'bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                      checkedNewFaltantes[idx]
+                        ? 'bg-purple-600 text-white scale-105 shadow-2xs'
+                        : 'border-2 border-purple-300'
+                    }`}
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4
+                        className={`text-sm font-bold transition-colors ${
+                          checkedNewFaltantes[idx] ? 'line-through text-slate-400' : 'text-slate-900'
+                        }`}
+                      >
+                        {item.descripcion}
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-100 text-purple-700 uppercase tracking-wider">
+                        Nuevo Envío
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      Código: {item.codigo}
+                    </span>
+                  </div>
+                  <span className="px-3 py-1.5 rounded-xl font-mono text-xs font-bold bg-purple-100 text-purple-800">
+                    {item.cantidadDespachada} pzas
+                  </span>
+                </div>
+              ))}
+
+            {/* 2. SECCIÓN: FALTANTES QUE NO FUERON DESPACHADOS POR BODEGA (BLOQUEADOS) */}
+            {selectedOrder.resolucionFaltantes?.itemsResolucion
+              ?.filter(i => !i.despachado)
+              .map((item, idx) => (
+                <div
+                  key={'not-sent-' + idx}
+                  className="p-4 flex items-center gap-3.5 bg-red-50/30 border-l-4 border-l-red-300 opacity-75 select-none"
+                >
+                  <div className="w-6 h-6 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                    <X className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-sm font-medium text-slate-700 truncate">{item.descripcion}</h4>
+                    <span className="text-[11px] font-mono text-slate-400">Código: {item.codigo}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
+                      No enviado por Bodega ({item.motivoNoDespacho || 'Sin existencia'})
+                    </span>
+                    <span className="px-2.5 py-1 rounded-xl font-mono text-xs font-bold bg-red-50 text-red-800">
+                      {item.cantidadFaltanteReportada} pz
+                    </span>
+                  </div>
+                </div>
+              ))}
+
+            {/* 3. SECCIÓN: LO PASADO (YA RECIBIDO EN LA ENTREGA ANTERIOR, INMUTABLE) */}
+            {selectedOrder.items
+              ?.filter(it => !selectedOrder.reporteFaltantes?.some(rf => rf.codigo === it.codigo))
+              .map((item, idx) => (
+                <div
+                  key={'prev-' + idx}
+                  className="p-4 flex items-center gap-3.5 bg-slate-50/60 opacity-60 select-none"
+                >
+                  <div className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-sm font-semibold text-slate-500 line-through truncate">{item.descripcion}</h4>
+                    <span className="text-[11px] font-mono text-slate-400">{item.codigo}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      Recibido anteriormente
+                    </span>
+                    <span className="px-3 py-1.5 rounded-xl font-mono text-xs font-bold bg-slate-200/80 text-slate-600">
+                      {item.cantidadDespachada} pzas
+                    </span>
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={handleListoFaltantes}
+              className="w-full py-4 bg-purple-600 hover:bg-purple-500 active:scale-[0.98] text-white font-bold text-sm rounded-3xl shadow-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <PackageOpen className="w-5 h-5" />
+              <span>Listo, Finalizar Recepción de Faltantes</span>
+            </button>
+          </div>
+        </div>
       ) : (
+        /* VISTA DE RECEPCIÓN ESTÁNDAR */
         <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Recepción de Caja Física</span>
-            <h2 className="text-xl font-extrabold text-slate-900 font-mono">{selectedOrder.folio}</h2>
+            <h2 className="text-xl font-extrabold text-slate-900 font-mono">{selectedOrder.folio || formatTransferFolio(selectedOrder)}</h2>
             <p className="text-xs text-slate-500">Toca el producto tras verificar que viene dentro de la caja.</p>
           </div>
 

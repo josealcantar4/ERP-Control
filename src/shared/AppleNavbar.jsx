@@ -46,7 +46,7 @@ export function AppleNavbar({
                 ? 'bg-amber-50 hover:bg-amber-100 text-amber-700'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
             }`}
-            title="Notificaciones y Alertas de Reemplazo"
+            title="Notificaciones"
           >
             <Bell className="w-4 h-4" />
             {notificationCount > 0 && (

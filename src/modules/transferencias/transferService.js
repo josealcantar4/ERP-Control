@@ -129,6 +129,14 @@ export const transferService = {
                   if (data.estado === 'recibida_incompleta' && data.usuarioDestino === currentUser.username) {
                     showNotification('Reporte de Inconsistencia', `La sucursal ${data.sucursalOrigen} reportó faltantes en el pedido ${folioTxt}.`);
                   }
+                  // Si Matriz re-despacha los faltantes, alertar a la Sucursal origen
+                  if (data.estado === 'faltantes_despachados' && data.usuarioSolicitante === currentUser.username) {
+                    showNotification('Faltantes Despachados', `Matriz envió los productos faltantes del pedido ${folioTxt}. Revisa la caja entrante.`);
+                  }
+                  // Si Sucursal confirma recepción final con faltantes resueltos, alertar a Matriz
+                  if (data.estado === 'recibida' && data.reporteFaltantes?.length > 0 && data.usuarioDestino === currentUser.username) {
+                    showNotification('Faltantes Entregados', `La sucursal ${data.sucursalOrigen} confirmó la recepción de faltantes del pedido ${folioTxt}.`);
+                  }
                 }
               });
             } else {
@@ -319,14 +327,36 @@ export const transferService = {
     return true;
   },
 
-  async completeSolicitud(solicitudId) {
+  async completeSolicitud(solicitudId, folio = null) {
+    const updateData = { estado: 'completada' };
+    if (folio) {
+      updateData.folio = folio;
+    }
+
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(db, 'solicitudes', solicitudId), { estado: 'completada' });
-      } catch (err) {}
+        await updateDoc(doc(db, 'solicitudes', solicitudId), updateData);
+      } catch (err) {
+        console.warn('Error completando solicitud en Firebase:', err);
+      }
     }
     const list = getLocalSolicitudes();
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, estado: 'completada' } : s));
+    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
+    return true;
+  },
+
+  async updateFolio(solicitudId, folio) {
+    if (!solicitudId) return;
+    const updateData = { folio: folio || '' };
+    if (isFirebaseConfigured) {
+      try {
+        await updateDoc(doc(db, 'solicitudes', solicitudId), updateData);
+      } catch (err) {
+        console.warn('Error actualizando folio en Firebase:', err);
+      }
+    }
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
     return true;
   },
 
@@ -340,6 +370,69 @@ export const transferService = {
     }
     const list = getLocalSolicitudes();
     saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, estado, reporteFaltantes: faltantes } : s));
+    return true;
+  },
+
+  // Atender y despachar reporte de faltantes desde Bodega/Matriz
+  async resolveReporteFaltantes(solicitudId, resolutionData) {
+    if (!solicitudId) return false;
+    const hasDispatchedItems = resolutionData?.itemsResolucion?.some(
+      i => i.despachado && Number(i.cantidadDespachada || 0) > 0
+    );
+    const nuevoEstado = hasDispatchedItems ? 'faltantes_despachados' : 'cerrada_con_faltantes';
+
+    const updatePayload = {
+      estado: nuevoEstado,
+      resolucionFaltantes: {
+        fechaResolucion: new Date().toISOString(),
+        usuarioResolucion: resolutionData.usuarioResolucion || '',
+        folioEnvio: resolutionData.folioEnvio || '',
+        notas: resolutionData.notas || '',
+        itemsResolucion: resolutionData.itemsResolucion || []
+      },
+      fechaDespachoFaltantes: hasDispatchedItems ? new Date().toISOString() : null
+    };
+
+    if (isFirebaseConfigured) {
+      try {
+        await updateDoc(doc(db, 'solicitudes', solicitudId), updatePayload);
+      } catch (err) {
+        console.warn('Error guardando resolución de faltantes en Firebase:', err);
+      }
+    }
+
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+    return true;
+  },
+
+  // Finalizar recepción del re-despacho de faltantes en sucursal
+  async receiveFaltantes(solicitudId, receptionData = {}) {
+    if (!solicitudId) return false;
+    const itemsAunFaltantes = receptionData.itemsAunFaltantes || [];
+    const nuevoEstado = itemsAunFaltantes.length > 0 ? 'cerrada_con_faltantes' : 'recibida';
+
+    const updatePayload = {
+      estado: nuevoEstado,
+      recepcionFaltantes: {
+        fechaRecepcion: new Date().toISOString(),
+        usuarioRecepcion: receptionData.usuarioRecepcion || '',
+        itemsRecibidos: receptionData.itemsRecibidos || [],
+        itemsAunFaltantes: itemsAunFaltantes,
+        notas: receptionData.notas || ''
+      }
+    };
+
+    if (isFirebaseConfigured) {
+      try {
+        await updateDoc(doc(db, 'solicitudes', solicitudId), updatePayload);
+      } catch (err) {
+        console.warn('Error guardando recepción de faltantes en Firebase:', err);
+      }
+    }
+
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
     return true;
   },
 
@@ -392,3 +485,27 @@ export const transferService = {
     return true;
   }
 };
+
+/**
+ * Retorna el folio oficial si existe; si no, retorna la referencia basada en fecha y hora.
+ */
+export function formatTransferFolio(solicitud) {
+  if (!solicitud) return '';
+  if (solicitud.folio && typeof solicitud.folio === 'string' && solicitud.folio.trim()) {
+    return solicitud.folio.trim();
+  }
+  if (solicitud.fecha) {
+    try {
+      const d = new Date(solicitud.fecha);
+      if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${minutes}`;
+      }
+    } catch {}
+  }
+  return 'Sin folio';
+}

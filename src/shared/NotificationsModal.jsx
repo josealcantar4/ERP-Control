@@ -50,11 +50,8 @@ export function NotificationsModal({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 leading-tight">
-                Notificaciones y Alertas
+                Notificaciones
               </h3>
-              <p className="text-[11px] text-slate-500">
-                Reemplazos de herramientas, material y pendientes del sistema
-              </p>
             </div>
           </div>
           <button
@@ -112,7 +109,7 @@ export function NotificationsModal({
                 ¡Al día! No hay notificaciones pendientes
               </h4>
               <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                Todos los reemplazos de material y herramientas se encuentran en orden o no tienen fechas vencidas.
+                No tienes notificaciones pendientes en este momento.
               </p>
             </div>
           ) : (

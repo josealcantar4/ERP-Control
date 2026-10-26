@@ -14,12 +14,13 @@ import {
   Loader2,
   X
 } from 'lucide-react';
-import { transferService } from '../transferencias/transferService';
+import { transferService, formatTransferFolio } from '../transferencias';
 import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
+import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 
 export function DespacharModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
@@ -27,6 +28,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   });
   const [selectedSolicitud, setSelectedSolicitud] = useState(null);
   const [detailSolicitud, setDetailSolicitud] = useState(null);
+  const [selectedFaltanteSolicitud, setSelectedFaltanteSolicitud] = useState(null);
   const [isLoadingSolicitudes, setIsLoadingSolicitudes] = useState(() => {
     return (transferService.getLocalSolicitudes() || []).length === 0;
   });
@@ -34,13 +36,21 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   // Estado global de carga
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Folio de transferencia capturado por el despachador
+  const [dispatchFolioDigits, setDispatchFolioDigits] = useState('');
+
   // Helper para persistir orden seleccionada en sessionStorage y restaurar scroll
   const handleSelectSolicitud = (sol) => {
     setSelectedSolicitud(sol);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    if (sol && sol.id) {
-      sessionStorage.setItem('erp_despachar_solicitud_id', sol.id);
+    if (sol) {
+      const initialDigits = sol.folio ? String(sol.folio).replace(/^TR/i, '') : '';
+      setDispatchFolioDigits(initialDigits);
+      if (sol.id) {
+        sessionStorage.setItem('erp_despachar_solicitud_id', sol.id);
+      }
     } else {
+      setDispatchFolioDigits('');
       sessionStorage.removeItem('erp_despachar_solicitud_id');
     }
   };
@@ -122,6 +132,10 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         const refreshed = filtered.find(s => s.id === targetId);
         if (refreshed) {
           setSelectedSolicitud(refreshed);
+          setDispatchFolioDigits(prev => {
+            if (prev) return prev;
+            return refreshed.folio ? String(refreshed.folio).replace(/^TR/i, '') : '';
+          });
         } else if (!filtered.some(s => s.id === targetId)) {
           sessionStorage.removeItem('erp_despachar_solicitud_id');
         }
@@ -184,7 +198,52 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   const readyToDispatch = solicitudes.filter(s => s.estado === 'enviada' || s.estado === 'en_despacho');
   const reportesIncompletos = solicitudes.filter(s => s.estado === 'recibida_incompleta');
   const inProgressDrafts = solicitudes.filter(s => s.estado === 'borrador');
-  const completedSolicitudes = solicitudes.filter(s => s.estado === 'completada' || s.estado === 'recibida');
+  const completedSolicitudes = solicitudes.filter(
+    s =>
+      s.estado === 'completada' ||
+      s.estado === 'recibida' ||
+      s.estado === 'faltantes_despachados' ||
+      s.estado === 'cerrada_con_faltantes'
+  );
+
+  const handleConfirmFaltantesResolution = async (resolutionData) => {
+    if (!selectedFaltanteSolicitud) return;
+
+    setIsProcessing(true);
+    try {
+      await transferService.resolveReporteFaltantes(selectedFaltanteSolicitud.id, {
+        ...resolutionData,
+        usuarioResolucion: currentUser?.username || 'bodega'
+      });
+      const targetSol = selectedFaltanteSolicitud;
+      setSelectedFaltanteSolicitud(null);
+
+      const hasDispatched = resolutionData.itemsResolucion.some(i => i.despachado);
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: hasDispatched ? 'Faltantes Despachados' : 'Reporte Cerrado',
+        message: hasDispatched
+          ? `Se registraron los productos faltantes como despachados para ${targetSol.sucursalOrigen}. La sucursal podrá recibirlos en su módulo.`
+          : `El reporte de faltantes para ${targetSol.sucursalOrigen} ha sido cerrado sin envío. Queda registrado en el historial.`,
+        variant: 'success',
+        confirmText: 'Aceptar',
+        onConfirm: closeDialog
+      });
+    } catch (err) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Error',
+        message: err.message || 'No se pudo procesar la resolución de faltantes.',
+        variant: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleToggleItem = async (index) => {
     if (!selectedSolicitud) return;
@@ -331,6 +390,21 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   const handleFinalizeDispatch = async () => {
     if (!selectedSolicitud) return;
+
+    if (!dispatchFolioDigits.trim()) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Folio Requerido',
+        message: 'Debes ingresar el folio de transferencia generado en el otro sistema (TR...) para poder despachar.',
+        variant: 'danger',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
+
+    const fullFolio = `TR${dispatchFolioDigits.trim()}`;
     const allChecked = selectedSolicitud.items?.every(i => i.atendido);
 
     if (!allChecked) {
@@ -338,7 +412,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         isOpen: true,
         type: 'confirm',
         title: 'Productos pendientes en caja',
-        message: 'Aún tienes productos sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho de todas formas?',
+        message: `Aún tienes productos sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho con folio ${fullFolio} de todas formas?`,
         confirmText: 'Finalizar de todos modos',
         cancelText: 'Continuar empacando',
         variant: 'danger',
@@ -346,7 +420,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
           closeDialog();
           setIsProcessing(true);
           try {
-            await transferService.completeSolicitud(selectedSolicitud.id);
+            await transferService.completeSolicitud(selectedSolicitud.id, fullFolio);
             handleSelectSolicitud(null);
           } finally {
             setIsProcessing(false);
@@ -361,7 +435,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       isOpen: true,
       type: 'confirm',
       title: 'Finalizar Despacho',
-      message: `¿Confirmas que la caja para ${selectedSolicitud.sucursalOrigen} (${selectedSolicitud.folio || 'Sin Folio'}) está lista y empacada?`,
+      message: `¿Confirmas que la caja con folio ${fullFolio} para ${selectedSolicitud.sucursalOrigen} está lista y empacada?`,
       confirmText: 'Confirmar y Despachar',
       cancelText: 'Revisar',
       variant: 'success',
@@ -369,7 +443,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         closeDialog();
         setIsProcessing(true);
         try {
-          await transferService.completeSolicitud(selectedSolicitud.id);
+          await transferService.completeSolicitud(selectedSolicitud.id, fullFolio);
           handleSelectSolicitud(null);
         } finally {
           setIsProcessing(false);
@@ -432,7 +506,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                   <div key={sol.id} className="bg-red-50 rounded-3xl p-4 border border-red-200 shadow-sm">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-bold text-red-900 font-mono text-sm">
-                        Folio: {sol.folio || 'Sin Folio'}
+                        Folio: {sol.folio || formatTransferFolio(sol)}
                       </span>
                       <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 uppercase">
                         Sucursal: {sol.sucursalOrigen}
@@ -447,8 +521,21 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                         </li>
                       ))}
                     </ul>
-                    <div className="text-[11px] text-red-600 italic">
-                      Comunícate con la sucursal para aclarar la inconsistencia de caja física.
+                    <div className="mt-3 pt-2.5 border-t border-red-200/70 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-[11px] text-red-600 italic">
+                        Reporte pendiente de resolución por Bodega.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedFaltanteSolicitud(sol);
+                        }}
+                        className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        <span>Atender Faltantes</span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -505,7 +592,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <span className="text-base font-extrabold text-blue-700 font-mono">
-                              {sol.folio ? `${sol.folio} — ${sol.sucursalOrigen}` : sol.sucursalOrigen}
+                              {sol.folio ? `${sol.folio} — ${sol.sucursalOrigen}` : `${sol.sucursalOrigen} • Ref: ${formatTransferFolio(sol)}`}
                             </span>
                             <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                               {sol.estado === 'en_despacho' ? 'En Surtido' : 'Nueva Solicitud'}
@@ -591,7 +678,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                       <div className="space-y-0.5 min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-bold text-slate-800">
-                            {sol.folio ? `${sol.folio} (${sol.sucursalOrigen})` : sol.sucursalOrigen}
+                            {sol.folio ? `${sol.folio} (${sol.sucursalOrigen})` : `${sol.sucursalOrigen} • Ref: ${formatTransferFolio(sol)}`}
                           </span>
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-500 uppercase">
                             Borrador en vivo
@@ -653,7 +740,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                       </div>
                       <div className="truncate">
                         <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm mr-2">
-                          {sol.folio || 'Sin Folio'}
+                          {sol.folio || formatTransferFolio(sol)}
                         </span>
                         <span className="text-slate-700 font-semibold mr-1">
                           {sol.sucursalOrigen}
@@ -666,13 +753,25 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
                     <div className="flex items-center gap-2 shrink-0">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        sol.estado === 'recibida_incompleta'
+                        sol.estado === 'faltantes_despachados'
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                          : sol.estado === 'cerrada_con_faltantes'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : sol.estado === 'recibida_incompleta'
                           ? 'bg-red-50 text-red-700 border border-red-200'
                           : sol.estado === 'recibida'
                           ? 'bg-blue-50 text-blue-700 border border-blue-200'
                           : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                       }`}>
-                        {sol.estado === 'recibida_incompleta' ? 'Incompleta' : sol.estado === 'recibida' ? 'Recibida' : 'Completada'}
+                        {sol.estado === 'faltantes_despachados'
+                          ? 'Faltantes en Tránsito'
+                          : sol.estado === 'cerrada_con_faltantes'
+                          ? 'Cerrada c/ Faltantes'
+                          : sol.estado === 'recibida_incompleta'
+                          ? 'Incompleta'
+                          : sol.estado === 'recibida'
+                          ? 'Recibida'
+                          : 'Completada'}
                       </span>
                       <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
                     </div>
@@ -688,7 +787,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         <div key={selectedSolicitud.id} className="space-y-4 animate-fade-in">
 
           {/* Header Card */}
-          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
+          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block">
@@ -698,7 +797,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                   {selectedSolicitud.folio ? `${selectedSolicitud.folio} - ${selectedSolicitud.sucursalOrigen}` : selectedSolicitud.sucursalOrigen}
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Solicitado por: <strong className="text-slate-800">{selectedSolicitud.usuarioSolicitante}</strong>
+                  Solicitado por: <strong className="text-slate-800">{selectedSolicitud.usuarioSolicitante}</strong> &bull; Ref: <span className="font-mono font-semibold text-slate-700">{formatTransferFolio(selectedSolicitud)}</span>
                 </p>
               </div>
 
@@ -710,6 +809,38 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                 <Plus className="w-4 h-4" />
                 <span className="hidden sm:inline">Agregar Extras</span>
               </button>
+            </div>
+
+            {/* Folio de Transferencia generado por el sistema externo */}
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                  <span>Folio de Transferencia (del sistema)</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <span className="text-[11px] text-slate-400">
+                  Ingresa el número generado al transferir
+                </span>
+              </div>
+              <div className="flex items-stretch shadow-sm rounded-xl overflow-hidden border border-slate-200 focus-within:border-blue-500 max-w-xs bg-white">
+                <div className="bg-slate-100 px-3.5 py-2 text-slate-600 font-bold text-sm border-r border-slate-200 flex items-center justify-center select-none">
+                  TR
+                </div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={dispatchFolioDigits}
+                  placeholder="000123"
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '');
+                    setDispatchFolioDigits(digits);
+                    const fullFolio = digits ? `TR${digits}` : '';
+                    setSelectedSolicitud(prev => prev ? ({ ...prev, folio: fullFolio }) : null);
+                    transferService.updateFolio(selectedSolicitud.id, fullFolio);
+                  }}
+                  className="w-full bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none"
+                />
+              </div>
             </div>
 
             {/* Checklist progress summary */}
@@ -936,6 +1067,15 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         isOpen={Boolean(detailSolicitud)}
         solicitud={detailSolicitud}
         onClose={() => setDetailSolicitud(null)}
+      />
+
+      {/* Modal Independiente para Atender y Despachar Faltantes */}
+      <DespacharFaltantesModal
+        isOpen={Boolean(selectedFaltanteSolicitud)}
+        solicitud={selectedFaltanteSolicitud}
+        onClose={() => setSelectedFaltanteSolicitud(null)}
+        onConfirmResolution={handleConfirmFaltantesResolution}
+        isProcessing={isProcessing}
       />
 
     </div>

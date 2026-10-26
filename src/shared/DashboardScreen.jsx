@@ -29,7 +29,7 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
 
   // Conteos en vivo
   const entrantesCount = solicitudes.filter(
-    s => s.estado === 'completada' && s.usuarioSolicitante === currentUser?.username
+    s => (s.estado === 'completada' || s.estado === 'faltantes_despachados') && s.usuarioSolicitante === currentUser?.username
   ).length;
 
   const isAdminOrNoRestrictions =

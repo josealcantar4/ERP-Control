@@ -63,8 +63,8 @@ export function CleanProductModal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 select-none overflow-y-auto overscroll-contain animate-fade-in">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden my-auto overscroll-contain">
+    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6 select-none overflow-y-auto overscroll-contain animate-fade-in">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 max-h-[100dvh] sm:max-h-[90dvh] overflow-hidden my-0 sm:my-auto overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
         
         {/* ENCABEZADO */}
         <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex items-center justify-between">

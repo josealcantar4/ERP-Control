@@ -12,7 +12,8 @@ import {
   OfflineIndicator,
   ReloadPrompt,
   ScreenRefreshSpinner,
-  NotificationsModal
+  NotificationsModal,
+  transitionView
 } from './shared';
 
 export default function App() {
@@ -33,23 +34,56 @@ export default function App() {
 
   // Estado del modal y alertas de notificaciones
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [notificationsList, setNotificationsList] = useState([]);
+  const [materialNotifications, setMaterialNotifications] = useState([]);
+  const [transferNotifications, setTransferNotifications] = useState([]);
 
-  // Suscripción reactiva en tiempo real a notificaciones de material y catálogo limpio de Firebase
+  // Notificaciones unificadas en tiempo real (Transferencias + Material)
+  const notificationsList = React.useMemo(() => {
+    return [...transferNotifications, ...materialNotifications];
+  }, [transferNotifications, materialNotifications]);
+
+  // Suscripción reactiva en tiempo real a notificaciones de transferencias, material y catálogo limpio de Firebase
   useEffect(() => {
     if (currentUser) {
-      const unsub = materialService.subscribeMateriales((items) => {
+      // 1. Alertas de Reemplazo de Material (vencidas y próximas a vencer)
+      const unsubMaterial = materialService.subscribeMateriales((items) => {
         const notifs = materialService.calculateNotifications(items);
-        setNotificationsList(notifs);
+        setMaterialNotifications(notifs);
       });
+
+      // 2. Alertas de Transferencias (solicitudes recibidas, pedidos despachados, faltantes)
+      const unsubSolicitudes = transferService.subscribeSolicitudes((solicitudes) => {
+        const notifs = transferService.calculateTransferNotifications(solicitudes, currentUser);
+        setTransferNotifications(notifs);
+      }, currentUser);
+
+      // 3. Sincronización del catálogo limpio
       const unsubClean = catalogService.subscribeCleanCatalog();
 
       return () => {
-        if (unsub) unsub();
+        if (unsubMaterial) unsubMaterial();
+        if (unsubSolicitudes) unsubSolicitudes();
         if (unsubClean) unsubClean();
       };
+    } else {
+      transferService.resetSolicitudesSubscription();
+      setMaterialNotifications([]);
+      setTransferNotifications([]);
     }
   }, [currentUser]);
+
+  // Listener para sincronización inmediata de notificaciones descartadas
+  useEffect(() => {
+    const handleDismissed = (e) => {
+      const dismissedId = e.detail?.notifId;
+      if (dismissedId) {
+        setTransferNotifications(prev => prev.filter(n => n.id !== dismissedId));
+        setMaterialNotifications(prev => prev.filter(n => n.id !== dismissedId));
+      }
+    };
+    window.addEventListener('erp_notifications_dismissed', handleDismissed);
+    return () => window.removeEventListener('erp_notifications_dismissed', handleDismissed);
+  }, []);
 
   // Verificación de información nueva en segundo plano al abrir cualquier pantalla
   // EXCLUSIÓN: El módulo 'upload-catalog' no muestra spinner ni ejecuta esta verificación.
@@ -111,11 +145,14 @@ export default function App() {
     }
   }, []);
 
-  // Navegación con persistencia automática, restablecimiento de scroll y animación de refresco
-  const navigateTo = (screen) => {
-    setCurrentScreen(screen);
-    localStorage.setItem('currentScreen', screen);
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  // Navegación contextual con View Transitions, persistencia automática, restablecimiento de scroll y animación de refresco
+  const navigateTo = (screen, customDirection = null) => {
+    const direction = customDirection || (screen === 'dashboard' ? 'back' : 'forward');
+    transitionView(() => {
+      setCurrentScreen(screen);
+      localStorage.setItem('currentScreen', screen);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }, { direction });
     performScreenRefresh(screen);
   };
 
@@ -220,26 +257,30 @@ export default function App() {
   }, [performScreenRefresh]);
 
   const handleLoginSuccess = (user) => {
-    setCurrentUser(user);
-    if (user.roles?.length === 1) {
-      let defaultScreen = 'dashboard';
-      if (user.roles[0] === 'solicitar') defaultScreen = 'solicitar';
-      else if (user.roles[0] === 'despachar') defaultScreen = 'despachar';
-      else if (user.roles[0] === 'material') defaultScreen = 'material';
-      navigateTo(defaultScreen);
-    } else {
-      navigateTo('dashboard');
-    }
+    transitionView(() => {
+      setCurrentUser(user);
+      let targetScreen = 'dashboard';
+      if (user.roles?.length === 1) {
+        if (user.roles[0] === 'solicitar') targetScreen = 'solicitar';
+        else if (user.roles[0] === 'despachar') targetScreen = 'despachar';
+        else if (user.roles[0] === 'material') targetScreen = 'material';
+      }
+      setCurrentScreen(targetScreen);
+      localStorage.setItem('currentScreen', targetScreen);
+    }, { direction: 'login' });
 
     // Disparar verificación silenciosa post-login
     runCatalogAutoSync();
   };
 
   const handleLogout = () => {
-    userService.logout();
-    setCurrentUser(null);
-    setCurrentScreen('dashboard');
-    localStorage.removeItem('currentScreen');
+    transitionView(() => {
+      userService.logout();
+      transferService.resetSolicitudesSubscription();
+      setCurrentUser(null);
+      setCurrentScreen('dashboard');
+      localStorage.removeItem('currentScreen');
+    }, { direction: 'login' });
   };
 
   if (isLoading) {
@@ -294,26 +335,57 @@ export default function App() {
         onNavigate={navigateTo}
         currentScreen={currentScreen}
         notificationCount={notificationsList.length}
-        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        isNotificationsOpen={isNotificationsOpen}
+        onOpenNotifications={() => {
+          transferService.unlockAudioEngine();
+          if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+          }
+          if (currentUser) {
+            const latestSolicitudes = transferService.getLocalSolicitudes();
+            const freshTransferNotifs = transferService.calculateTransferNotifications(latestSolicitudes, currentUser);
+            setTransferNotifications(freshTransferNotifs);
+
+            const latestMaterial = materialService.getLocalMateriales();
+            const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial);
+            setMaterialNotifications(freshMaterialNotifs);
+          }
+          setIsNotificationsOpen(prev => !prev);
+        }}
       />
 
-      {/* Modal Independiente de Notificaciones y Alertas de Reemplazo */}
+      {/* Messagebox Flotante de Notificaciones Unificadas (Transferencias + Material) */}
       <NotificationsModal
         isOpen={isNotificationsOpen}
         notifications={notificationsList}
         onClose={() => setIsNotificationsOpen(false)}
+        onDismissNotification={(notifId) => {
+          setTransferNotifications(prev => prev.filter(n => n.id !== notifId));
+          setMaterialNotifications(prev => prev.filter(n => n.id !== notifId));
+        }}
         onMarkAsReplaced={async (materialId) => {
           await materialService.markAsStatus(materialId, 'reemplazado');
         }}
         onNavigateToMaterial={() => {
           navigateTo('material');
         }}
+        onNavigateToScreen={(screen, orderId) => {
+          setIsNotificationsOpen(false);
+          if (orderId) {
+            if (screen === 'recibir') {
+              sessionStorage.setItem('erp_recibir_order_id', orderId);
+            } else if (screen === 'despachar') {
+              sessionStorage.setItem('erp_despachar_solicitud_id', orderId);
+            }
+          }
+          navigateTo(screen);
+        }}
       />
 
       {/* Indicador de actualización de pantalla discreto estilo iOS (sin opacar el fondo) */}
       <ScreenRefreshSpinner isRefreshing={isScreenUpdating} />
 
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16">
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16 vt-main">
         <div key={currentScreen} className="ios-page-transition">
           {currentScreen === 'dashboard' && (
             <DashboardScreen
@@ -363,7 +435,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="py-4 text-center text-[11px] text-slate-400">
+      <footer className="py-4 text-center text-[11px] text-slate-400 vt-footer">
         ERP Control &bull; {currentUser.sede}
       </footer>
       <ReloadPrompt />

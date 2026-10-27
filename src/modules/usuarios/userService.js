@@ -135,7 +135,7 @@ export const userService = {
     const password = userData.password?.trim();
     const nombre = userData.nombre?.trim();
     const sede = userData.sede?.trim();
-    const area = userData.area?.trim();
+    const area = userData.area?.trim() || '';
     const roles = userData.roles || ['solicitar'];
     const excluirDestinatario = Boolean(userData.excluirDestinatario);
 
@@ -143,7 +143,6 @@ export const userService = {
     if (!password || password.length < 3) throw new Error('La contraseña debe tener al menos 3 caracteres.');
     if (!nombre) throw new Error('El nombre completo de la persona es obligatorio.');
     if (!sede) throw new Error('Debes seleccionar una sede.');
-    if (!area) throw new Error('Debes seleccionar un área.');
     if (!roles || roles.length === 0) throw new Error('Debes asignar al menos un rol.');
 
     const docRef = doc(db, 'usuarios', username);

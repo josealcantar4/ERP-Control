@@ -16,7 +16,14 @@ function getLocalSedes() {
   const raw = localStorage.getItem(LOCAL_SEDES_KEY);
   if (raw) {
     try {
-      return JSON.parse(raw);
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        return list.map(s => ({
+          ...s,
+          areas: Array.isArray(s.areas) ? s.areas : []
+        }));
+      }
+      return [];
     } catch {
       return [];
     }
@@ -33,7 +40,14 @@ function getLocalAreas() {
   const raw = localStorage.getItem(LOCAL_AREAS_KEY);
   if (raw) {
     try {
-      return JSON.parse(raw);
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        return list.map(a => ({
+          ...a,
+          excluirTransferencias: Boolean(a.excluirTransferencias)
+        }));
+      }
+      return [];
     } catch {
       return [];
     }
@@ -70,7 +84,14 @@ export const organizationService = {
         return onSnapshot(
           q,
           (snap) => {
-            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const items = snap.docs.map(d => {
+              const data = d.data() || {};
+              return {
+                id: d.id,
+                ...data,
+                areas: Array.isArray(data.areas) ? data.areas : []
+              };
+            });
             items.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
             onUpdate(items);
             saveLocalSedes(items);
@@ -99,12 +120,26 @@ export const organizationService = {
           getDocs(collection(db, 'sedes')),
           getDocs(collection(db, 'areas'))
         ]);
-        const sedes = snapSedes.docs.map(d => ({ id: d.id, ...d.data() }));
+        const sedes = snapSedes.docs.map(d => {
+          const data = d.data() || {};
+          return {
+            id: d.id,
+            ...data,
+            areas: Array.isArray(data.areas) ? data.areas : []
+          };
+        });
         sedes.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
         saveLocalSedes(sedes);
         result.sedes = sedes;
 
-        const areas = snapAreas.docs.map(d => ({ id: d.id, ...d.data() }));
+        const areas = snapAreas.docs.map(d => {
+          const data = d.data() || {};
+          return {
+            id: d.id,
+            ...data,
+            excluirTransferencias: Boolean(data.excluirTransferencias)
+          };
+        });
         areas.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
         saveLocalAreas(areas);
         result.areas = areas;
@@ -115,16 +150,21 @@ export const organizationService = {
     return result;
   },
 
-  // Crear una nueva Sede
-  async createSede(nombre, tipo = 'Sucursal') {
+  // Crear una nueva Sede (con lista opcional de sub-áreas)
+  async createSede(nombre, tipo = 'Sucursal', areas = []) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
+
+    const cleanAreas = Array.isArray(areas)
+      ? areas.map(a => String(a || '').trim()).filter(Boolean)
+      : [];
 
     const id = generateCleanId('sede', cleanNombre);
     const docData = {
       id,
       nombre: cleanNombre,
       tipo: tipo || 'Sucursal',
+      areas: cleanAreas,
       createdAt: new Date().toISOString()
     };
 
@@ -140,7 +180,7 @@ export const organizationService = {
   },
 
   // Actualizar una Sede existente
-  async updateSede(id, nombre, tipo) {
+  async updateSede(id, nombre, tipo, areas = null) {
     if (!id) throw new Error('El ID de la sede es obligatorio.');
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
@@ -152,6 +192,10 @@ export const organizationService = {
       updatedAt: new Date().toISOString()
     };
 
+    if (areas !== null && Array.isArray(areas)) {
+      updateData.areas = areas.map(a => String(a || '').trim()).filter(Boolean);
+    }
+
     if (isFirebaseConfigured) {
       await setDoc(doc(db, 'sedes', id), updateData, { merge: true });
     }
@@ -160,6 +204,49 @@ export const organizationService = {
     const updated = current.map(s => (s.id === id ? { ...s, ...updateData } : s));
     saveLocalSedes(updated);
     return true;
+  },
+
+  // Agregar una sub-área a una Sede
+  async addAreaToSede(sedeId, areaNombre) {
+    if (!sedeId) throw new Error('ID de sede requerido.');
+    const cleanArea = String(areaNombre || '').trim();
+    if (!cleanArea) throw new Error('El nombre del área es requerido.');
+
+    const sedes = getLocalSedes();
+    const target = sedes.find(s => s.id === sedeId);
+    if (!target) throw new Error('Sede no encontrada.');
+
+    const currentAreas = Array.isArray(target.areas) ? target.areas : [];
+    if (!currentAreas.includes(cleanArea)) {
+      const newAreas = [...currentAreas, cleanArea];
+      await this.updateSede(sedeId, target.nombre, target.tipo, newAreas);
+    }
+    return true;
+  },
+
+  // Remover una sub-área de una Sede
+  async removeAreaFromSede(sedeId, areaNombre) {
+    if (!sedeId) throw new Error('ID de sede requerido.');
+    const cleanArea = String(areaNombre || '').trim();
+
+    const sedes = getLocalSedes();
+    const target = sedes.find(s => s.id === sedeId);
+    if (!target) return false;
+
+    const currentAreas = Array.isArray(target.areas) ? target.areas : [];
+    const newAreas = currentAreas.filter(a => a !== cleanArea);
+    await this.updateSede(sedeId, target.nombre, target.tipo, newAreas);
+    return true;
+  },
+
+  // Obtener las sub-áreas configuradas para una Sede por ID o Nombre
+  getSedeAreas(sedeNombreOrId) {
+    if (!sedeNombreOrId) return [];
+    const sedes = getLocalSedes();
+    const found = sedes.find(
+      s => s.id === sedeNombreOrId || (s.nombre || '').toLowerCase() === String(sedeNombreOrId).toLowerCase()
+    );
+    return Array.isArray(found?.areas) ? found.areas : [];
   },
 
   // Eliminar una Sede
@@ -188,7 +275,14 @@ export const organizationService = {
         return onSnapshot(
           q,
           (snap) => {
-            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const items = snap.docs.map(d => {
+              const data = d.data() || {};
+              return {
+                id: d.id,
+                ...data,
+                excluirTransferencias: Boolean(data.excluirTransferencias)
+              };
+            });
             items.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
             onUpdate(items);
             saveLocalAreas(items);
@@ -209,7 +303,7 @@ export const organizationService = {
   },
 
   // Crear una nueva Área
-  async createArea(nombre) {
+  async createArea(nombre, excluirTransferencias = false) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
 
@@ -217,6 +311,7 @@ export const organizationService = {
     const docData = {
       id,
       nombre: cleanNombre,
+      excluirTransferencias: Boolean(excluirTransferencias),
       createdAt: new Date().toISOString()
     };
 
@@ -232,7 +327,7 @@ export const organizationService = {
   },
 
   // Actualizar un Área existente
-  async updateArea(id, nombre) {
+  async updateArea(id, nombre, excluirTransferencias = false) {
     if (!id) throw new Error('El ID del área es obligatorio.');
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
@@ -240,6 +335,7 @@ export const organizationService = {
     const updateData = {
       id,
       nombre: cleanNombre,
+      excluirTransferencias: Boolean(excluirTransferencias),
       updatedAt: new Date().toISOString()
     };
 
@@ -251,6 +347,11 @@ export const organizationService = {
     const updated = current.map(a => (a.id === id ? { ...a, ...updateData } : a));
     saveLocalAreas(updated);
     return true;
+  },
+
+  // Obtener áreas operativas para transferencias y pedidos
+  getOperativeAreas() {
+    return getLocalAreas().filter(a => !a.excluirTransferencias);
   },
 
   // Eliminar un Área

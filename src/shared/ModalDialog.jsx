@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, HelpCircle, X, Info } from 'lucide-react';
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { AutoScrollInput } from './AutoScrollInput';
 
 /**
  * Custom React Modal for Alerts, Confirmations, and Prompts.
@@ -26,8 +27,8 @@ export function ModalDialog({
   if (!isOpen) return null;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 my-auto overscroll-contain">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 overflow-hidden p-5 sm:p-6 space-y-4 my-auto overscroll-contain max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh]">
         
         {/* Header Icon + Title */}
         <div className="flex items-start gap-3">
@@ -63,10 +64,10 @@ export function ModalDialog({
           </div>
         </div>
 
-        {/* Optional Input for Prompt type */}
+        {/* Optional Input for Prompt type with AutoScroll & Carousel */}
         {type === 'prompt' && (
           <div className="pt-1">
-            <input
+            <AutoScrollInput
               type="text"
               autoFocus
               value={inputValue}

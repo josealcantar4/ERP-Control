@@ -51,6 +51,13 @@ export function MaterialTypesModal({
 
   if (!isOpen) return null;
 
+  const handleDeleteTipo = (tipo) => {
+    if (!tipo) return;
+    if (window.confirm(`¿Estás seguro de que deseas eliminar el tipo de material "${tipo.nombre}"?\nEsta acción no se puede deshacer.`)) {
+      onDeleteTipo(tipo.id);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
@@ -79,8 +86,8 @@ export function MaterialTypesModal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col my-0 sm:my-auto max-h-[100dvh] sm:max-h-[90dvh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
         
         {/* HEADER */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
@@ -217,7 +224,7 @@ export function MaterialTypesModal({
                       {canDelete && (
                         <button
                           type="button"
-                          onClick={() => onDeleteTipo(tipo.id)}
+                          onClick={() => handleDeleteTipo(tipo)}
                           className="w-7 h-7 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer"
                           title="Eliminar tipo"
                         >

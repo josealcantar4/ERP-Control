@@ -8,10 +8,13 @@ import {
   Clock,
   ShieldCheck,
   Package,
-  Truck
+  Truck,
+  PackagePlus,
+  AlertCircle
 } from 'lucide-react';
 import { formatTransferFolio } from './transferService';
 import { useBodyScrollLock } from '../../hooks';
+import { MarqueeText } from '../../shared/MarqueeText';
 
 export function TransferDetailModal({ isOpen, solicitud, onClose }) {
   useBodyScrollLock(isOpen);
@@ -40,8 +43,8 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
   );
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 max-h-[92dvh] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200 overscroll-contain">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 max-h-[100dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden my-0 sm:my-auto animate-in fade-in zoom-in-95 duration-200 overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
         
         {/* HEADER */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between gap-3 shrink-0 bg-slate-50/60">
@@ -52,6 +55,17 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               </span>
 
               {/* ESTADO PILL */}
+              {Boolean(solicitud.esTransferenciaInterna || (solicitud.sucursalOrigen && solicitud.sucursalOrigen === solicitud.sucursalDestino)) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  Transferencia Interna
+                </span>
+              )}
+              {(solicitud.sinSolicitud || solicitud.esDespachoDirecto) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+                  <PackagePlus className="w-3 h-3 text-amber-700" />
+                  Despacho sin Solicitud
+                </span>
+              )}
               {isCompleted && (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
@@ -93,9 +107,14 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                   Borrador
                 </span>
               )}
-              {!isCompleted && !isReceived && !isIncomplete && !isDraft && !isFaltantesDespachados && !isCerradaConFaltantes && (
+              {solicitud.estado === 'en_despacho' && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  En Despacho
+                </span>
+              )}
+              {!isCompleted && !isReceived && !isIncomplete && !isDraft && !isFaltantesDespachados && !isCerradaConFaltantes && solicitud.estado !== 'en_despacho' && (
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200 uppercase">
-                  {solicitud.estado || 'Enviada'}
+                  {String(solicitud.estado || 'Enviada').replace(/_/g, ' ')}
                 </span>
               )}
             </div>
@@ -122,7 +141,7 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               Origen
             </span>
             <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">
-              {solicitud.sucursalOrigen || 'Sucursal'}
+              {solicitud.sucursalOrigen || 'Sucursal'}{solicitud.areaOrigen ? ` (${solicitud.areaOrigen})` : ''}
             </p>
             <p className="text-[11px] text-slate-500 truncate">
               Por: {solicitud.usuarioSolicitante || 'N/A'}
@@ -135,13 +154,26 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               Destino
             </span>
             <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">
-              {solicitud.areaDestino || 'Bodega Central'}
+              {solicitud.sucursalDestino || (solicitud.areaDestino ? 'Matriz' : 'Bodega Central')}{solicitud.areaDestino ? ` (${solicitud.areaDestino})` : ''}
             </p>
             <p className="text-[11px] text-slate-500 truncate">
-              Para: {solicitud.usuarioDestino || 'N/A'}
+              {solicitud.usuarioDespacho ? `Despachado: ${solicitud.usuarioDespacho}` : `Para: ${solicitud.usuarioDestino || 'General'}`}
             </p>
           </div>
         </div>
+
+        {/* OBSERVACIÓN DEL PEDIDO (EJ. DESPACHO SIN SOLICITUD) */}
+        {solicitud.observaciones && (
+          <div className="p-3.5 bg-amber-50/90 border-b border-amber-200/70 text-xs space-y-1 shrink-0">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900">
+              <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>Observaciones del Pedido:</span>
+            </div>
+            <p className="text-amber-800 font-medium pl-5 leading-relaxed">
+              {solicitud.observaciones}
+            </p>
+          </div>
+        )}
 
         {/* HISTORIAL PERMANENTE DE FALTANTES Y RESOLUCIÓN */}
         {hasFaltantesReport && (
@@ -250,7 +282,10 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                 <div key={index} className="p-3 sm:p-3.5 flex items-center justify-between gap-3 text-xs">
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-slate-900">{item.descripcion}</span>
+                      <MarqueeText
+                        text={item.descripcion}
+                        className="font-bold text-slate-900 text-xs block"
+                      />
                       {item.esExtra && (
                         <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-purple-100 text-purple-700 border border-purple-200">
                           EXTRA

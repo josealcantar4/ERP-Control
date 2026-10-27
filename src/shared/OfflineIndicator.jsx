@@ -41,7 +41,7 @@ export function OfflineIndicator() {
   // 1. BANNER OFFLINE (Permanente mientras no haya internet)
   if (!isOnline) {
     return (
-      <div className="bg-amber-500 text-white px-4 py-2 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-300 animate-slide-down select-none">
+      <div className="bg-amber-500 text-white px-4 py-2 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-300 animate-slide-down select-none vt-offline">
         <WifiOff className="w-4 h-4 shrink-0 animate-pulse" />
         <span>
           Modo Offline: Sin conexión a internet. Los cambios se guardan localmente en tu dispositivo y se sincronizarán al reconectar.
@@ -54,7 +54,7 @@ export function OfflineIndicator() {
   if (showRestored) {
     return (
       <div
-        className={`bg-emerald-600 text-white px-4 py-1.5 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-600 select-none ${
+        className={`bg-emerald-600 text-white px-4 py-1.5 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-600 select-none vt-offline ${
           isDismissing
             ? 'opacity-0 -translate-y-full max-h-0 py-0 overflow-hidden'
             : 'opacity-100 translate-y-0 animate-slide-down'

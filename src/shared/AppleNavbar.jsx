@@ -9,13 +9,14 @@ export function AppleNavbar({
   onNavigate,
   currentScreen,
   notificationCount = 0,
-  onOpenNotifications
+  onOpenNotifications,
+  isNotificationsOpen = false
 }) {
   const { isOnline } = useOnlineStatus();
   const isAdmin = currentUser?.username?.toLowerCase() === 'administrador';
 
   return (
-    <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 transition-colors">
+    <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 transition-colors vt-navbar">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         
         {/* Brand & Sede */}
@@ -40,13 +41,17 @@ export function AppleNavbar({
         <div className="flex items-center gap-2.5">
           {/* Notifications button with Live Badge Dot */}
           <button
+            id="navbar-notification-bell-btn"
+            type="button"
             onClick={onOpenNotifications}
             className={`p-2 rounded-2xl transition-all cursor-pointer relative ${
-              notificationCount > 0
+              isNotificationsOpen
+                ? 'bg-amber-100 text-amber-900 ring-2 ring-amber-400/60 shadow-inner'
+                : notificationCount > 0
                 ? 'bg-amber-50 hover:bg-amber-100 text-amber-700'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
             }`}
-            title="Notificaciones"
+            title={isNotificationsOpen ? 'Cerrar notificaciones' : 'Ver notificaciones'}
           >
             <Bell className="w-4 h-4" />
             {notificationCount > 0 && (

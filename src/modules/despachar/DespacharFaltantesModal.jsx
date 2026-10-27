@@ -13,6 +13,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { formatTransferFolio } from '../transferencias';
+import { MarqueeText } from '../../shared/MarqueeText';
 import { useBodyScrollLock } from '../../hooks';
 
 export function DespacharFaltantesModal({
@@ -92,8 +93,8 @@ export function DespacharFaltantesModal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-5 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 flex flex-col my-0 sm:my-auto max-h-[100dvh] sm:max-h-[92dvh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
 
         {/* HEADER */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between gap-3 bg-slate-50/70 shrink-0">
@@ -151,9 +152,10 @@ export function DespacharFaltantesModal({
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="min-w-0 flex-1">
-                      <h4 className="text-sm font-bold text-slate-900 truncate">
-                        {it.descripcion}
-                      </h4>
+                      <MarqueeText
+                        text={it.descripcion}
+                        className="text-sm font-bold text-slate-900 block"
+                      />
                       <p className="text-[11px] font-mono text-slate-400">
                         Código: {it.codigo} &bull; Faltante reportado:{' '}
                         <strong className="text-red-700">{it.cantidadFaltanteReportada} pz</strong>

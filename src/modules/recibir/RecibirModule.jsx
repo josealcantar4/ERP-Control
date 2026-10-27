@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X } from 'lucide-react';
 import { transferService, formatTransferFolio } from '../transferencias';
+import { transitionView } from '../../shared';
 import { useBodyScrollLock } from '../../hooks';
 
 export function RecibirModule({ currentUser, onBack, onRefresh }) {
@@ -10,7 +11,8 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     return list.filter(
       s =>
         (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
-        s.usuarioSolicitante === currentUser?.username
+        (s.usuarioSolicitante === currentUser?.username ||
+         (currentUser?.sede && s.sucursalOrigen?.toLowerCase() === currentUser?.sede?.toLowerCase()))
     );
   });
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -23,23 +25,38 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
   useBodyScrollLock(isReportModalOpen);
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
-    return (
-      list.filter(
-        s =>
-          (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
-          s.usuarioSolicitante === currentUser?.username
-      ).length === 0
-    );
+    return list.length === 0;
   });
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
       // Mostrar pedidos despachados inicialmente y re-despachos de faltantes
-      const validos = list.filter(
-        s =>
-          (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
-          s.usuarioSolicitante === currentUser.username
-      );
+      const validos = list.filter((s) => {
+        if (s.estado !== 'completada' && s.estado !== 'faltantes_despachados') {
+          return false;
+        }
+
+        const isAdmin =
+          currentUser?.username?.toLowerCase() === 'administrador' ||
+          currentUser?.roles?.includes('admin');
+        if (isAdmin) return true;
+
+        if (s.usuarioSolicitante === currentUser?.username) return true;
+
+        const userSede = (currentUser?.sede || '').toLowerCase();
+        const userArea = (currentUser?.area || '').toLowerCase();
+        const solSede = (s.sucursalOrigen || '').toLowerCase();
+        const solArea = (s.areaOrigen || '').toLowerCase();
+
+        if (!userSede || solSede !== userSede) return false;
+
+        // Si la sede tiene sub-áreas y el pedido especificó áreaOrigen
+        if (userArea && userArea !== 'externo' && solArea) {
+          return solArea === userArea;
+        }
+
+        return true;
+      });
       setSolicitudes(validos);
       setIsLoadingOrders(false);
 
@@ -58,23 +75,27 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
   }, [currentUser, selectedOrder?.id]);
 
   const openOrder = (sol) => {
-    setSelectedOrder(sol);
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    setCheckedItems({});
-    setCheckedNewFaltantes({});
-    if (sol && sol.id) {
-      sessionStorage.setItem('erp_recibir_order_id', sol.id);
-    } else {
-      sessionStorage.removeItem('erp_recibir_order_id');
-    }
+    transitionView(() => {
+      setSelectedOrder(sol);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      setCheckedItems({});
+      setCheckedNewFaltantes({});
+      if (sol && sol.id) {
+        sessionStorage.setItem('erp_recibir_order_id', sol.id);
+      } else {
+        sessionStorage.removeItem('erp_recibir_order_id');
+      }
+    }, { direction: 'forward' });
   };
 
   const closeOrder = () => {
-    setSelectedOrder(null);
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    setCheckedItems({});
-    setCheckedNewFaltantes({});
-    sessionStorage.removeItem('erp_recibir_order_id');
+    transitionView(() => {
+      setSelectedOrder(null);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      setCheckedItems({});
+      setCheckedNewFaltantes({});
+      sessionStorage.removeItem('erp_recibir_order_id');
+    }, { direction: 'back' });
   };
 
   const toggleItem = (index) => {
@@ -186,16 +207,26 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                         }`}>
                           {sol.resolucionFaltantes?.folioEnvio || sol.folio || formatTransferFolio(sol)}
                         </h4>
+                        {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            Transferencia Interna
+                          </span>
+                        )}
                         {isFaltante && (
                           <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-700 uppercase tracking-wider">
                             Reenvío de Faltantes
                           </span>
                         )}
+                        {(sol.sinSolicitud || sol.esDespachoDirecto) && (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wider">
+                            Sin Solicitud
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-slate-500">
                         {isFaltante
-                          ? 'Matriz envió los productos faltantes reportados'
-                          : `Enviado por: ${sol.usuarioDestino}`}
+                          ? 'Faltantes despachados en camino'
+                          : `Enviado por: ${sol.sucursalDestino || sol.usuarioDestino || 'Bodega'}${sol.areaDestino ? ` (${sol.areaDestino})` : ''}`}
                       </p>
                       <p className="text-[11px] font-semibold text-slate-400">
                         {isFaltante
@@ -351,9 +382,25 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         /* VISTA DE RECEPCIÓN ESTÁNDAR */
         <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Recepción de Caja Física</span>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Recepción de Caja Física</span>
+              {(selectedOrder.sinSolicitud || selectedOrder.esDespachoDirecto) && (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                  Despacho sin Solicitud
+                </span>
+              )}
+            </div>
             <h2 className="text-xl font-extrabold text-slate-900 font-mono">{selectedOrder.folio || formatTransferFolio(selectedOrder)}</h2>
             <p className="text-xs text-slate-500">Toca el producto tras verificar que viene dentro de la caja.</p>
+            {selectedOrder.observaciones && (
+              <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 text-xs flex items-start gap-2 text-amber-900 mt-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block">Observación del Despacho:</span>
+                  <p className="text-amber-800 font-medium">{selectedOrder.observaciones}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">

@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import * as XLSX from 'xlsx';
 
@@ -507,20 +507,17 @@ export const catalogService = {
     const cleanBarcode = normalizeBarcode(rawBarcode);
     if (!cleanBarcode) return null;
 
-    // 1. PRIORIDAD ABSOLUTA: Catálogo Base Oficial (30,225 productos exactos del Excel sincronizado)
-    const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
-    if (localBase) return localBase;
-
-    // 2. SEGUNDA PRIORIDAD: Si no está en el catálogo base del Excel, buscar en productos agregados localmente
+    // 1. PRIMERA PRIORIDAD: Catálogo Limpio Local (productos validados/depurados en operación real)
     const localLimpio = await getLocalItem(STORE_CLEAN, cleanBarcode);
     if (localLimpio) {
-      // Ignorar entradas huérfanas o corruptas si existieran
-      if (localLimpio.codigo === '1' && String(localLimpio.descripcion).includes('ATOMIZADOR')) {
-        // Ignorar
-      } else {
+      if (!(localLimpio.codigo === '1' && String(localLimpio.descripcion).includes('ATOMIZADOR'))) {
         return localLimpio;
       }
     }
+
+    // 2. SEGUNDA PRIORIDAD: Catálogo Base Oficial (30,225 productos exactos del Excel sincronizado)
+    const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
+    if (localBase) return localBase;
 
     // 3. TERCERA PRIORIDAD: Buscar en Firestore en caso de ser un producto extra registrado en red
     try {
@@ -528,9 +525,7 @@ export const catalogService = {
       const limpioSnap = await getDoc(limpioRef);
       if (limpioSnap.exists()) {
         const data = limpioSnap.data();
-        if (cleanBarcode === '1' && String(data.descripcion).includes('ATOMIZADOR')) {
-          // Ignorar registro corrupto
-        } else {
+        if (!(cleanBarcode === '1' && String(data.descripcion).includes('ATOMIZADOR'))) {
           await saveLocalBatch(STORE_CLEAN, [data]);
           return data;
         }
@@ -542,13 +537,16 @@ export const catalogService = {
 
   async saveToCleanCatalog(barcode, descripcion) {
     const cleanBarcode = normalizeBarcode(barcode);
-    if (!cleanBarcode || !descripcion) return;
+    if (!cleanBarcode || !descripcion) return null;
+
+    const now = new Date().toISOString();
+    const existing = await getLocalItem(STORE_CLEAN, cleanBarcode);
 
     const cleanItem = {
       codigo: cleanBarcode,
       descripcion: String(descripcion).trim().toUpperCase(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
     };
 
     try {
@@ -561,6 +559,78 @@ export const catalogService = {
     await saveLocalBatch(STORE_CLEAN, [cleanItem]);
     memoryCache = null;
     return cleanItem;
+  },
+
+  async saveBatchToCleanCatalog(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const now = new Date().toISOString();
+    const cleanList = [];
+    const seen = new Set();
+
+    for (const it of items) {
+      if (!it) continue;
+      const cleanBarcode = normalizeBarcode(it.codigo);
+      const desc = String(it.descripcion || '').trim().toUpperCase();
+      if (cleanBarcode && desc && !seen.has(cleanBarcode)) {
+        seen.add(cleanBarcode);
+        cleanList.push({
+          codigo: cleanBarcode,
+          descripcion: desc,
+          updatedAt: now
+        });
+      }
+    }
+
+    if (cleanList.length === 0) return [];
+
+    try {
+      const batchSize = 400;
+      for (let i = 0; i < cleanList.length; i += batchSize) {
+        const chunk = cleanList.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        chunk.forEach(item => {
+          const docRef = doc(db, 'catalogo_limpio', item.codigo);
+          batch.set(docRef, item, { merge: true });
+        });
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn('Error guardando lote en Firestore catalogo_limpio:', e);
+    }
+
+    try {
+      await saveLocalBatch(STORE_CLEAN, cleanList);
+    } catch (e) {
+      console.warn('Error guardando lote en IndexedDB:', e);
+    }
+
+    memoryCache = null;
+    return cleanList;
+  },
+
+  async syncFromOperationsHistory() {
+    try {
+      const snap = await getDocs(collection(db, 'solicitudes'));
+      const allItems = [];
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (Array.isArray(data.items)) {
+          data.items.forEach(it => {
+            if (it && it.codigo && it.descripcion) {
+              allItems.push({ codigo: it.codigo, descripcion: it.descripcion });
+            }
+          });
+        }
+      });
+
+      if (allItems.length > 0) {
+        await this.saveBatchToCleanCatalog(allItems);
+      }
+      return await this.getCatalogStatus();
+    } catch (err) {
+      console.warn('Error al sincronizar catalogo_limpio desde historial de operaciones:', err);
+      return null;
+    }
   },
 
   async updateCleanCatalogItem(barcode, newDesc) {
@@ -719,16 +789,16 @@ export const catalogService = {
         const baseItems = await getAllLocalItems(STORE_BASE);
 
         const itemMap = new Map();
-        // 1. Agregar productos limpios / manuales primero (descartando anomalías históricas)
-        cleanItems.forEach(item => {
+        // 1. Agregar productos del catálogo base del Excel primero
+        baseItems.forEach(item => {
           if (item && item.codigo !== undefined && item.codigo !== null) {
-            if (String(item.codigo) === '1' && String(item.descripcion).includes('ATOMIZADOR')) return;
             itemMap.set(String(item.codigo), item);
           }
         });
-        // 2. El catálogo base oficial SOBRESCRIBE y tiene máxima autoridad
-        baseItems.forEach(item => {
+        // 2. Los productos del Catálogo Limpio (validados en operaciones reales) SOBRESCRIBEN con máxima prioridad
+        cleanItems.forEach(item => {
           if (item && item.codigo !== undefined && item.codigo !== null) {
+            if (String(item.codigo) === '1' && String(item.descripcion).includes('ATOMIZADOR')) return;
             itemMap.set(String(item.codigo), item);
           }
         });

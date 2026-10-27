@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Package } from 'lucide-react';
+import { X, Check, Package, Plus, Minus } from 'lucide-react';
 import { useBodyScrollLock } from '../hooks';
+import { MarqueeText } from './MarqueeText';
 
 export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
   useBodyScrollLock(isOpen);
@@ -37,12 +38,9 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto overscroll-contain">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
+      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] my-auto overscroll-contain">
         
-        {/* iOS Pull Indicator on Mobile */}
-        <div className="sm:hidden w-12 h-1 bg-slate-300 rounded-full mx-auto my-2.5"></div>
-
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -65,9 +63,9 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
             <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
               CÓDIGO: {scannedItem.codigo}
             </span>
-            <h4 className="text-base font-bold text-slate-900 leading-snug">
-              {scannedItem.descripcion}
-            </h4>
+            <div className="text-base font-bold text-slate-900 leading-snug">
+              <MarqueeText text={scannedItem.descripcion} />
+            </div>
           </div>
 
           {/* Numeric Input */}
@@ -76,6 +74,19 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
               Cantidad a Solicitar
             </label>
             <div className="flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg('');
+                  const cur = parseInt(cantidad, 10) || 1;
+                  if (cur > 1) setCantidad(String(cur - 1));
+                }}
+                className="w-12 h-12 rounded-2xl bg-slate-100 hover:bg-slate-200 active:scale-90 text-slate-700 flex items-center justify-center transition-all cursor-pointer select-none"
+                title="Menos una pieza"
+              >
+                <Minus className="w-5 h-5" />
+              </button>
+
               <input
                 ref={inputRef}
                 type="text"
@@ -88,8 +99,21 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
                   const val = e.target.value.replace(/\D/g, '');
                   setCantidad(val);
                 }}
-                className="w-36 text-center text-4xl font-extrabold text-blue-600 bg-slate-100 border-2 border-transparent focus:border-blue-500 focus:bg-white rounded-2xl py-3 focus:outline-none transition-all font-mono"
+                className="w-32 text-center text-4xl font-extrabold text-blue-600 bg-slate-100 border-2 border-transparent focus:border-blue-500 focus:bg-white rounded-2xl py-3 focus:outline-none transition-all font-mono"
               />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg('');
+                  const cur = parseInt(cantidad, 10) || 0;
+                  setCantidad(String(cur + 1));
+                }}
+                className="w-12 h-12 rounded-2xl bg-slate-100 hover:bg-slate-200 active:scale-90 text-slate-700 flex items-center justify-center transition-all cursor-pointer select-none"
+                title="Más una pieza"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
             </div>
             {errorMsg ? (
               <p className="text-xs text-red-500 font-semibold">{errorMsg}</p>

@@ -10,7 +10,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'maskable-icon-512x512.png'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'maskable-icon-512x512.png', 'notification.mp3', 'sw-push-listener.js', 'notification-badge-96x96.png'],
       manifest: {
         id: '/erp-control',
         name: 'ERP Control',
@@ -51,7 +51,8 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3}'],
+        importScripts: ['sw-push-listener.js'],
         // Firestore maneja su propia persistencia local nativa multinavegador en IndexedDB
         navigateFallback: 'index.html'
       },

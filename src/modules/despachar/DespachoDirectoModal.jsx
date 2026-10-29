@@ -133,6 +133,7 @@ export function DespachoDirectoModal({
   // - Sedes distintas a la actual.
   // - O la misma sede actual SI tiene 2 o más áreas operativas (para transferencias internas entre áreas).
   const availableDirectSedes = sedesList.filter(s => {
+    if (s.esDestino === false) return false;
     const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
     if (!isOwnSede) return true;
     const areas = Array.isArray(s.areas) ? s.areas : [];

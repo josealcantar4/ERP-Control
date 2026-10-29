@@ -65,7 +65,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   // Modals for CRUD (Sedes)
   const [isSedeModalOpen, setIsSedeModalOpen] = useState(false);
   const [editingSede, setEditingSede] = useState(null);
-  const [sedeForm, setSedeForm] = useState({ nombre: '', tipo: 'Sucursal', areas: [] });
+  const [sedeForm, setSedeForm] = useState({ nombre: '', tipo: 'Sucursal', areas: [], esDestino: true });
   const [selectedAreaToAdd, setSelectedAreaToAdd] = useState('');
 
   // Modals for CRUD (Areas)
@@ -293,7 +293,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   // --- MÉTODOS DE SEDES ---
   const handleOpenCreateSede = () => {
     setEditingSede(null);
-    setSedeForm({ nombre: '', tipo: 'Sucursal', areas: [] });
+    setSedeForm({ nombre: '', tipo: 'Sucursal', areas: [], esDestino: true });
     setSelectedAreaToAdd('');
     setIsSedeModalOpen(true);
   };
@@ -303,7 +303,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     setSedeForm({
       nombre: sede.nombre,
       tipo: sede.tipo || 'Sucursal',
-      areas: Array.isArray(sede.areas) ? [...sede.areas] : []
+      areas: Array.isArray(sede.areas) ? [...sede.areas] : [],
+      esDestino: sede.esDestino !== false
     });
     setSelectedAreaToAdd('');
     setIsSedeModalOpen(true);
@@ -356,7 +357,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       if (editingSede) {
         const oldName = editingSede.nombre;
         const newName = sedeForm.nombre.trim();
-        await organizationService.updateSede(editingSede.id, newName, sedeForm.tipo, sedeForm.areas);
+        await organizationService.updateSede(editingSede.id, newName, sedeForm.tipo, sedeForm.areas, sedeForm.esDestino);
 
         // Si la sede cambió de nombre, actualizar en cascada a los usuarios asignados a ella
         if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
@@ -369,7 +370,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         }
         setDialog({ isOpen: true, type: 'alert', title: 'Sede Actualizada', message: `La sede "${newName}" se actualizó correctamente.`, variant: 'success', onConfirm: closeDialog });
       } else {
-        await organizationService.createSede(sedeForm.nombre, sedeForm.tipo, sedeForm.areas);
+        await organizationService.createSede(sedeForm.nombre, sedeForm.tipo, sedeForm.areas, sedeForm.esDestino);
         setDialog({ isOpen: true, type: 'alert', title: 'Sede Creada', message: `La sede "${sedeForm.nombre}" se registró correctamente.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsSedeModalOpen(false);
@@ -699,7 +700,21 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       </div>
                       <div>
                         <h4 className="text-sm font-bold text-slate-900">{sede.nombre}</h4>
-                        <span className="text-[10px] text-slate-400 font-medium">{sede.tipo || 'Sucursal'}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <span className="text-[10px] text-slate-400 font-medium">{sede.tipo || 'Sucursal'}</span>
+                          <span className="text-slate-300 text-[10px]">&bull;</span>
+                          {sede.esDestino !== false ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-2.5 h-2.5" />
+                              Destinataria
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              <X className="w-2.5 h-2.5" />
+                              No destinataria
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -1205,7 +1220,7 @@ function AdminSedeModal({
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-4 sm:p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
       >
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
@@ -1223,6 +1238,23 @@ function AdminSedeModal({
               <option value="Sucursal">Sucursal</option>
               <option value="Matriz">Matriz / Bodega Central</option>
             </select>
+          </div>
+
+          <div>
+            <label className="flex items-start gap-2.5 p-3 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-slate-100/70 cursor-pointer transition-colors select-none">
+              <input
+                type="checkbox"
+                checked={sedeForm.esDestino !== false}
+                onChange={(e) => setSedeForm({ ...sedeForm, esDestino: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+              <div className="text-xs">
+                <span className="font-semibold text-slate-800 block">Sede destinataria de pedidos</span>
+                <span className="text-[11px] text-slate-500 block leading-tight mt-0.5">
+                  Permite que esta sede aparezca en el selector de destino al realizar pedidos o transferencias. Desmárcalo si la sucursal es muy pequeña o no tiene capacidad para recibir pedidos.
+                </span>
+              </div>
+            </label>
           </div>
 
           <div>
@@ -1246,13 +1278,13 @@ function AdminSedeModal({
                 </p>
               </div>
             ) : (
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-2">
                 <select
                   value={selectedAreaToAdd}
                   onChange={(e) => setSelectedAreaToAdd(e.target.value)}
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 font-medium"
+                  className="w-full sm:flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 font-medium truncate"
                 >
-                  <option value="">-- Seleccionar área creada previamente --</option>
+                  <option value="">-- Seleccionar área a asociar --</option>
                   {areasList
                     .filter(a => !sedeForm.areas.includes(a.nombre))
                     .map((a) => (
@@ -1265,9 +1297,10 @@ function AdminSedeModal({
                   type="button"
                   disabled={!selectedAreaToAdd}
                   onClick={() => handleAddAreaToSedeForm()}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-semibold text-xs transition-all cursor-pointer shrink-0 shadow-sm"
+                  className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-semibold text-xs transition-all cursor-pointer shrink-0 shadow-sm flex items-center justify-center gap-1.5"
                 >
-                  + Asociar
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Asociar</span>
                 </button>
               </div>
             )}

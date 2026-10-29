@@ -7,6 +7,7 @@ import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
 import { transferService, formatTransferFolio, canUserViewInSolicitar } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
+import { BulkOrderWarningModal } from './BulkOrderWarningModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
@@ -49,6 +50,8 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [scannedMedicine, setScannedMedicine] = useState(null);
+  const [isBulkWarningOpen, setIsBulkWarningOpen] = useState(false);
+  const [bulkWarningItems, setBulkWarningItems] = useState([]);
 
   useEffect(() => {
     localStorage.setItem('erp_solicitar_active_tab', activeTab);
@@ -274,6 +277,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   );
 
   const availableDestSedes = sedesList.filter(s => {
+    if (s.esDestino === false) return false;
     const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
     if (!isOwnSede) return true;
     const areas = Array.isArray(s.areas) ? s.areas : [];
@@ -362,6 +366,17 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
+    // Detección de productos con más de 4 piezas hacia destinos que NO son Bodega
+    const isDestinationBodega = /bodega/i.test(selectedDestArea || '') || /bodega/i.test(selectedDestSede || '');
+    const bulkItems = (currentDraft.items || []).filter(item => (Number(item.cantidadSolicitada) || 0) > 4);
+
+    // Si el destino NO es una bodega y se solicitan más de 4 piezas, advertir con la cuenta regresiva
+    if (!isDestinationBodega && bulkItems.length > 0) {
+      setBulkWarningItems(bulkItems);
+      setIsBulkWarningOpen(true);
+      return;
+    }
+
     const destSummary = selectedDestArea
       ? `${selectedDestSede} (${selectedDestArea})`
       : selectedDestSede;
@@ -383,45 +398,54 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       cancelText: 'Revisar',
       onConfirm: async () => {
         closeDialog();
-        try {
-          const finalized = {
-            ...currentDraft,
-            folio: currentDraft.folio || '',
-            sucursalOrigen: currentUser?.sede || 'Sucursal',
-            areaOrigen: currentUser?.area || '',
-            sucursalDestino: selectedDestSede,
-            areaDestino: selectedDestArea || '',
-            usuarioSolicitante: currentUser?.username,
-            esTransferenciaInterna: isTargetOwnSede,
-            fecha: new Date().toISOString()
-          };
-          if (finalized.items && finalized.items.length > 0) {
-            await catalogService.saveBatchToCleanCatalog(finalized.items);
-          }
-          await transferService.saveDraft(finalized);
-          await transferService.submitSolicitud(finalized.id);
-
-          setCurrentDraft({
-            id: 'sol-' + Date.now(),
-            sucursalOrigen: currentUser?.sede || 'Sucursal',
-            areaOrigen: currentUser?.area || '',
-            sucursalDestino: '',
-            areaDestino: '',
-            usuarioSolicitante: currentUser?.username,
-            usuarioDestino: '',
-            estado: 'borrador',
-            fecha: new Date().toISOString(),
-            items: []
-          });
-          setSelectedDestSede('');
-          setSelectedDestArea('');
-          handleSwitchTab('historial');
-        } catch (e) {
-          console.error('Error al enviar solicitud:', e);
-        }
+        await executeSendOrder();
       },
       onCancel: closeDialog
     });
+  };
+
+  const executeSendOrder = async () => {
+    try {
+      const finalized = {
+        ...currentDraft,
+        folio: currentDraft.folio || '',
+        sucursalOrigen: currentUser?.sede || 'Sucursal',
+        areaOrigen: currentUser?.area || '',
+        sucursalDestino: selectedDestSede,
+        areaDestino: selectedDestArea || '',
+        usuarioSolicitante: currentUser?.username,
+        esTransferenciaInterna: isTargetOwnSede,
+        fecha: new Date().toISOString()
+      };
+      if (finalized.items && finalized.items.length > 0) {
+        await catalogService.saveBatchToCleanCatalog(finalized.items);
+      }
+      await transferService.saveDraft(finalized);
+      await transferService.submitSolicitud(finalized.id);
+
+      setCurrentDraft({
+        id: 'sol-' + Date.now(),
+        sucursalOrigen: currentUser?.sede || 'Sucursal',
+        areaOrigen: currentUser?.area || '',
+        sucursalDestino: '',
+        areaDestino: '',
+        usuarioSolicitante: currentUser?.username,
+        usuarioDestino: '',
+        estado: 'borrador',
+        fecha: new Date().toISOString(),
+        items: []
+      });
+      setSelectedDestSede('');
+      setSelectedDestArea('');
+      handleSwitchTab('historial');
+    } catch (e) {
+      console.error('Error al enviar solicitud:', e);
+    }
+  };
+
+  const handleConfirmBulkOrder = () => {
+    setIsBulkWarningOpen(false);
+    executeSendOrder();
   };
 
   const handleDeleteDraft = (e, sol) => {
@@ -794,6 +818,16 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
         isOpen={Boolean(detailSolicitud)}
         solicitud={detailSolicitud}
         onClose={() => setDetailSolicitud(null)}
+      />
+
+      {/* Modal de Advertencia con Cuenta Regresiva para Pedidos > 4 Piezas hacia Bodega */}
+      <BulkOrderWarningModal
+        isOpen={isBulkWarningOpen}
+        onClose={() => setIsBulkWarningOpen(false)}
+        onConfirm={handleConfirmBulkOrder}
+        bulkItems={bulkWarningItems}
+        destSede={selectedDestSede}
+        destArea={selectedDestArea}
       />
     </div>
   );

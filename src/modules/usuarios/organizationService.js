@@ -20,7 +20,8 @@ function getLocalSedes() {
       if (Array.isArray(list)) {
         return list.map(s => ({
           ...s,
-          areas: Array.isArray(s.areas) ? s.areas : []
+          areas: Array.isArray(s.areas) ? s.areas : [],
+          esDestino: s.esDestino !== false
         }));
       }
       return [];
@@ -89,7 +90,8 @@ export const organizationService = {
               return {
                 id: d.id,
                 ...data,
-                areas: Array.isArray(data.areas) ? data.areas : []
+                areas: Array.isArray(data.areas) ? data.areas : [],
+                esDestino: data.esDestino !== false
               };
             });
             items.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
@@ -125,7 +127,8 @@ export const organizationService = {
           return {
             id: d.id,
             ...data,
-            areas: Array.isArray(data.areas) ? data.areas : []
+            areas: Array.isArray(data.areas) ? data.areas : [],
+            esDestino: data.esDestino !== false
           };
         });
         sedes.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
@@ -151,7 +154,7 @@ export const organizationService = {
   },
 
   // Crear una nueva Sede (con lista opcional de sub-áreas)
-  async createSede(nombre, tipo = 'Sucursal', areas = []) {
+  async createSede(nombre, tipo = 'Sucursal', areas = [], esDestino = true) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
 
@@ -165,6 +168,7 @@ export const organizationService = {
       nombre: cleanNombre,
       tipo: tipo || 'Sucursal',
       areas: cleanAreas,
+      esDestino: esDestino !== false,
       createdAt: new Date().toISOString()
     };
 
@@ -180,7 +184,7 @@ export const organizationService = {
   },
 
   // Actualizar una Sede existente
-  async updateSede(id, nombre, tipo, areas = null) {
+  async updateSede(id, nombre, tipo, areas = null, esDestino = undefined) {
     if (!id) throw new Error('El ID de la sede es obligatorio.');
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
@@ -194,6 +198,10 @@ export const organizationService = {
 
     if (areas !== null && Array.isArray(areas)) {
       updateData.areas = areas.map(a => String(a || '').trim()).filter(Boolean);
+    }
+
+    if (esDestino !== undefined) {
+      updateData.esDestino = Boolean(esDestino);
     }
 
     if (isFirebaseConfigured) {

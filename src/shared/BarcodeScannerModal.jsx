@@ -140,6 +140,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     isClosing,
     cardRef,
     handleClose: animateClose,
+    handleBackdropClick,
     backdropClass,
     cardClass,
     cardStyle
@@ -805,11 +806,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
 
   const modalContent = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          handleClose();
-        }
-      }}
+      onClick={(e) => handleBackdropClick(e, handleClose)}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div

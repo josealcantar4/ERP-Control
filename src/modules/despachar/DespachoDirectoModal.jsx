@@ -38,7 +38,7 @@ export function DespachoDirectoModal({
   onClose,
   onSuccess
 }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose
   });
@@ -497,9 +497,7 @@ export function DespachoDirectoModal({
 
   const modalContent = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isSubmitting) handleClose();
-      }}
+      onClick={(e) => handleBackdropClick(e, !isSubmitting)}
       className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div

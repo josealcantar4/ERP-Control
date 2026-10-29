@@ -21,7 +21,7 @@ export function MaterialTypesModal({
   onDeleteTipo,
   canDelete = false
 }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose
   });
@@ -90,9 +90,7 @@ export function MaterialTypesModal({
 
   const modalContent = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isSubmitting) handleClose();
-      }}
+      onClick={(e) => handleBackdropClick(e, !isSubmitting)}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div

@@ -135,6 +135,109 @@ export function useModalAnimation({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [shouldRender, isClosing, handleClose]);
 
+  // Rastreo de inicio y fin de interacción para evitar que clics sostenidos
+  // o arrastres de texto desde adentro del modal cierren la ventana al soltarse afuera
+  const isPointerDownInsideCardRef = useRef(false);
+  const isPointerUpInsideCardRef = useRef(false);
+  const pointerDownPosRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (!shouldRender || isClosing) return;
+
+    const handleGlobalPointerDown = (e) => {
+      const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
+      if (touch && touch.clientX != null && touch.clientY != null) {
+        pointerDownPosRef.current = { x: touch.clientX, y: touch.clientY };
+      }
+
+      const target = e.target;
+      if (cardRef.current && (cardRef.current === target || cardRef.current.contains(target))) {
+        isPointerDownInsideCardRef.current = true;
+      } else {
+        isPointerDownInsideCardRef.current = false;
+      }
+    };
+
+    const handleGlobalPointerUp = (e) => {
+      const target = e.target;
+      if (cardRef.current && (cardRef.current === target || cardRef.current.contains(target))) {
+        isPointerUpInsideCardRef.current = true;
+      } else {
+        isPointerUpInsideCardRef.current = false;
+      }
+    };
+
+    window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true, passive: true });
+    window.addEventListener('mousedown', handleGlobalPointerDown, { capture: true, passive: true });
+    window.addEventListener('touchstart', handleGlobalPointerDown, { capture: true, passive: true });
+
+    window.addEventListener('pointerup', handleGlobalPointerUp, { capture: true, passive: true });
+    window.addEventListener('mouseup', handleGlobalPointerUp, { capture: true, passive: true });
+    window.addEventListener('touchend', handleGlobalPointerUp, { capture: true, passive: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true });
+      window.removeEventListener('mousedown', handleGlobalPointerDown, { capture: true });
+      window.removeEventListener('touchstart', handleGlobalPointerDown, { capture: true });
+
+      window.removeEventListener('pointerup', handleGlobalPointerUp, { capture: true });
+      window.removeEventListener('mouseup', handleGlobalPointerUp, { capture: true });
+      window.removeEventListener('touchend', handleGlobalPointerUp, { capture: true });
+    };
+  }, [shouldRender, isClosing, cardRef]);
+
+  // Manejador seguro para cerrar al hacer clic en el backdrop
+  const handleBackdropClick = useCallback((e, conditionOrAction = true) => {
+    // 1. Debe ser un clic directo en el elemento del backdrop (e.currentTarget)
+    if (e.target !== e.currentTarget) return false;
+
+    // 2. Si el clic se dio sobre una barra de desplazamiento nativa del contenedor
+    if (e.clientX > e.currentTarget.clientWidth || e.clientY > e.currentTarget.clientHeight) {
+      return false;
+    }
+
+    // 3. Si el gesto (mousedown/touchstart) se originó adentro de la tarjeta del modal, NO cerrar
+    // Esto evita que al arrastrar texto o soltar el clic afuera se cierre involuntariamente
+    if (isPointerDownInsideCardRef.current) {
+      isPointerDownInsideCardRef.current = false;
+      return false;
+    }
+
+    // 4. Si el gesto terminó adentro de la tarjeta del modal, NO cerrar
+    if (isPointerUpInsideCardRef.current) {
+      isPointerUpInsideCardRef.current = false;
+      return false;
+    }
+
+    // 5. Si fue un arrastre de mouse/touch significativo (> 20px), descartar como gesto de arrastre involuntario
+    if (pointerDownPosRef.current && (pointerDownPosRef.current.x !== 0 || pointerDownPosRef.current.y !== 0)) {
+      if (e.clientX != null && (e.clientX !== 0 || e.clientY !== 0)) {
+        const dist = Math.hypot(
+          e.clientX - pointerDownPosRef.current.x,
+          e.clientY - pointerDownPosRef.current.y
+        );
+        if (dist > 20) {
+          return false;
+        }
+      }
+    }
+
+    // 6. Si se pasó una función como acción personalizada (ej. handleCancelClick o handleClose con cleanup)
+    if (typeof conditionOrAction === 'function') {
+      conditionOrAction();
+      return true;
+    }
+
+    // 7. Si se pasó una condición booleana y no se cumple (ej. !isSubmitting, !isProcessing)
+    if (!conditionOrAction) {
+      return false;
+    }
+
+    // 8. Cierre normal
+    handleClose();
+    return true;
+  }, [handleClose]);
+
   const cardClass = isClosing ? 'animate-modal-exit' : 'animate-modal-enter';
   const backdropClass = isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter';
 
@@ -144,6 +247,7 @@ export function useModalAnimation({
     transformOrigin: originLockedRef.current,
     cardRef,
     handleClose,
+    handleBackdropClick,
     backdropClass,
     cardClass,
     cardStyle: { transformOrigin: originLockedRef.current }

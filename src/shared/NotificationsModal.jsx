@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -41,6 +41,7 @@ export function NotificationsModal({
   }));
 
   const [localDismissedIds, setLocalDismissedIds] = useState(new Set());
+  const isPointerDownInsideBoxRef = useRef(false);
 
   const handleDismiss = (notifId, e) => {
     if (e) e.stopPropagation();
@@ -142,7 +143,9 @@ export function NotificationsModal({
       const box = document.getElementById('notification-messagebox-card');
       const bell = document.getElementById('navbar-notification-bell-btn');
 
-      if (box && (box === e.target || box.contains(e.target))) return;
+      const isInsideBox = Boolean(box && (box === e.target || box.contains(e.target)));
+      isPointerDownInsideBoxRef.current = isInsideBox;
+      if (isInsideBox) return;
       if (bell && (bell === e.target || bell.contains(e.target) || (e.target.closest && e.target.closest('#navbar-notification-bell-btn')))) {
         return;
       }
@@ -192,7 +195,13 @@ export function NotificationsModal({
         className={`fixed inset-0 z-40 bg-slate-900/5 sm:bg-transparent transition-opacity cursor-default ${
           isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter'
         }`}
-        onClick={isClosing ? undefined : onClose}
+        onClick={isClosing ? undefined : () => {
+          if (isPointerDownInsideBoxRef.current) {
+            isPointerDownInsideBoxRef.current = false;
+            return;
+          }
+          onClose();
+        }}
         aria-hidden="true"
       />
 

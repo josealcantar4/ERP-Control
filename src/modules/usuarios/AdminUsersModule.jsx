@@ -864,7 +864,7 @@ function AdminUserModal({
   handleSedeChange,
   toggleRole
 }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose
   });
@@ -888,9 +888,7 @@ function AdminUserModal({
 
   const content = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
+      onClick={handleBackdropClick}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
@@ -920,7 +918,24 @@ function AdminUserModal({
           </div>
           <div>
             <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Username *</label>
-            <input type="text" required disabled={Boolean(editingUser)} placeholder="Ej. juan.patente" value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${editingUser ? 'opacity-60 cursor-not-allowed' : ''}`} />
+            <input
+              type="text"
+              required
+              disabled={Boolean(editingUser && editingUser.username?.toLowerCase() === 'administrador')}
+              placeholder="Ej. juan.patente"
+              value={userForm.username}
+              onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+              className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${
+                editingUser && editingUser.username?.toLowerCase() === 'administrador'
+                  ? 'opacity-60 cursor-not-allowed bg-slate-100'
+                  : ''
+              }`}
+            />
+            {editingUser && editingUser.username?.toLowerCase() === 'administrador' && (
+              <span className="text-[10px] text-slate-400 mt-1 block">
+                El nombre de usuario del Administrador principal no puede modificarse.
+              </span>
+            )}
           </div>
           
           <div>
@@ -1175,7 +1190,7 @@ function AdminSedeModal({
   handleAddAreaToSedeForm,
   handleRemoveAreaFromSedeForm
 }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose
   });
@@ -1184,9 +1199,7 @@ function AdminSedeModal({
 
   const content = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
+      onClick={handleBackdropClick}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
@@ -1325,7 +1338,7 @@ function AdminAreaModal({
   setAreaForm,
   handleSaveArea
 }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose
   });
@@ -1334,9 +1347,7 @@ function AdminAreaModal({
 
   const content = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
+      onClick={handleBackdropClick}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div

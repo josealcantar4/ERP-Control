@@ -5,7 +5,7 @@ import { useModalAnimation } from '../hooks';
 import { MarqueeText } from './MarqueeText';
 
 export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
-  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen: Boolean(isOpen && scannedItem),
     onClose
   });
@@ -46,9 +46,7 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
 
   const modalContent = (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
+      onClick={handleBackdropClick}
       className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto overscroll-contain select-none ${backdropClass}`}
     >
       <div

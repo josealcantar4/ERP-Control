@@ -16,17 +16,19 @@ export const userService = {
   // Asegura que el Administrador exista en Firestore al iniciar
   async ensureAdminInitialized() {
     try {
-      const adminRef = doc(db, 'usuarios', 'Administrador');
-      const snap = await getDoc(adminRef);
+      const snapAll = await getDocs(collection(db, 'usuarios'));
+      const adminDoc = snapAll.docs.find(d => (d.data()?.username || '').toLowerCase() === 'administrador');
       
-      if (!snap.exists()) {
-        await setDoc(adminRef, {
+      if (!adminDoc) {
+        const newAdminRef = doc(collection(db, 'usuarios'));
+        await setDoc(newAdminRef, {
+          id: newAdminRef.id,
           username: 'Administrador',
           password: '1234',
           nombre: 'Administrador General',
           sede: 'Matriz Centro',
           area: 'Dirección General',
-          roles: ['solicitar', 'despachar', 'material', 'admin'],
+          roles: ['solicitar', 'despachar', 'material', 'admin', 'catalogo'],
           excluirDestinatario: true,
           createdAt: new Date().toISOString()
         });
@@ -92,28 +94,31 @@ export const userService = {
     }
   },
 
-  // Inicio de sesión consultando Firestore
+  // Inicio de sesión consultando Firestore con coincidencia exacta de usuario y contraseña
   async login(username, password) {
     const cleanUser = String(username || '').trim();
-    const cleanPass = String(password || '').trim();
+    const cleanPass = String(password || '');
 
     if (!cleanUser || !cleanPass) {
       throw new Error('Por favor ingresa tu usuario y contraseña.');
     }
 
-    if (cleanUser.toLowerCase() === 'administrador') {
+    if (cleanUser === 'Administrador') {
       await this.ensureAdminInitialized();
     }
 
-    const docRef = doc(db, 'usuarios', cleanUser);
-    const snap = await getDoc(docRef);
+    const snapAll = await getDocs(collection(db, 'usuarios'));
+    const matchedDoc = snapAll.docs.find(d => {
+      const u = d.data();
+      return u.username === cleanUser;
+    });
 
-    if (snap.exists()) {
-      const data = snap.data();
+    if (matchedDoc) {
+      const data = matchedDoc.data();
       if (String(data.password) === cleanPass) {
         const roles = data.roles || data.rol || ['solicitar'];
         const user = {
-          id: snap.id,
+          id: matchedDoc.id,
           username: data.username,
           nombre: data.nombre || data.username,
           sede: data.sede || 'Matriz Centro',
@@ -129,7 +134,7 @@ export const userService = {
     throw new Error('Usuario o contraseña incorrectos.');
   },
 
-  // Crear usuario en Firestore
+  // Crear usuario en Firestore con ID autogenerado
   async createUser(userData) {
     const username = userData.username?.trim();
     const password = userData.password?.trim();
@@ -145,14 +150,21 @@ export const userService = {
     if (!sede) throw new Error('Debes seleccionar una sede.');
     if (!roles || roles.length === 0) throw new Error('Debes asignar al menos un rol.');
 
-    const docRef = doc(db, 'usuarios', username);
-    const snap = await getDoc(docRef);
-
-    if (snap.exists()) {
-      throw new Error(`El usuario "${username}" ya existe en el sistema.`);
+    // Validar que el username no esté en uso
+    const snapAll = await getDocs(collection(db, 'usuarios'));
+    const isTaken = snapAll.docs.some(d => 
+      (d.data()?.username || '').toLowerCase() === username.toLowerCase()
+    );
+    if (isTaken) {
+      throw new Error(`El nombre de usuario "${username}" ya está registrado.`);
     }
 
+    // Generar ID único automático de Firestore (no el username)
+    const newDocRef = doc(collection(db, 'usuarios'));
+    const newUserId = newDocRef.id;
+
     const newUser = {
+      id: newUserId,
       username,
       password,
       nombre,
@@ -163,11 +175,11 @@ export const userService = {
       createdAt: new Date().toISOString()
     };
 
-    await setDoc(docRef, newUser);
-    return { id: username, ...newUser };
+    await setDoc(newDocRef, newUser);
+    return newUser;
   },
 
-  // Actualizar usuario en Firestore
+  // Actualizar usuario en Firestore (permite cambiar username excepto si es Administrador)
   async updateUser(userId, updateData) {
     if (!userId) throw new Error('ID de usuario inválido.');
 
@@ -175,10 +187,9 @@ export const userService = {
     let snap = await getDoc(docRef);
 
     if (!snap.exists()) {
-      // Búsqueda de respaldo por coincidencia exacta o case-insensitive
       const snapAll = await getDocs(collection(db, 'usuarios'));
       const matched = snapAll.docs.find(d => 
-        d.id.toLowerCase() === userId.toLowerCase() ||
+        d.id === userId ||
         (d.data()?.username && d.data().username.toLowerCase() === userId.toLowerCase())
       );
       if (matched) {
@@ -190,11 +201,39 @@ export const userService = {
     }
 
     const existing = snap.data();
+    const isRootAdmin = (existing.username || '').toLowerCase() === 'administrador';
+
+    let finalUsername = existing.username;
+    if (updateData.username) {
+      const newUsername = updateData.username.trim();
+      if (!newUsername) throw new Error('El nombre de usuario no puede estar vacío.');
+
+      if (isRootAdmin && newUsername.toLowerCase() !== 'administrador') {
+        throw new Error('El nombre de usuario del Administrador principal no puede ser modificado.');
+      }
+
+      if (newUsername.toLowerCase() !== (existing.username || '').toLowerCase()) {
+        const snapAll = await getDocs(collection(db, 'usuarios'));
+        const duplicate = snapAll.docs.find(d => 
+          d.id !== docRef.id && 
+          (d.data()?.username || '').toLowerCase() === newUsername.toLowerCase()
+        );
+        if (duplicate) {
+          throw new Error(`El nombre de usuario "${newUsername}" ya está en uso por otro usuario.`);
+        }
+        finalUsername = newUsername;
+      } else {
+        finalUsername = newUsername;
+      }
+    }
+
     const cleanPass = updateData.password?.trim() || existing.password;
     if (cleanPass.length < 3) throw new Error('La contraseña debe tener al menos 3 caracteres.');
 
     const updated = {
       ...updateData,
+      id: docRef.id,
+      username: finalUsername,
       password: cleanPass,
       roles: updateData.roles || existing.roles,
       excluirDestinatario: updateData.excluirDestinatario !== undefined ? Boolean(updateData.excluirDestinatario) : Boolean(existing.excluirDestinatario),
@@ -205,11 +244,13 @@ export const userService = {
 
     const active = this.getCurrentUser();
     if (active && (
-      active.username.toLowerCase() === userId.toLowerCase() ||
-      (active.id && active.id.toLowerCase() === userId.toLowerCase())
+      (active.id && active.id === docRef.id) ||
+      (active.username && active.username.toLowerCase() === existing.username.toLowerCase())
     )) {
       const updatedActiveUser = {
         ...active,
+        id: docRef.id,
+        username: updated.username,
         nombre: updated.nombre || existing.nombre,
         sede: updated.sede || existing.sede,
         area: updated.area || existing.area,
@@ -227,21 +268,22 @@ export const userService = {
   async deleteUser(userId) {
     if (!userId) return false;
 
-    if (userId.toLowerCase() === 'administrador') {
-      throw new Error('No es posible eliminar el usuario Administrador principal del sistema.');
-    }
-
     let docRef = doc(db, 'usuarios', userId);
-    const snap = await getDoc(docRef);
+    let snap = await getDoc(docRef);
     if (!snap.exists()) {
       const snapAll = await getDocs(collection(db, 'usuarios'));
       const matched = snapAll.docs.find(d => 
-        d.id.toLowerCase() === userId.toLowerCase() ||
+        d.id === userId ||
         (d.data()?.username && d.data().username.toLowerCase() === userId.toLowerCase())
       );
       if (matched) {
         docRef = doc(db, 'usuarios', matched.id);
+        snap = matched;
       }
+    }
+
+    if (snap.exists() && (snap.data()?.username || '').toLowerCase() === 'administrador') {
+      throw new Error('No es posible eliminar el usuario Administrador principal del sistema.');
     }
 
     await deleteDoc(docRef);

@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Check, Package, Plus, Minus } from 'lucide-react';
-import { useBodyScrollLock } from '../hooks';
+import { useModalAnimation } from '../hooks';
 import { MarqueeText } from './MarqueeText';
 
 export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
-  useBodyScrollLock(isOpen);
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen: Boolean(isOpen && scannedItem),
+    onClose
+  });
+
+  const lastItemRef = useRef(scannedItem);
+  if (scannedItem) lastItemRef.current = scannedItem;
+  const currentItem = scannedItem || lastItemRef.current;
 
   const [cantidad, setCantidad] = useState('1');
   const [errorMsg, setErrorMsg] = useState('');
@@ -25,7 +32,7 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
     }
   }, [isOpen]);
 
-  if (!isOpen || !scannedItem) return null;
+  if (!shouldRender || !currentItem) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -38,8 +45,17 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] my-auto overscroll-contain">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto overscroll-contain select-none ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] my-auto overscroll-contain ${cardClass}`}
+      >
         
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -50,7 +66,8 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
             <h3 className="text-sm font-semibold text-slate-900">Producto Identificado</h3>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -61,10 +78,10 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1">
             <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
-              CÓDIGO: {scannedItem.codigo}
+              CÓDIGO: {currentItem.codigo}
             </span>
             <div className="text-base font-bold text-slate-900 leading-snug">
-              <MarqueeText text={scannedItem.descripcion} />
+              <MarqueeText text={currentItem.descripcion} />
             </div>
           </div>
 

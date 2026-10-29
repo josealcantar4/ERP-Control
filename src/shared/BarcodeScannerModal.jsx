@@ -14,7 +14,7 @@ import {
   SwitchCamera
 } from 'lucide-react';
 import { catalogService } from '../modules/catalogo';
-import { useBodyScrollLock } from '../hooks';
+import { useBodyScrollLock, useModalAnimation } from '../hooks';
 import { AutoScrollInput } from './AutoScrollInput';
 import { MarqueeText } from './MarqueeText';
 
@@ -26,7 +26,7 @@ function getStoredCameraSettings() {
     if (raw) {
       const data = JSON.parse(raw);
       return {
-        torch: false, // Blindaje: el flash NUNCA debe encenderse automáticamente
+        torch: Boolean(data.torch),
         zoom: typeof data.zoom === 'number' ? data.zoom : 1.5,
         focusMode: data.focusMode || 'continuous',
         cameraId: data.cameraId || null
@@ -40,8 +40,8 @@ function getStoredCameraSettings() {
 
 function saveCameraSettings(settings) {
   try {
-    // Blindaje: Nunca persistir torch como true para evitar encendidos accidentales de hardware
-    const toSave = { ...settings, torch: false };
+    const current = getStoredCameraSettings();
+    const toSave = { ...current, ...settings };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
   } catch (e) {
     console.warn('Error guardando configuraciones de cámara:', e);
@@ -135,7 +135,18 @@ function findBestMainCamera(devices) {
 }
 
 export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
-  useBodyScrollLock(isOpen);
+  const {
+    shouldRender,
+    isClosing,
+    cardRef,
+    handleClose: animateClose,
+    backdropClass,
+    cardClass,
+    cardStyle
+  } = useModalAnimation({
+    isOpen,
+    onClose
+  });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -178,7 +189,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   const [activeCameraId, setActiveCameraId] = useState(null);
   const [cameraLabel, setCameraLabel] = useState('1x Principal');
 
-  const [isTorchOn, setIsTorchOn] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(() => getStoredCameraSettings().torch);
   const [zoomLevel, setZoomLevel] = useState(() => getStoredCameraSettings().zoom);
   const [isFocusing, setIsFocusing] = useState(false);
   const [focusIndicator, setFocusIndicator] = useState({ x: '50%', y: '50%', visible: false });
@@ -393,7 +404,8 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
 
   // Efecto principal para inicializar el escáner y restaurar ajustes guardados
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !shouldRender || isClosing) {
+      forceStopHardware();
       resetAll();
       return;
     }
@@ -405,11 +417,45 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     let pollInterval = null;
 
     async function startScanner() {
+      // 1. Limpiar cualquier instancia previa o residuo antes de inicializar
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) {
+            await scannerRef.current.stop();
+          }
+          scannerRef.current.clear();
+        } catch (_) {}
+        scannerRef.current = null;
+      }
+
+      // 2. Asegurar que el contenedor del visor exista en el DOM
+      let container = document.getElementById('barcode-camera-view');
+      if (!container) {
+        // Breve espera de un frame para garantizar que React haya pintado el DOM
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        container = document.getElementById('barcode-camera-view');
+      }
+
+      if (!container) {
+        if (!isCancelled) {
+          console.warn('Contenedor barcode-camera-view no encontrado en el DOM');
+          setScannerError('No se pudo inicializar la cámara.');
+          setIsStarting(false);
+        }
+        return;
+      }
+
+      // Limpiar nodos hijos huérfanos del contenedor
+      try {
+        container.innerHTML = '';
+      } catch (_) {}
+
       try {
         html5QrCode = new Html5Qrcode('barcode-camera-view');
         scannerRef.current = html5QrCode;
       } catch (_e) {
         if (!isCancelled) {
+          console.error('Error al instanciar Html5Qrcode:', _e);
           setScannerError('No se pudo inicializar la cámara.');
           setIsStarting(false);
         }
@@ -515,8 +561,13 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
             setZoomLevel(stored.zoom);
             await applyZoom(track, stored.zoom);
 
-            // Blindaje: El flash NUNCA se enciende por defecto al abrir
-            setIsTorchOn(false);
+            // 3. Restaurar linterna si el usuario la dejó encendida
+            if (stored.torch && caps.torch) {
+              setIsTorchOn(true);
+              await applyTorch(track, true);
+            } else {
+              setIsTorchOn(false);
+            }
           } else if (++attempts > 30) {
             clearInterval(pollInterval);
           }
@@ -539,7 +590,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       forceStopHardware();
       resetAll();
     };
-  }, [isOpen, onDetected]);
+  }, [isOpen, shouldRender, isClosing, onDetected]);
 
   // Blindaje ante cambio de pestaña, bloqueo de teléfono o salida de la aplicación
   useEffect(() => {
@@ -623,6 +674,14 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
           });
           track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
           applyZoom(track, zoomLevel);
+
+          const currentSettings = getStoredCameraSettings();
+          if (currentSettings.torch && caps.torch) {
+            setIsTorchOn(true);
+            await applyTorch(track, true);
+          } else {
+            setIsTorchOn(false);
+          }
         }
       }, 150);
     } catch (e) {
@@ -641,13 +700,15 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     saveCameraSettings({ ...current, zoom: level });
   };
 
-  // Manejar alternancia de flash (en memoria para esta sesión de escaneo)
+  // Manejar alternancia de flash y persistir preferencia del usuario
   const handleToggleTorch = async () => {
     const nextState = !isTorchOn;
     setIsTorchOn(nextState);
 
     const track = activeTrackRef.current || getVideoTrack();
     await applyTorch(track, nextState);
+
+    saveCameraSettings({ torch: nextState });
   };
 
   // Manejar botón de enfoque
@@ -684,23 +745,31 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }, 700);
   };
 
-  const handleClose = async () => {
-    await forceStopHardware();
-    resetAll();
-    onClose();
+  const handleClose = () => {
+    forceStopHardware();
+    animateClose();
+    setTimeout(() => {
+      resetAll();
+    }, 200);
   };
 
-  const handleSelectItem = async (item) => {
-    await forceStopHardware();
-    resetAll();
+  const handleSelectItem = (item) => {
+    forceStopHardware();
+    animateClose();
     onDetected(item.codigo, item);
+    setTimeout(() => {
+      resetAll();
+    }, 200);
   };
 
-  const handleSelectNewCode = async (code) => {
+  const handleSelectNewCode = (code) => {
     const clean = String(code || '').trim();
-    await forceStopHardware();
-    resetAll();
+    forceStopHardware();
+    animateClose();
     onDetected(clean);
+    setTimeout(() => {
+      resetAll();
+    }, 200);
   };
 
   const handleExecuteSearch = async (e) => {
@@ -732,11 +801,22 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }
   };
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] my-auto overscroll-contain transition-all duration-300">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleClose();
+        }
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] my-auto overscroll-contain ${cardClass}`}
+      >
         
         {/* ENCABEZADO */}
         <div className={`px-4 sm:px-5 ${isKeyboardActive ? 'py-2.5' : 'py-3.5'} flex items-center justify-between border-b border-slate-100 bg-white shrink-0 transition-all`}>

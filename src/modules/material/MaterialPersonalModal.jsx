@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, UserPlus, Plus, Trash2, AlertCircle, Building2, Briefcase, Edit2, Check, RotateCcw } from 'lucide-react';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function MaterialPersonalModal({
   isOpen,
@@ -13,7 +13,10 @@ export function MaterialPersonalModal({
   onDeletePersonal,
   canDelete = false
 }) {
-  useBodyScrollLock(isOpen);
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
 
   const [editingPerson, setEditingPerson] = useState(null);
   const [nombre, setNombre] = useState('');
@@ -44,7 +47,7 @@ export function MaterialPersonalModal({
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   const handleDeletePersonal = (person) => {
     if (!person) return;
@@ -81,8 +84,17 @@ export function MaterialPersonalModal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col my-0 sm:my-auto max-h-[100dvh] sm:max-h-[90dvh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isSubmitting) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-hidden overscroll-contain ${cardClass}`}
+      >
         
         {/* HEADER */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
@@ -100,7 +112,8 @@ export function MaterialPersonalModal({
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -260,7 +273,8 @@ export function MaterialPersonalModal({
         {/* FOOTER */}
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-2xl transition-all cursor-pointer"
           >
             Listo

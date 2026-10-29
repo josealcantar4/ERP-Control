@@ -24,7 +24,11 @@ import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
 
-export function CatalogUploadModule({ onBack }) {
+export function CatalogUploadModule({ currentUser, onBack }) {
+  const activeUser = currentUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('erp_current_user') || '{}') : {});
+  const isRootAdmin = activeUser?.username?.toLowerCase() === 'administrador';
+  const hasCatalogAccess = isRootAdmin || activeUser?.roles?.includes('catalogo');
+
   const [catalogStatus, setCatalogStatus] = useState({
     localCount: 0,
     cleanCount: 0,
@@ -74,8 +78,10 @@ export function CatalogUploadModule({ onBack }) {
   // Cargar estado inicial y reconciliar con Firestore
   const loadStatus = async () => {
     try {
-      const items = await catalogService.getCleanCatalogItems();
-      setCleanItems(items);
+      if (isRootAdmin) {
+        const items = await catalogService.getCleanCatalogItems();
+        setCleanItems(items);
+      }
 
       const status = await catalogService.getCatalogStatus();
       setCatalogStatus(status);
@@ -102,18 +108,21 @@ export function CatalogUploadModule({ onBack }) {
   useEffect(() => {
     loadStatus();
 
-    // Suscripción reactiva en tiempo real al Catálogo Limpio en Firestore
-    const unsubscribe = catalogService.subscribeCleanCatalog((items) => {
-      setCleanItems(items);
-      setCatalogStatus(prev => ({ ...prev, cleanCount: items.length }));
-    });
+    // Suscripción reactiva en tiempo real al Catálogo Limpio (Exclusivo Administrador)
+    let unsubscribe = null;
+    if (isRootAdmin) {
+      unsubscribe = catalogService.subscribeCleanCatalog((items) => {
+        setCleanItems(items);
+        setCatalogStatus(prev => ({ ...prev, cleanCount: items.length }));
+      });
+    }
 
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
     };
-  }, []);
+  }, [isRootAdmin]);
 
   // Forzar Sincronización Manual del Excel Central
   const handleForceSync = async () => {
@@ -148,8 +157,9 @@ export function CatalogUploadModule({ onBack }) {
     }
   };
 
-  // Guardar ID o URL personalizada del recurso central
+  // Guardar ID o URL personalizada del recurso central (Exclusivo Administrador)
   const handleSaveConfig = () => {
+    if (!isRootAdmin) return;
     if (!customFileId.trim()) return;
     let clean = customFileId.trim();
 
@@ -170,42 +180,46 @@ export function CatalogUploadModule({ onBack }) {
     loadStatus();
   };
 
-  // Apertura de modales de producto limpio
+  // Apertura de modales de producto limpio (Exclusivo Administrador)
   const handleOpenAddClean = () => {
+    if (!isRootAdmin) return;
     setEditingCleanItem(null);
     setIsCleanModalOpen(true);
   };
 
   const handleOpenEditClean = (item) => {
+    if (!isRootAdmin) return;
     setEditingCleanItem(item);
     setIsCleanModalOpen(true);
   };
 
-  // Guardar o Actualizar producto limpio en Firestore
+  // Guardar o Actualizar producto limpio (Exclusivo Administrador)
   const handleSaveCleanProduct = async (codigo, descripcion) => {
+    if (!isRootAdmin) return;
     if (editingCleanItem) {
       await catalogService.updateCleanCatalogItem(codigo, descripcion);
       setFeedback({
         type: 'success',
-        message: `Producto "${codigo}" actualizado correctamente en Firebase.`
+        message: `Producto "${codigo}" actualizado correctamente en el Catálogo Limpio.`
       });
     } else {
       await catalogService.saveToCleanCatalog(codigo, descripcion);
       setFeedback({
         type: 'success',
-        message: `Producto "${codigo}" registrado exitosamente en el Catálogo Limpio de Firebase.`
+        message: `Producto "${codigo}" registrado exitosamente en el Catálogo Limpio.`
       });
     }
   };
 
-  // Eliminar producto limpio con confirmación
+  // Eliminar producto limpio con confirmación (Exclusivo Administrador)
   const handleDeleteCleanProduct = (item) => {
+    if (!isRootAdmin) return;
     setDialog({
       isOpen: true,
       type: 'confirm',
       variant: 'danger',
       title: '¿Eliminar del Catálogo Limpio?',
-      message: `¿Estás seguro de eliminar el producto "${item.codigo} - ${item.descripcion}"?\n\nEsta acción removerá el registro permanentemente de Firebase Firestore y de la memoria local.`,
+      message: `¿Estás seguro de eliminar el producto "${item.codigo} - ${item.descripcion}"?\n\nEsta acción removerá el registro permanentemente del Catálogo Limpio y de la memoria local.`,
       confirmText: 'Sí, eliminar',
       cancelText: 'Cancelar',
       onConfirm: async () => {
@@ -220,7 +234,7 @@ export function CatalogUploadModule({ onBack }) {
           console.error('Error eliminando producto:', err);
           setFeedback({
             type: 'error',
-            message: 'No fue posible eliminar el producto de Firestore.'
+            message: 'No fue posible eliminar el producto del Catálogo Limpio.'
           });
         }
       }
@@ -228,12 +242,13 @@ export function CatalogUploadModule({ onBack }) {
   };
 
   const handleSyncFromHistory = () => {
+    if (!isRootAdmin) return;
     setDialog({
       isOpen: true,
       type: 'confirm',
       variant: 'primary',
       title: 'Alimentar Catálogo Limpio desde Historial',
-      message: '¿Deseas escanear todas las solicitudes, extras y despachos directos registrados para incorporar automáticamente todos sus productos al Catálogo Limpio de Firestore?',
+      message: '¿Deseas escanear todas las solicitudes, extras y despachos directos registrados para incorporar automáticamente todos sus productos al Catálogo Limpio?',
       confirmText: 'Escanear e Incorporar',
       cancelText: 'Cancelar',
       onConfirm: async () => {
@@ -287,6 +302,26 @@ export function CatalogUploadModule({ onBack }) {
     }
   };
 
+  if (!hasCatalogAccess) {
+    return (
+      <div className="max-w-md mx-auto text-center py-16 space-y-4 animate-fade-in select-none">
+        <div className="w-16 h-16 rounded-3xl bg-red-50 text-red-600 flex items-center justify-center mx-auto shadow-sm">
+          <Database className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">Acceso Restringido</h2>
+        <p className="text-xs sm:text-sm text-slate-500">
+          No cuentas con el rol asignado para sincronizar el Catálogo Central. Solicita este rol a un administrador para ingresar.
+        </p>
+        <button
+          onClick={onBack}
+          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-xs font-bold transition-all shadow-md cursor-pointer"
+        >
+          Volver al Inicio
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
       
@@ -321,33 +356,36 @@ export function CatalogUploadModule({ onBack }) {
             </div>
           </div>
 
-          <button
-            onClick={() => setShowConfig(!showConfig)}
-            className="self-start sm:self-auto p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition-colors"
-            title="Configuración avanzada"
-          >
-            <Settings2 className="w-5 h-5" />
-          </button>
+          {/* Configuración avanzada (Solo visible y editable por el usuario Administrador) */}
+          {isRootAdmin && (
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="self-start sm:self-auto p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
+              title="Configuración avanzada del recurso central"
+            >
+              <Settings2 className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
-        {/* CONFIGURACIÓN AVANZADA COLAPSABLE */}
-        {showConfig && (
+        {/* CONFIGURACIÓN AVANZADA COLAPSABLE (Solo visible y editable por el usuario Administrador) */}
+        {isRootAdmin && showConfig && (
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 animate-fade-in">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
               <span>Identificador del Recurso Central</span>
-              <span className="text-[10px] text-slate-400 font-normal">Solo administradores</span>
+              <span className="text-[10px] text-purple-700 font-semibold bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">Exclusivo Administrador</span>
             </div>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={customFileId}
                 onChange={(e) => setCustomFileId(e.target.value)}
-                placeholder="ID o identificador del archivo"
+                placeholder="ID o enlace del archivo en Google Drive"
                 className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 onClick={handleSaveConfig}
-                className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer"
+                className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer transition-colors"
               >
                 Guardar
               </button>
@@ -356,7 +394,7 @@ export function CatalogUploadModule({ onBack }) {
         )}
 
         {/* TARJETAS DE ESTADO */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRootAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
           
           {/* Tarjeta 1: Productos Locales Base */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
@@ -374,19 +412,21 @@ export function CatalogUploadModule({ onBack }) {
             </p>
           </div>
 
-          {/* Tarjeta 2: Catálogo Limpio en Firebase */}
-          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
-            <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
-              <Layers className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Catálogo Limpio</span>
+          {/* Tarjeta 2: Catálogo Limpio (Solo visible para el usuario Administrador) */}
+          {isRootAdmin && (
+            <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
+              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+                <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Catálogo Limpio</span>
+              </div>
+              <div className="text-xl font-mono font-bold text-slate-900">
+                {catalogStatus.cleanCount.toLocaleString()}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Productos validados
+              </p>
             </div>
-            <div className="text-xl font-mono font-bold text-slate-900">
-              {catalogStatus.cleanCount.toLocaleString()}
-            </div>
-            <p className="text-[10px] text-slate-400">
-              En Firebase Firestore
-            </p>
-          </div>
+          )}
 
           {/* Tarjeta 3: Última Sincronización */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
@@ -508,154 +548,158 @@ export function CatalogUploadModule({ onBack }) {
 
       </div>
 
-      {/* SECCIÓN: GESTIÓN DEL CATÁLOGO LIMPIO (FIRESTORE) */}
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
-        
-        {/* Cabecera de la sección */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                  Catálogo Limpio en Firebase
-                </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                  {cleanItems.length} en la nube
-                </span>
+      {/* SECCIÓN: GESTIÓN DEL CATÁLOGO LIMPIO (Exclusivo Administrador) */}
+      {isRootAdmin && (
+        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
+          
+          {/* Cabecera de la sección */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5" />
               </div>
-              <p className="text-xs text-slate-500">
-                Catálogo validado automáticamente en operaciones reales (solicitudes, extras y despachos).
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    Catálogo Limpio
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                    {cleanItems.length} {cleanItems.length === 1 ? 'producto' : 'productos'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Catálogo validado automáticamente en operaciones reales (solicitudes, extras y despachos).
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            <button
-              onClick={handleSyncFromHistory}
-              disabled={isHistorySyncing}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-              title="Escanear historial de solicitudes y despachos para registrar productos"
-            >
-              <HardDriveDownload className={`w-4 h-4 text-emerald-600 ${isHistorySyncing ? 'animate-bounce' : ''}`} />
-              <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial'}</span>
-            </button>
-            <button
-              onClick={handleOpenAddClean}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Agregar Producto</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Barra de Búsqueda con AutoScroll y Carrusel */}
-        <div>
-          <AutoScrollInput
-            type="text"
-            value={cleanSearchQuery}
-            onChange={(e) => setCleanSearchQuery(e.target.value)}
-            placeholder="Buscar en el catálogo limpio por código o descripción..."
-            icon={Search}
-            onClear={() => setCleanSearchQuery('')}
-            className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-          />
-        </div>
-
-        {/* Listado de Productos Limpios */}
-        {cleanItems.length === 0 ? (
-          <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
-              <Layers className="w-6 h-6" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-xs sm:text-sm font-bold text-slate-700">
-                Catálogo Limpio Vacío (0 Registros en Firestore)
-              </h3>
-              <p className="text-[11px] text-slate-400 max-w-md mx-auto leading-relaxed">
-                El Catálogo Limpio reúne los productos validados que se solicitan, se envían como extras o se despachan directamente, eliminando el ruido y registros obsoletos del catálogo general.
-              </p>
-            </div>
-            <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
               <button
                 onClick={handleSyncFromHistory}
                 disabled={isHistorySyncing}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                title="Escanear historial de solicitudes y despachos para registrar productos"
               >
-                <HardDriveDownload className="w-3.5 h-3.5" />
-                <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial de Pedidos'}</span>
+                <HardDriveDownload className={`w-4 h-4 text-emerald-600 ${isHistorySyncing ? 'animate-bounce' : ''}`} />
+                <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial'}</span>
               </button>
               <button
                 onClick={handleOpenAddClean}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-2xs"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Registrar producto manual</span>
+                <Plus className="w-4 h-4" />
+                <span>Agregar Producto</span>
               </button>
             </div>
           </div>
-        ) : filteredCleanItems.length === 0 ? (
-          <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
-            No se encontraron productos limpios que coincidan con "{cleanSearchQuery}".
+
+          {/* Barra de Búsqueda con AutoScroll y Carrusel */}
+          <div>
+            <AutoScrollInput
+              type="text"
+              value={cleanSearchQuery}
+              onChange={(e) => setCleanSearchQuery(e.target.value)}
+              placeholder="Buscar en el catálogo limpio por código o descripción..."
+              icon={Search}
+              onClear={() => setCleanSearchQuery('')}
+              className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+            />
           </div>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {filteredCleanItems.map((item) => (
-              <div
-                key={item.codigo}
-                className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
-              >
-                <div className="flex items-start sm:items-center gap-3 min-w-0">
-                  <span className="shrink-0 inline-flex items-center gap-1 bg-white border border-slate-200/90 text-slate-800 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl shadow-2xs">
-                    <Tag className="w-3 h-3 text-emerald-600" />
-                    {item.codigo}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <MarqueeText
-                      text={item.descripcion}
-                      className="text-xs font-semibold text-slate-900 block"
-                    />
-                    {item.updatedAt && (
-                      <p className="text-[10px] text-slate-400">
-                        Actualizado: {formatDate(item.updatedAt)}
-                      </p>
-                    )}
+
+          {/* Listado de Productos Limpios */}
+          {cleanItems.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                <Layers className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-xs sm:text-sm font-bold text-slate-700">
+                  Catálogo Limpio Vacío (0 Registros)
+                </h3>
+                <p className="text-[11px] text-slate-400 max-w-md mx-auto leading-relaxed">
+                  El Catálogo Limpio reúne los productos validados que se solicitan, se envían como extras o se despachan directamente, eliminando el ruido y registros obsoletos del catálogo general.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                <button
+                  onClick={handleSyncFromHistory}
+                  disabled={isHistorySyncing}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                >
+                  <HardDriveDownload className="w-3.5 h-3.5" />
+                  <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial de Pedidos'}</span>
+                </button>
+                <button
+                  onClick={handleOpenAddClean}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-2xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Registrar producto manual</span>
+                </button>
+              </div>
+            </div>
+          ) : filteredCleanItems.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
+              No se encontraron productos limpios que coincidan con "{cleanSearchQuery}".
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {filteredCleanItems.map((item) => (
+                <div
+                  key={item.codigo}
+                  className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+                >
+                  <div className="flex items-start sm:items-center gap-3 min-w-0">
+                    <span className="shrink-0 inline-flex items-center gap-1 bg-white border border-slate-200/90 text-slate-800 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl shadow-2xs">
+                      <Tag className="w-3 h-3 text-emerald-600" />
+                      {item.codigo}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <MarqueeText
+                        text={item.descripcion}
+                        className="text-xs font-semibold text-slate-900 block"
+                      />
+                      {item.updatedAt && (
+                        <p className="text-[10px] text-slate-400">
+                          Actualizado: {formatDate(item.updatedAt)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                    <button
+                      onClick={() => handleOpenEditClean(item)}
+                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+                      title="Editar descripción"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCleanProduct(item)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                      title="Eliminar producto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
 
-                <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
-                  <button
-                    onClick={() => handleOpenEditClean(item)}
-                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
-                    title="Editar descripción"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCleanProduct(item)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
-                    title="Eliminar de Firestore"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        </div>
+      )}
 
-      </div>
-
-      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO LIMPIO (STANDALONE) */}
-      <CleanProductModal
-        isOpen={isCleanModalOpen}
-        item={editingCleanItem}
-        onClose={() => setIsCleanModalOpen(false)}
-        onSave={handleSaveCleanProduct}
-      />
+      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO LIMPIO (Exclusivo Administrador) */}
+      {isRootAdmin && (
+        <CleanProductModal
+          isOpen={isCleanModalOpen}
+          item={editingCleanItem}
+          onClose={() => setIsCleanModalOpen(false)}
+          onSave={handleSaveCleanProduct}
+        />
+      )}
 
       {/* MODAL DIALOG PARA CONFIRMACIONES Y ALERTAS */}
       <ModalDialog

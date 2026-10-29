@@ -16,7 +16,7 @@ import {
   PackagePlus,
   Minus
 } from 'lucide-react';
-import { transferService, formatTransferFolio } from '../transferencias';
+import { transferService, formatTransferFolio, canUserDispatch } from '../transferencias';
 import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
@@ -27,11 +27,12 @@ import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 import { DespachoDirectoModal } from './DespachoDirectoModal';
 import { transitionView } from '../../shared';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function DespacharModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
-    return transferService.getLocalSolicitudes() || [];
+    const list = transferService.getLocalSolicitudes() || [];
+    return list.filter(s => canUserDispatch(s, currentUser));
   });
   const [selectedSolicitud, setSelectedSolicitud] = useState(null);
   const [detailSolicitud, setDetailSolicitud] = useState(null);
@@ -53,9 +54,6 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   // Modal para despachar directamente sin solicitud previa
   const [isDirectDispatchOpen, setIsDirectDispatchOpen] = useState(false);
-
-  // Bloquear scroll del fondo cuando el modal de agregar producto extra está abierto
-  useBodyScrollLock(isExtraModalOpen);
 
   // Helper para persistir orden seleccionada en sessionStorage y restaurar scroll con View Transitions
   const handleSelectSolicitud = (sol) => {
@@ -106,52 +104,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      let filtered = list;
-
-      if (!isAdmin) {
-        const userSede = (currentUser?.sede || '').toLowerCase();
-        const userArea = (currentUser?.area || '').toLowerCase();
-        const isPatente = userArea.includes('patente');
-        const isGenerico = userArea.includes('generic') || userArea.includes('genéric');
-
-        filtered = list.filter((s) => {
-          // Si el usuario es quien creó el despacho directo o es el usuarioDestino específico
-          if (s.usuarioDestino === currentUser?.username || s.usuarioDespacho === currentUser?.username) {
-            return true;
-          }
-
-          const destSede = (s.sucursalDestino || '').toLowerCase();
-          const areaDest = (s.areaDestino || '').toLowerCase();
-
-          // 1. Verificación de Sede de Destino:
-          // Si la solicitud especifica sucursalDestino, debe coincidir con la sede del despachador
-          // Si no tiene sucursalDestino (registros legados), se asume Matriz si el usuario está en Matriz
-          const matchesSede = !destSede
-            ? (userSede.includes('matriz') || userSede === '')
-            : destSede === userSede;
-
-          if (!matchesSede) {
-            return false;
-          }
-
-          // 2. Verificación de Área de Destino:
-          if (userArea && userArea !== 'externo') {
-            if (isPatente) {
-              return areaDest.includes('patente');
-            }
-            if (isGenerico) {
-              return areaDest.includes('generic') || areaDest.includes('genéric');
-            }
-            if (areaDest) {
-              return areaDest.includes(userArea) || userArea.includes(areaDest);
-            }
-            return true;
-          }
-
-          // Despachador en sede directa
-          return true;
-        });
-      }
+      const filtered = list.filter(s => canUserDispatch(s, currentUser));
 
       setSolicitudes(filtered);
       setIsLoadingSolicitudes(false);
@@ -498,9 +451,13 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         onConfirm: async () => {
           closeDialog();
           setIsProcessing(true);
+          const currentSol = selectedSolicitud;
           try {
-            await transferService.completeSolicitud(selectedSolicitud.id, fullFolio);
-            handleSelectSolicitud(null);
+            await transferService.completeSolicitud(currentSol.id, fullFolio);
+            setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio });
+            setSelectedSolicitud(null);
+            setDispatchFolioDigits('');
+            sessionStorage.removeItem('erp_despachar_solicitud_id');
           } finally {
             setIsProcessing(false);
           }
@@ -521,9 +478,13 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       onConfirm: async () => {
         closeDialog();
         setIsProcessing(true);
+        const currentSol = selectedSolicitud;
         try {
-          await transferService.completeSolicitud(selectedSolicitud.id, fullFolio);
-          handleSelectSolicitud(null);
+          await transferService.completeSolicitud(currentSol.id, fullFolio);
+          setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio });
+          setSelectedSolicitud(null);
+          setDispatchFolioDigits('');
+          sessionStorage.removeItem('erp_despachar_solicitud_id');
         } finally {
           setIsProcessing(false);
         }
@@ -1105,83 +1066,17 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       )}
 
       {/* Extra Medicine Search Modal */}
-      {isExtraModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-0 sm:my-auto max-h-[100dvh] sm:max-h-[90vh] overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
-            <div className="p-5 pb-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900">Agregar Producto Extra</h3>
-              <button
-                onClick={resetExtraModal}
-                className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <button
-                type="button"
-                onClick={() => setIsScannerOpen(true)}
-                className="w-full py-3.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-2xl flex items-center justify-center gap-2 border border-blue-200 transition-colors cursor-pointer"
-              >
-                <ScanBarcode className="w-4 h-4" />
-                <span>Escanear código de barras</span>
-              </button>
-
-              <form onSubmit={handleExecuteSearch} className="flex gap-2">
-                <div className="flex-1">
-                  <AutoScrollInput
-                    type="text"
-                    placeholder="Buscar por nombre o fármaco..."
-                    value={extraQuery}
-                    onChange={(e) => setExtraQuery(e.target.value)}
-                    icon={Search}
-                    onClear={() => {
-                      setExtraQuery('');
-                      setExtraResults([]);
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500 shadow-xs"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isSearching}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
-                >
-                  {isSearching ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <span>Buscar</span>
-                  )}
-                </button>
-              </form>
-
-              {extraResults.length > 0 && (
-                <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-2xl">
-                  {extraResults.map((med) => (
-                    <div
-                      key={med.codigo}
-                      onClick={() => handleSelectExtraItem(med)}
-                      className="p-3 text-xs hover:bg-blue-50 cursor-pointer text-slate-800 flex justify-between items-center transition-colors"
-                    >
-                      <div className="flex-1 min-w-0 pr-2">
-                        <MarqueeText
-                          text={med.descripcion}
-                          className="font-semibold text-slate-900 text-xs block"
-                        />
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-400 shrink-0 bg-white px-2 py-1 rounded-md border border-slate-100">
-                        {med.codigo}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <ExtraProductModal
+        isOpen={isExtraModalOpen}
+        onClose={resetExtraModal}
+        onOpenScanner={() => setIsScannerOpen(true)}
+        extraQuery={extraQuery}
+        setExtraQuery={setExtraQuery}
+        handleExecuteSearch={handleExecuteSearch}
+        isSearching={isSearching}
+        extraResults={extraResults}
+        onSelectExtraItem={handleSelectExtraItem}
+      />
 
       {/* Modal de Cantidad (Mismo componente usado en Solicitar) */}
       <CaptureQuantityModal
@@ -1250,4 +1145,114 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
     </div>
   );
+}
+
+function ExtraProductModal({
+  isOpen,
+  onClose,
+  onOpenScanner,
+  extraQuery,
+  setExtraQuery,
+  handleExecuteSearch,
+  isSearching,
+  extraResults,
+  onSelectExtraItem
+}) {
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender) return null;
+
+  const content = (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[90vh] overscroll-contain ${cardClass}`}
+      >
+        <div className="p-5 pb-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-base font-bold text-slate-900">Agregar Producto Extra</h3>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <button
+            type="button"
+            onClick={() => {
+              handleClose();
+              onOpenScanner();
+            }}
+            className="w-full py-3.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-2xl flex items-center justify-center gap-2 border border-blue-200 transition-colors cursor-pointer"
+          >
+            <ScanBarcode className="w-4 h-4" />
+            <span>Escanear código de barras</span>
+          </button>
+
+          <form onSubmit={handleExecuteSearch} className="flex gap-2">
+            <div className="flex-1">
+              <AutoScrollInput
+                type="text"
+                placeholder="Buscar por nombre o fármaco..."
+                value={extraQuery}
+                onChange={(e) => setExtraQuery(e.target.value)}
+                icon={Search}
+                onClear={() => {
+                  setExtraQuery('');
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500 shadow-xs"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isSearching}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+            >
+              {isSearching ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <span>Buscar</span>
+              )}
+            </button>
+          </form>
+
+          {extraResults.length > 0 && (
+            <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-2xl">
+              {extraResults.map((med) => (
+                <div
+                  key={med.codigo}
+                  onClick={() => onSelectExtraItem(med)}
+                  className="p-3 text-xs hover:bg-blue-50 cursor-pointer text-slate-800 flex justify-between items-center transition-colors"
+                >
+                  <div className="flex-1 min-w-0 pr-2">
+                    <MarqueeText
+                      text={med.descripcion}
+                      className="font-semibold text-slate-900 text-xs block"
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0 bg-white px-2 py-1 rounded-md border border-slate-100">
+                    {med.codigo}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

@@ -26,7 +26,7 @@ export const userService = {
           nombre: 'Administrador General',
           sede: 'Matriz Centro',
           area: 'Dirección General',
-          roles: ['solicitar', 'despachar'],
+          roles: ['solicitar', 'despachar', 'material', 'admin'],
           excluirDestinatario: true,
           createdAt: new Date().toISOString()
         });
@@ -171,11 +171,22 @@ export const userService = {
   async updateUser(userId, updateData) {
     if (!userId) throw new Error('ID de usuario inválido.');
 
-    const docRef = doc(db, 'usuarios', userId);
-    const snap = await getDoc(docRef);
+    let docRef = doc(db, 'usuarios', userId);
+    let snap = await getDoc(docRef);
 
     if (!snap.exists()) {
-      throw new Error('El usuario no existe.');
+      // Búsqueda de respaldo por coincidencia exacta o case-insensitive
+      const snapAll = await getDocs(collection(db, 'usuarios'));
+      const matched = snapAll.docs.find(d => 
+        d.id.toLowerCase() === userId.toLowerCase() ||
+        (d.data()?.username && d.data().username.toLowerCase() === userId.toLowerCase())
+      );
+      if (matched) {
+        docRef = doc(db, 'usuarios', matched.id);
+        snap = matched;
+      } else {
+        throw new Error('El usuario no existe.');
+      }
     }
 
     const existing = snap.data();
@@ -193,18 +204,23 @@ export const userService = {
     await setDoc(docRef, updated, { merge: true });
 
     const active = this.getCurrentUser();
-    if (active && active.username.toLowerCase() === userId.toLowerCase()) {
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify({
+    if (active && (
+      active.username.toLowerCase() === userId.toLowerCase() ||
+      (active.id && active.id.toLowerCase() === userId.toLowerCase())
+    )) {
+      const updatedActiveUser = {
         ...active,
         nombre: updated.nombre || existing.nombre,
         sede: updated.sede || existing.sede,
         area: updated.area || existing.area,
         roles: updated.roles,
         excluirDestinatario: updated.excluirDestinatario
-      }));
+      };
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedActiveUser));
+      window.dispatchEvent(new CustomEvent('erp_current_user_updated', { detail: updatedActiveUser }));
     }
 
-    return { id: userId, ...existing, ...updated };
+    return { id: docRef.id, ...existing, ...updated };
   },
 
   // Eliminar usuario de Firestore
@@ -215,7 +231,20 @@ export const userService = {
       throw new Error('No es posible eliminar el usuario Administrador principal del sistema.');
     }
 
-    await deleteDoc(doc(db, 'usuarios', userId));
+    let docRef = doc(db, 'usuarios', userId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      const snapAll = await getDocs(collection(db, 'usuarios'));
+      const matched = snapAll.docs.find(d => 
+        d.id.toLowerCase() === userId.toLowerCase() ||
+        (d.data()?.username && d.data().username.toLowerCase() === userId.toLowerCase())
+      );
+      if (matched) {
+        docRef = doc(db, 'usuarios', matched.id);
+      }
+    }
+
+    await deleteDoc(docRef);
     return true;
   },
 

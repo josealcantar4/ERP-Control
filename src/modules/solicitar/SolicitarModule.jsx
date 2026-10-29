@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService, formatTransferFolio } from '../transferencias';
+import { transferService, formatTransferFolio, canUserViewInSolicitar } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
@@ -86,7 +86,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
       setHistorialList(
         list.filter(s => {
-          if (s.usuarioSolicitante !== currentUser.username) return false;
+          if (!canUserViewInSolicitar(s, currentUser)) return false;
           if (s.estado === 'borrador' && (!s.items || s.items.length === 0)) return false;
           return true;
         })

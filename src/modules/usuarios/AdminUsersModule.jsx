@@ -20,13 +20,14 @@ import {
   Eye,
   EyeOff,
   Info,
-  Tag
+  Tag,
+  Database
 } from 'lucide-react';
 import { userService } from './userService';
 import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { transitionView } from '../../shared';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [activeTab, setActiveTab] = useState(() => {
@@ -71,9 +72,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [isAreaModalOpen, setIsAreaModalOpen] = useState(false);
   const [editingArea, setEditingArea] = useState(null);
   const [areaForm, setAreaForm] = useState({ nombre: '', excluirTransferencias: false });
-
-  // Bloquear scroll de fondo cuando cualquiera de los modales de administración esté abierto
-  useBodyScrollLock(isUserModalOpen || isSedeModalOpen || isAreaModalOpen);
 
   // Pop-up dialog state
   const [dialog, setDialog] = useState({
@@ -139,14 +137,21 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     const sedeObj = sedesList.find(s => s.nombre === user.sede);
     const sedeAreas = sedeObj?.areas || [];
 
+    const isRootAdmin = user.username?.toLowerCase() === 'administrador';
+    let userRoles = user.roles || ['solicitar'];
+    if (isRootAdmin) {
+      if (!userRoles.includes('admin')) userRoles = [...userRoles, 'admin'];
+      if (!userRoles.includes('catalogo')) userRoles = [...userRoles, 'catalogo'];
+    }
+
     setUserForm({
       username: user.username,
       password: user.password || '',
       confirmPassword: user.password || '',
       nombre: user.nombre,
       sede: user.sede || '',
-      area: (sedeAreas.length > 0 ? (user.area || '') : ''),
-      roles: user.roles || ['solicitar'],
+      area: user.area || '',
+      roles: userRoles,
       excluirDestinatario: Boolean(user.excluirDestinatario)
     });
     setShowPassword(false);
@@ -163,11 +168,21 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     const sedeObj = sedesList.find(s => s.nombre === sedeNombre);
     const sedeAreas = sedeObj?.areas || [];
 
-    setUserForm(prev => ({
-      ...prev,
-      sede: sedeNombre,
-      area: sedeAreas.includes(prev.area) ? prev.area : ''
-    }));
+    setUserForm(prev => {
+      const currentArea = prev?.area || '';
+      const areaObj = areasList.find(a => a.nombre?.toLowerCase() === currentArea.toLowerCase());
+      const isExcluded = Boolean(areaObj?.excluirTransferencias);
+      const isSedeArea = sedeAreas.some(sa => sa.toLowerCase() === currentArea.toLowerCase());
+
+      // Se conserva si es un área administrativa (excluida de transferencias) O si pertenece a la sede
+      const isValidArea = Boolean(currentArea && (isExcluded || isSedeArea));
+
+      return {
+        ...prev,
+        sede: sedeNombre,
+        area: isValidArea ? currentArea : ''
+      };
+    });
   };
 
   const toggleRole = (role) => {
@@ -175,6 +190,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     if (currentRoles.includes(role)) {
       if (currentRoles.length === 1) {
         setFormError('El usuario debe conservar al menos un rol asignado.');
+        return;
+      }
+      if (editingUser?.username?.toLowerCase() === 'administrador' && (role === 'admin' || role === 'catalogo')) {
+        setFormError('El Administrador principal conserva acceso a todos los módulos.');
         return;
       }
       currentRoles = currentRoles.filter(r => r !== role);
@@ -197,8 +216,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
     const sedeAreas = selectedSedeObj?.areas || [];
 
-    if (sedeAreas.length > 0 && !userForm.area) {
-      setFormError(`La sede "${userForm.sede}" requiere que selecciones una sub-área.`);
+    // Validar sub-área operativa únicamente si el usuario tiene roles de transferencias (solicitar/despachar)
+    // y la sede tiene sub-áreas configuradas
+    const hasTransferRoles = userForm.roles.some(r => r === 'solicitar' || r === 'despachar');
+    if (hasTransferRoles && sedeAreas.length > 0 && !userForm.area) {
+      setFormError(`El rol operativo de transferencias en "${userForm.sede}" requiere que selecciones una sub-área.`);
       return;
     }
 
@@ -208,7 +230,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     }
 
     setIsProcessing(true);
-    const finalArea = sedeAreas.length > 0 ? userForm.area.trim() : '';
+    const finalArea = (userForm.area || '').trim();
     const selectedAreaObj = areasList.find(a => a.nombre?.toLowerCase() === finalArea.toLowerCase());
     const isAreaExcluded = Boolean(selectedAreaObj?.excluirTransferencias);
     const finalExcluirDestinatario = isAreaExcluded ? true : Boolean(userForm.excluirDestinatario);
@@ -232,6 +254,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         setDialog({ isOpen: true, type: 'alert', title: 'Creado', message: `Usuario registrado.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsUserModalOpen(false);
+      userService.refreshUsers();
     } catch (err) {
       setFormError(err.message || 'Error al guardar el usuario.');
     } finally {
@@ -242,6 +265,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const handleDeleteUser = (user) => {
     if (user.username.toLowerCase() === 'administrador') {
       setDialog({ isOpen: true, type: 'alert', title: 'Acción no permitida', message: 'El Administrador principal no se puede eliminar.', variant: 'danger', onConfirm: closeDialog });
+      return;
+    }
+    if (user.username.toLowerCase() === currentUser?.username?.toLowerCase()) {
+      setDialog({ isOpen: true, type: 'alert', title: 'Acción no permitida', message: 'No puedes eliminar tu propia cuenta en sesión.', variant: 'danger', onConfirm: closeDialog });
       return;
     }
     setDialog({
@@ -327,11 +354,26 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
     try {
       if (editingSede) {
-        await organizationService.updateSede(editingSede.id, sedeForm.nombre, sedeForm.tipo, sedeForm.areas);
+        const oldName = editingSede.nombre;
+        const newName = sedeForm.nombre.trim();
+        await organizationService.updateSede(editingSede.id, newName, sedeForm.tipo, sedeForm.areas);
+
+        // Si la sede cambió de nombre, actualizar en cascada a los usuarios asignados a ella
+        if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
+          const affectedUsers = usersList.filter(u => (u.sede || '').toLowerCase() === oldName.toLowerCase());
+          for (const u of affectedUsers) {
+            try {
+              await userService.updateUser(u.id || u.username, { sede: newName });
+            } catch (_) {}
+          }
+        }
+        setDialog({ isOpen: true, type: 'alert', title: 'Sede Actualizada', message: `La sede "${newName}" se actualizó correctamente.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await organizationService.createSede(sedeForm.nombre, sedeForm.tipo, sedeForm.areas);
+        setDialog({ isOpen: true, type: 'alert', title: 'Sede Creada', message: `La sede "${sedeForm.nombre}" se registró correctamente.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsSedeModalOpen(false);
+      organizationService.refreshSedesAndAreas();
     } catch (err) {
       setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
     } finally {
@@ -361,6 +403,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         setIsProcessing(true);
         try {
           await organizationService.deleteSede(sede.id);
+          organizationService.refreshSedesAndAreas();
+          setDialog({ isOpen: true, type: 'alert', title: 'Sede Eliminada', message: `La sede "${sede.nombre}" fue eliminada.`, variant: 'success', onConfirm: closeDialog });
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -394,11 +438,34 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
     try {
       if (editingArea) {
-        await organizationService.updateArea(editingArea.id, areaForm.nombre, areaForm.excluirTransferencias);
+        const oldName = editingArea.nombre;
+        const newName = areaForm.nombre.trim();
+        await organizationService.updateArea(editingArea.id, newName, areaForm.excluirTransferencias);
+
+        // Si el nombre del área cambió, actualizar en sedes asociadas y usuarios
+        if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
+          for (const s of sedesList) {
+            if (s.areas && s.areas.includes(oldName)) {
+              const newAreas = s.areas.map(a => a === oldName ? newName : a);
+              try {
+                await organizationService.updateSede(s.id, s.nombre, s.tipo, newAreas);
+              } catch (_) {}
+            }
+          }
+          const affectedUsers = usersList.filter(u => (u.area || '').toLowerCase() === oldName.toLowerCase());
+          for (const u of affectedUsers) {
+            try {
+              await userService.updateUser(u.id || u.username, { area: newName });
+            } catch (_) {}
+          }
+        }
+        setDialog({ isOpen: true, type: 'alert', title: 'Área Actualizada', message: `El área "${newName}" se actualizó correctamente.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await organizationService.createArea(areaForm.nombre, areaForm.excluirTransferencias);
+        setDialog({ isOpen: true, type: 'alert', title: 'Área Creada', message: `El área "${areaForm.nombre}" se registró correctamente.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsAreaModalOpen(false);
+      organizationService.refreshSedesAndAreas();
     } catch (err) {
       setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
     } finally {
@@ -428,6 +495,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         setIsProcessing(true);
         try {
           await organizationService.deleteArea(area.id);
+          // Quitar área de todas las sedes que la tenían asociada
+          for (const s of sedesList) {
+            if (s.areas && s.areas.includes(area.nombre)) {
+              const newAreas = s.areas.filter(a => a !== area.nombre);
+              try {
+                await organizationService.updateSede(s.id, s.nombre, s.tipo, newAreas);
+              } catch (_) {}
+            }
+          }
+          organizationService.refreshSedesAndAreas();
+          setDialog({ isOpen: true, type: 'alert', title: 'Área Eliminada', message: `El área "${area.nombre}" fue eliminada.`, variant: 'success', onConfirm: closeDialog });
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -437,6 +515,28 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       onCancel: closeDialog
     });
   };
+
+  const hasAdminAccess = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
+
+  if (!hasAdminAccess) {
+    return (
+      <div className="max-w-md mx-auto text-center py-16 space-y-4 animate-fade-in select-none">
+        <div className="w-16 h-16 rounded-3xl bg-red-50 text-red-600 flex items-center justify-center mx-auto shadow-sm">
+          <Shield className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">Acceso Restringido</h2>
+        <p className="text-xs sm:text-sm text-slate-500">
+          No cuentas con el rol de administración de Usuarios, Sedes y Áreas. Solicita este rol a un administrador para ingresar.
+        </p>
+        <button
+          onClick={onBack}
+          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-xs font-bold transition-all shadow-md cursor-pointer"
+        >
+          Volver al Inicio
+        </button>
+      </div>
+    );
+  }
 
   const filteredUsers = usersList.filter(u =>
     u.nombre?.toLowerCase().includes(searchUser.toLowerCase()) ||
@@ -538,10 +638,22 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span>{user.sede || 'Sin sede'}</span><span>&bull;</span><span>{user.area || 'Sin área'}</span>
                       </div>
-                      <div className="flex items-center gap-1 pt-1 flex-wrap">
-                        {user.roles?.includes('solicitar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700">Solicitar</span>}
-                        {user.roles?.includes('despachar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">Despachar</span>}
-                        {user.roles?.includes('material') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">Material</span>}
+                      <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                        {user.roles?.includes('solicitar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">Solicitar</span>}
+                        {user.roles?.includes('despachar') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">Despachar</span>}
+                        {user.roles?.includes('material') && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">Material</span>}
+                        {(user.roles?.includes('admin') || user.username?.toLowerCase() === 'administrador') && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
+                            <Users className="w-3 h-3" />
+                            Usuarios y Sedes
+                          </span>
+                        )}
+                        {(user.roles?.includes('catalogo') || user.username?.toLowerCase() === 'administrador') && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-1">
+                            <Database className="w-3 h-3" />
+                            Catálogo Base
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -682,380 +794,48 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       )}
 
       {/* MODAL: USUARIO */}
-      {isUserModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
-              <button onClick={() => setIsUserModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {formError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" /><span>{formError}</span>
-              </div>
-            )}
-            <form onSubmit={handleSaveUser} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre Completo *</label>
-                <input type="text" required placeholder="Ej. Juan Pérez" value={userForm.nombre} onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
-              </div>
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Username *</label>
-                <input type="text" required disabled={Boolean(editingUser)} placeholder="Ej. juan.patente" value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${editingUser ? 'opacity-60 cursor-not-allowed' : ''}`} />
-              </div>
-              
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">{editingUser ? 'Modificar Contraseña' : 'Contraseña *'}</label>
-                <div className="relative">
-                  <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    placeholder="Mínimo 3 caracteres"
-                    value={userForm.password}
-                    onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Confirmar Contraseña *</label>
-                <div className="relative">
-                  <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    required
-                    placeholder="Repite la contraseña"
-                    value={userForm.confirmPassword}
-                    onChange={(e) => setUserForm({ ...userForm, confirmPassword: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {(() => {
-                const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
-                const sedeAreas = selectedSedeObj?.areas || [];
-                const hasAreas = sedeAreas.length > 0;
-
-                return (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Sede *</label>
-                      <select
-                        value={userForm.sede}
-                        onChange={(e) => handleSedeChange(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
-                      >
-                        <option value="">-- Seleccionar Sede --</option>
-                        {sedesList.map((s) => (
-                          <option key={s.id} value={s.nombre}>
-                            {s.nombre} ({s.tipo || 'Sucursal'})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
-                          Área {hasAreas ? '*' : ''}
-                        </label>
-                        {!hasAreas && userForm.sede && (
-                          <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2 py-0.5 rounded-full">
-                            Sede directa
-                          </span>
-                        )}
-                      </div>
-                      {hasAreas ? (
-                        <select
-                          required
-                          value={userForm.area}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            const areaObj = areasList.find(item => item.nombre?.toLowerCase() === val.toLowerCase());
-                            setUserForm(prev => ({
-                              ...prev,
-                              area: val,
-                              excluirDestinatario: areaObj?.excluirTransferencias ? true : prev.excluirDestinatario
-                            }));
-                          }}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 font-medium"
-                        >
-                          <option value="">-- Seleccionar Área --</option>
-                          {sedeAreas.map((a, idx) => {
-                            const areaObj = areasList.find(item => item.nombre?.toLowerCase() === a.toLowerCase());
-                            const isExcluded = Boolean(areaObj?.excluirTransferencias);
-                            return (
-                              <option key={idx} value={a}>
-                                {a} {isExcluded ? '(Excluida de transferencias)' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      ) : (
-                        <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-500 text-xs flex items-center gap-1.5">
-                          <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>Esta sede no requiere sub-área</span>
-                        </div>
-                      )}
-                      {hasAreas && (
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          Selecciona el área de operación de este usuario en {userForm.sede}.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div onClick={() => toggleRole('solicitar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('solicitar') ? 'bg-blue-50/70 border-blue-400 text-blue-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                    <span className="font-semibold text-xs">Solicitar Pedido</span>
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('solicitar') ? 'bg-blue-600 text-white' : 'border border-slate-300'}`}>
-                      {userForm.roles.includes('solicitar') && <Check className="w-3 h-3 stroke-[3]" />}
-                    </div>
-                  </div>
-                  <div onClick={() => toggleRole('despachar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('despachar') ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                    <span className="font-semibold text-xs">Despachar Pedido</span>
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('despachar') ? 'bg-emerald-600 text-white' : 'border border-slate-300'}`}>
-                      {userForm.roles.includes('despachar') && <Check className="w-3 h-3 stroke-[3]" />}
-                    </div>
-                  </div>
-                  <div onClick={() => toggleRole('material')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('material') ? 'bg-amber-50/70 border-amber-400 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                    <span className="font-semibold text-xs">Material Brindado</span>
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center ${userForm.roles.includes('material') ? 'bg-amber-600 text-white' : 'border border-slate-300'}`}>
-                      {userForm.roles.includes('material') && <Check className="w-3 h-3 stroke-[3]" />}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div 
-                onClick={() => setUserForm({ ...userForm, excluirDestinatario: !userForm.excluirDestinatario })}
-                className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
-              >
-                <input
-                  type="checkbox"
-                  checked={userForm.excluirDestinatario}
-                  onChange={(e) => setUserForm({ ...userForm, excluirDestinatario: e.target.checked })}
-                  className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-                />
-                <div>
-                  <span className="block text-xs font-bold text-slate-800">Excluir como destinatario</span>
-                  <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
-                    No aparecerá en la lista de opciones para recibir solicitudes de transferencias.
-                  </span>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
-                <button type="button" onClick={() => setIsUserModalOpen(false)} className="px-4 py-2.5 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer">Cancelar</button>
-                <button type="submit" className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
-                  {editingUser ? 'Guardar Cambios' : 'Registrar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+      <AdminUserModal
+        isOpen={isUserModalOpen}
+        onClose={() => setIsUserModalOpen(false)}
+        editingUser={editingUser}
+        formError={formError}
+        handleSaveUser={handleSaveUser}
+        userForm={userForm}
+        setUserForm={setUserForm}
+        showPassword={showPassword}
+        setShowPassword={setShowPassword}
+        showConfirmPassword={showConfirmPassword}
+        setShowConfirmPassword={setShowConfirmPassword}
+        sedesList={sedesList}
+        areasList={areasList}
+        handleSedeChange={handleSedeChange}
+        toggleRole={toggleRole}
+      />
 
       {/* MODAL: SEDE */}
-      {isSedeModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
-              <button onClick={() => setIsSedeModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleSaveSede} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre de la Sede *</label>
-                <input type="text" required placeholder="Ej. Sucursal San Jorge o Matriz Centro" value={sedeForm.nombre} onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
-              </div>
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo *</label>
-                <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
-                  <option value="">-- Seleccionar Tipo --</option>
-                  <option value="Sucursal">Sucursal</option>
-                  <option value="Matriz">Matriz / Bodega Central</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
-                    Sub-Áreas Asociadas a la Sede
-                  </label>
-                  <span className="text-[10px] text-slate-400 font-medium">
-                    {sedeForm.areas.length} {sedeForm.areas.length === 1 ? 'área asignada' : 'áreas asignadas'}
-                  </span>
-                </div>
-
-                {areasList.length === 0 ? (
-                  <div className="p-3 bg-amber-50 border border-amber-200/70 rounded-2xl text-[11px] text-amber-800 space-y-1">
-                    <p className="font-bold flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5" />
-                      No hay áreas registradas en el catálogo.
-                    </p>
-                    <p className="text-[10px] text-amber-700 leading-tight">
-                      Para asociar sub-áreas a esta sede, primero debes crearlas en la pestaña <strong>Áreas</strong>.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 mb-2">
-                    <select
-                      value={selectedAreaToAdd}
-                      onChange={(e) => setSelectedAreaToAdd(e.target.value)}
-                      className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 font-medium"
-                    >
-                      <option value="">-- Seleccionar área creada previamente --</option>
-                      {areasList
-                        .filter(a => !sedeForm.areas.includes(a.nombre))
-                        .map((a) => (
-                          <option key={a.id} value={a.nombre}>
-                            {a.nombre} {a.excluirTransferencias ? '(Excluida de transferencias)' : ''}
-                          </option>
-                        ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={!selectedAreaToAdd}
-                      onClick={() => handleAddAreaToSedeForm()}
-                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-semibold text-xs transition-all cursor-pointer shrink-0 shadow-sm"
-                    >
-                      + Asociar
-                    </button>
-                  </div>
-                )}
-
-                {/* Lista de chips de áreas asignadas */}
-                <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 min-h-[50px] flex flex-wrap items-center gap-1.5">
-                  {sedeForm.areas.length === 0 ? (
-                    <span className="text-[11px] text-slate-400 italic px-1">
-                      Sin sub-áreas asociadas. Esta sede operará como punto directo (no requerirá seleccionar área al pedir o despachar).
-                    </span>
-                  ) : (
-                    sedeForm.areas.map((ar, idx) => {
-                      const areaObj = areasList.find(a => a.nombre === ar);
-                      const isExcluded = Boolean(areaObj?.excluirTransferencias);
-                      return (
-                        <span
-                          key={idx}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium border shadow-2xs ${
-                            isExcluded
-                              ? 'bg-amber-50/80 text-amber-900 border-amber-200'
-                              : 'bg-white text-slate-800 border-slate-200'
-                          }`}
-                        >
-                          <Layers className={`w-3 h-3 ${isExcluded ? 'text-amber-500' : 'text-blue-500'}`} />
-                          <span>{ar}</span>
-                          {isExcluded && (
-                            <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 px-1.5 py-0.2 rounded">
-                              No transferible
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveAreaFromSedeForm(ar)}
-                            className="w-4 h-4 rounded-full hover:bg-red-50 hover:text-red-600 text-slate-400 flex items-center justify-center transition-colors cursor-pointer"
-                            title="Quitar área de esta sede"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </span>
-                      );
-                    })
-                  )}
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1 leading-tight">
-                  Las áreas asociadas provienen del catálogo de Áreas. Si una sede tiene sub-áreas, se requerirá seleccionarla al solicitar o despachar.
-                </p>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsSedeModalOpen(false)} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer">Cancelar</button>
-                <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
-                  {editingSede ? 'Actualizar Sede' : 'Guardar Sede'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+      <AdminSedeModal
+        isOpen={isSedeModalOpen}
+        onClose={() => setIsSedeModalOpen(false)}
+        editingSede={editingSede}
+        sedeForm={sedeForm}
+        setSedeForm={setSedeForm}
+        handleSaveSede={handleSaveSede}
+        areasList={areasList}
+        selectedAreaToAdd={selectedAreaToAdd}
+        setSelectedAreaToAdd={setSelectedAreaToAdd}
+        handleAddAreaToSedeForm={handleAddAreaToSedeForm}
+        handleRemoveAreaFromSedeForm={handleRemoveAreaFromSedeForm}
+      />
 
       {/* MODAL: ÁREA */}
-      {isAreaModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto overscroll-contain">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[90dvh] overflow-y-auto my-auto overscroll-contain">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
-              <button onClick={() => setIsAreaModalOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleSaveArea} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre del Área *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
-                  value={areaForm.nombre}
-                  onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div 
-                onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}
-                className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
-              >
-                <input
-                  type="checkbox"
-                  checked={areaForm.excluirTransferencias}
-                  onChange={(e) => setAreaForm({ ...areaForm, excluirTransferencias: e.target.checked })}
-                  className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-                />
-                <div>
-                  <span className="block text-xs font-bold text-slate-800">
-                    Excluir de transferencias y pedidos
-                  </span>
-                  <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
-                    Esta área no participará para pedir ni despachar productos (ej. Administrativo, Contabilidad, Dirección). No aparecerá como destino de transferencias ni cajas.
-                  </span>
-                </div>
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-                <button type="button" onClick={() => setIsAreaModalOpen(false)} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer">Cancelar</button>
-                <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
-                  {editingArea ? 'Actualizar' : 'Guardar Área'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+      <AdminAreaModal
+        isOpen={isAreaModalOpen}
+        onClose={() => setIsAreaModalOpen(false)}
+        editingArea={editingArea}
+        areaForm={areaForm}
+        setAreaForm={setAreaForm}
+        handleSaveArea={handleSaveArea}
+      />
 
       {/* Pop-up dialog */}
       <ModalDialog
@@ -1065,4 +845,552 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       />
     </div>
   );
+}
+
+function AdminUserModal({
+  isOpen,
+  onClose,
+  editingUser,
+  formError,
+  handleSaveUser,
+  userForm,
+  setUserForm,
+  showPassword,
+  setShowPassword,
+  showConfirmPassword,
+  setShowConfirmPassword,
+  sedesList,
+  areasList,
+  handleSedeChange,
+  toggleRole
+}) {
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender) return null;
+
+  const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+  const sedeSpecificAreas = selectedSedeObj?.areas || [];
+
+  // Áreas operativas vinculadas a esta sede (que no tengan marcada la exclusión de transferencias)
+  const operativeSedeAreas = sedeSpecificAreas.filter(sa => {
+    const aObj = areasList.find(a => a.nombre?.toLowerCase() === sa.toLowerCase());
+    return !aObj?.excluirTransferencias;
+  });
+
+  // Áreas administrativas o de gestión (marcadas como excluidas de transferencias en el catálogo de áreas)
+  const excludedAdminAreas = areasList.filter(a => a.excluirTransferencias);
+
+  const selectedAreaObj = areasList.find(a => a.nombre?.toLowerCase() === userForm.area?.toLowerCase());
+  const isSelectedAreaExcluded = Boolean(selectedAreaObj?.excluirTransferencias);
+
+  const content = (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {formError && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" /><span>{formError}</span>
+          </div>
+        )}
+        <form onSubmit={handleSaveUser} className="space-y-3.5 text-xs">
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre Completo *</label>
+            <input type="text" required placeholder="Ej. Juan Pérez" value={userForm.nombre} onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
+          </div>
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Username *</label>
+            <input type="text" required disabled={Boolean(editingUser)} placeholder="Ej. juan.patente" value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${editingUser ? 'opacity-60 cursor-not-allowed' : ''}`} />
+          </div>
+          
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">{editingUser ? 'Modificar Contraseña' : 'Contraseña *'}</label>
+            <div className="relative">
+              <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                placeholder="Mínimo 3 caracteres"
+                value={userForm.password}
+                onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Confirmar Contraseña *</label>
+            <div className="relative">
+              <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                required
+                placeholder="Repite la contraseña"
+                value={userForm.confirmPassword}
+                onChange={(e) => setUserForm({ ...userForm, confirmPassword: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Sede *</label>
+              <select
+                value={userForm.sede}
+                onChange={(e) => handleSedeChange(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
+              >
+                <option value="">-- Seleccionar Sede --</option>
+                {sedesList.map((s) => (
+                  <option key={s.id} value={s.nombre}>
+                    {s.nombre} ({s.tipo || 'Sucursal'})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                  Área
+                </label>
+                {isSelectedAreaExcluded ? (
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <Shield className="w-2.5 h-2.5" />
+                    Excluida de transferencias
+                  </span>
+                ) : userForm.area ? (
+                  <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                    Operativa
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 font-bold bg-slate-100 px-2 py-0.5 rounded-full">
+                    Sin área
+                  </span>
+                )}
+              </div>
+
+              <select
+                value={userForm.area}
+                disabled={!userForm.sede}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const areaObj = areasList.find(item => item.nombre?.toLowerCase() === val.toLowerCase());
+                  const isAreaExcluded = Boolean(areaObj?.excluirTransferencias);
+                  setUserForm(prev => ({
+                    ...prev,
+                    area: val,
+                    excluirDestinatario: isAreaExcluded ? true : prev.excluirDestinatario
+                  }));
+                }}
+                className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 font-medium ${
+                  !userForm.sede ? 'opacity-60 cursor-not-allowed' : ''
+                }`}
+              >
+                {!userForm.sede ? (
+                  <option value="">-- Primero selecciona una sede --</option>
+                ) : (
+                  <>
+                    <option value="">-- Sin sub-área / General de la sede --</option>
+
+                    {operativeSedeAreas.length > 0 && (
+                      <optgroup label={`Áreas operativas de ${userForm.sede}`}>
+                        {operativeSedeAreas.map((a, idx) => (
+                          <option key={`op-${idx}`} value={a}>
+                            {a}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {excludedAdminAreas.length > 0 && (
+                      <optgroup label="Áreas administrativas (Excluidas de transferencias)">
+                        {excludedAdminAreas.map((a) => (
+                          <option key={`adm-${a.id || a.nombre}`} value={a.nombre}>
+                            {a.nombre} (Administrativa)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {userForm.area &&
+                      !operativeSedeAreas.some(a => a.toLowerCase() === userForm.area.toLowerCase()) &&
+                      !excludedAdminAreas.some(a => a.nombre?.toLowerCase() === userForm.area.toLowerCase()) && (
+                        <option value={userForm.area}>
+                          {userForm.area} (Asignada actualmente)
+                        </option>
+                    )}
+                  </>
+                )}
+              </select>
+
+              {isSelectedAreaExcluded ? (
+                <p className="text-[10px] text-amber-700 bg-amber-50/80 border border-amber-200/60 rounded-xl px-2.5 py-1.5 mt-1.5 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>Área administrativa: No participará en solicitudes ni despachos de medicamentos, pero podrá gestionar usuarios o material según sus roles.</span>
+                </p>
+              ) : (
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {!userForm.sede
+                    ? 'Primero selecciona una sede para habilitar la selección de área.'
+                    : operativeSedeAreas.length === 0
+                    ? `La sede "${userForm.sede}" no tiene áreas operativas vinculadas. Puedes asignarle un área administrativa o dejarlo sin sub-área.`
+                    : `Áreas operativas de ${userForm.sede} y áreas administrativas disponibles.`}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div onClick={() => toggleRole('solicitar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('solicitar') ? 'bg-blue-50/70 border-blue-400 text-blue-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                <div>
+                  <span className="font-semibold text-xs block">Solicitar Pedido</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Generar y recibir pedidos</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('solicitar') ? 'bg-blue-600 text-white' : 'border border-slate-300'}`}>
+                  {userForm.roles.includes('solicitar') && <Check className="w-3 h-3 stroke-[3]" />}
+                </div>
+              </div>
+
+              <div onClick={() => toggleRole('despachar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('despachar') ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                <div>
+                  <span className="font-semibold text-xs block">Despachar Pedido</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Surtir transferencias</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('despachar') ? 'bg-emerald-600 text-white' : 'border border-slate-300'}`}>
+                  {userForm.roles.includes('despachar') && <Check className="w-3 h-3 stroke-[3]" />}
+                </div>
+              </div>
+
+              <div onClick={() => toggleRole('material')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('material') ? 'bg-amber-50/70 border-amber-400 text-amber-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                <div>
+                  <span className="font-semibold text-xs block">Material Brindado</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Control de insumos y alertas</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('material') ? 'bg-amber-600 text-white' : 'border border-slate-300'}`}>
+                  {userForm.roles.includes('material') && <Check className="w-3 h-3 stroke-[3]" />}
+                </div>
+              </div>
+
+              <div onClick={() => toggleRole('admin')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('admin') ? 'bg-purple-50/70 border-purple-400 text-purple-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+                <div>
+                  <span className="font-semibold text-xs block">Usuarios, Sedes y Áreas</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Gestión de cuentas y organización</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('admin') ? 'bg-purple-600 text-white' : 'border border-slate-300'}`}>
+                  {userForm.roles.includes('admin') && <Check className="w-3 h-3 stroke-[3]" />}
+                </div>
+              </div>
+
+              <div onClick={() => toggleRole('catalogo')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('catalogo') ? 'bg-sky-50/70 border-sky-400 text-sky-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'} sm:col-span-2`}>
+                <div>
+                  <span className="font-semibold text-xs block">Sincronizar Catálogo Central</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Sincronización y consulta del catálogo base de medicamentos</span>
+                </div>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('catalogo') ? 'bg-sky-600 text-white' : 'border border-slate-300'}`}>
+                  {userForm.roles.includes('catalogo') && <Check className="w-3 h-3 stroke-[3]" />}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div 
+            onClick={() => setUserForm({ ...userForm, excluirDestinatario: !userForm.excluirDestinatario })}
+            className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
+          >
+            <input
+              type="checkbox"
+              checked={userForm.excluirDestinatario}
+              onChange={(e) => setUserForm({ ...userForm, excluirDestinatario: e.target.checked })}
+              className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+            />
+            <div>
+              <span className="block text-xs font-bold text-slate-800">Excluir como destinatario</span>
+              <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
+                No aparecerá en la lista de opciones para recibir solicitudes de transferencias.
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+            <button type="button" onClick={handleClose} className="px-4 py-2.5 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
+            <button type="submit" className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
+              {editingUser ? 'Guardar Cambios' : 'Registrar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
+}
+
+function AdminSedeModal({
+  isOpen,
+  onClose,
+  editingSede,
+  sedeForm,
+  setSedeForm,
+  handleSaveSede,
+  areasList,
+  selectedAreaToAdd,
+  setSelectedAreaToAdd,
+  handleAddAreaToSedeForm,
+  handleRemoveAreaFromSedeForm
+}) {
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender) return null;
+
+  const content = (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
+          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={handleSaveSede} className="space-y-3.5 text-xs">
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre de la Sede *</label>
+            <input type="text" required placeholder="Ej. Sucursal San Jorge o Matriz Centro" value={sedeForm.nombre} onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
+          </div>
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo *</label>
+            <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
+              <option value="">-- Seleccionar Tipo --</option>
+              <option value="Sucursal">Sucursal</option>
+              <option value="Matriz">Matriz / Bodega Central</option>
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                Sub-Áreas Asociadas a la Sede
+              </label>
+              <span className="text-[10px] text-slate-400 font-medium">
+                {sedeForm.areas.length} {sedeForm.areas.length === 1 ? 'área asignada' : 'áreas asignadas'}
+              </span>
+            </div>
+
+            {areasList.length === 0 ? (
+              <div className="p-3 bg-amber-50 border border-amber-200/70 rounded-2xl text-[11px] text-amber-800 space-y-1">
+                <p className="font-bold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  No hay áreas registradas en el catálogo.
+                </p>
+                <p className="text-[10px] text-amber-700 leading-tight">
+                  Para asociar sub-áreas a esta sede, primero debes crearlas en la pestaña <strong>Áreas</strong>.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 mb-2">
+                <select
+                  value={selectedAreaToAdd}
+                  onChange={(e) => setSelectedAreaToAdd(e.target.value)}
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 font-medium"
+                >
+                  <option value="">-- Seleccionar área creada previamente --</option>
+                  {areasList
+                    .filter(a => !sedeForm.areas.includes(a.nombre))
+                    .map((a) => (
+                      <option key={a.id} value={a.nombre}>
+                        {a.nombre} {a.excluirTransferencias ? '(Excluida de transferencias)' : ''}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!selectedAreaToAdd}
+                  onClick={() => handleAddAreaToSedeForm()}
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-semibold text-xs transition-all cursor-pointer shrink-0 shadow-sm"
+                >
+                  + Asociar
+                </button>
+              </div>
+            )}
+
+            {/* Lista de chips de áreas asignadas */}
+            <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 min-h-[50px] flex flex-wrap items-center gap-1.5">
+              {sedeForm.areas.length === 0 ? (
+                <span className="text-[11px] text-slate-400 italic px-1">
+                  Sin sub-áreas asociadas. Esta sede operará como punto directo (no requerirá seleccionar área al pedir o despachar).
+                </span>
+              ) : (
+                sedeForm.areas.map((ar, idx) => {
+                  const areaObj = areasList.find(a => a.nombre === ar);
+                  const isExcluded = Boolean(areaObj?.excluirTransferencias);
+                  return (
+                    <span
+                      key={idx}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-medium border shadow-2xs ${
+                        isExcluded
+                          ? 'bg-amber-50/80 text-amber-900 border-amber-200'
+                          : 'bg-white text-slate-800 border-slate-200'
+                      }`}
+                    >
+                      <Layers className={`w-3 h-3 ${isExcluded ? 'text-amber-500' : 'text-blue-500'}`} />
+                      <span>{ar}</span>
+                      {isExcluded && (
+                        <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 px-1.5 py-0.2 rounded">
+                          No transferible
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAreaFromSedeForm(ar)}
+                        className="w-4 h-4 rounded-full hover:bg-red-50 hover:text-red-600 text-slate-400 flex items-center justify-center transition-colors cursor-pointer"
+                        title="Quitar área de esta sede"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+              Las áreas asociadas provienen del catálogo de Áreas. Si una sede tiene sub-áreas, se requerirá seleccionarla al solicitar o despachar.
+            </p>
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
+            <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
+              {editingSede ? 'Actualizar Sede' : 'Guardar Sede'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
+}
+
+function AdminAreaModal({
+  isOpen,
+  onClose,
+  editingArea,
+  areaForm,
+  setAreaForm,
+  handleSaveArea
+}) {
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender) return null;
+
+  const content = (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
+          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={handleSaveArea} className="space-y-3.5 text-xs">
+          <div>
+            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre del Área *</label>
+            <input
+              type="text"
+              required
+              placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
+              value={areaForm.nombre}
+              onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
+              className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div 
+            onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}
+            className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
+          >
+            <input
+              type="checkbox"
+              checked={areaForm.excluirTransferencias}
+              onChange={(e) => setAreaForm({ ...areaForm, excluirTransferencias: e.target.checked })}
+              className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+            />
+            <div>
+              <span className="block text-xs font-bold text-slate-800">
+                Excluir de transferencias y pedidos
+              </span>
+              <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
+                Esta área no participará para pedir ni despachar productos (ej. Administrativo, Contabilidad, Dirección). No aparecerá como destino de transferencias ni cajas.
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
+            <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
+              {editingArea ? 'Actualizar' : 'Guardar Área'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

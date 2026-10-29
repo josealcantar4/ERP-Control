@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SendHorizontal, Boxes, ChevronRight, PackageOpen, Database, ClipboardCheck } from 'lucide-react';
-import { transferService } from '../modules/transferencias/transferService';
+import { transferService, canUserReceive, canUserDispatch } from '../modules/transferencias';
 import { materialService } from '../modules/material/materialService';
 
 export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
@@ -8,10 +8,9 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   const [materiales, setMateriales] = useState(() => materialService.getLocalMateriales());
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
   const hasDespachar = currentUser?.roles?.includes('despachar');
-  const userArea = (currentUser?.area || '').toLowerCase();
-  const isAdmin = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
-  const isAreaAdmin = userArea.includes('administra');
-  const hasMaterial = currentUser?.roles?.includes('material') || isAdmin || isAreaAdmin;
+  const isRootAdmin = currentUser?.username?.toLowerCase() === 'administrador';
+  const hasMaterial = currentUser?.roles?.includes('material') || isRootAdmin;
+  const hasCatalog = currentUser?.roles?.includes('catalogo') || isRootAdmin;
 
   useEffect(() => {
     const unsub = transferService.subscribeSolicitudes((list) => {
@@ -29,28 +28,12 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   // Notificaciones de reemplazo de material
   const pendingMaterialAlerts = materialService.calculateNotifications(materiales).length;
 
-  // Conteos en vivo
-  const entrantesCount = solicitudes.filter(
-    s => (s.estado === 'completada' || s.estado === 'faltantes_despachados') && s.usuarioSolicitante === currentUser?.username
+  // Conteos en vivo filtrados por sede y área
+  const entrantesCount = solicitudes.filter(s => canUserReceive(s, currentUser)).length;
+
+  const pendientesDespachoCount = solicitudes.filter(
+    s => (s.estado === 'enviada' || s.estado === 'en_despacho') && canUserDispatch(s, currentUser)
   ).length;
-
-  const isAdminOrNoRestrictions =
-    currentUser?.username?.toLowerCase() === 'administrador' ||
-    currentUser?.roles?.includes('admin');
-
-  const pendientesDespachoCount = solicitudes.filter(s => {
-    if (s.estado !== 'enviada' && s.estado !== 'en_despacho') return false;
-    if (isAdminOrNoRestrictions) return true;
-    const userArea = (currentUser?.area || '').toLowerCase();
-    const areaDest = (s.areaDestino || '').toLowerCase();
-    if (userArea.includes('patente')) {
-      return areaDest.includes('patente') || s.usuarioDestino === currentUser?.username;
-    }
-    if (userArea.includes('generic') || userArea.includes('genéric')) {
-      return (areaDest.includes('generic') || areaDest.includes('genéric')) || s.usuarioDestino === currentUser?.username;
-    }
-    return true;
-  }).length;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pt-2 pb-16 animate-fade-in select-none">
@@ -67,7 +50,7 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
         </p>
       </div>
 
-      <div className={`grid gap-4 ${hasSolicitar && hasDespachar ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+      <div className={`grid gap-4 ${hasSolicitar || hasDespachar || hasMaterial || hasCatalog ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
         
         {/* CARD 1: SOLICITAR PEDIDO */}
         {hasSolicitar && (
@@ -151,8 +134,9 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
           </div>
         )}
 
-        {/* CARD 3: ADMIN */}
-        {isAdmin && (
+
+        {/* CARD: SINCRONIZAR CATÁLOGO CENTRAL */}
+        {hasCatalog && (
           <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[160px] active:scale-[0.985] sm:col-span-2 ios-card-hover">
              <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">

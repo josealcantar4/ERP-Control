@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { formatTransferFolio } from '../transferencias';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function DespacharFaltantesModal({
   isOpen,
@@ -23,16 +23,23 @@ export function DespacharFaltantesModal({
   onConfirmResolution,
   isProcessing = false
 }) {
-  useBodyScrollLock(isOpen);
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen: Boolean(isOpen && solicitud),
+    onClose
+  });
+
+  const lastSolicitudRef = useRef(solicitud);
+  if (solicitud) lastSolicitudRef.current = solicitud;
+  const currentSolicitud = solicitud || lastSolicitudRef.current;
 
   const [itemsState, setItemsState] = useState([]);
   const [folioEnvioDigits, setFolioEnvioDigits] = useState('');
   const [notas, setNotas] = useState('');
 
   useEffect(() => {
-    if (solicitud && solicitud.reporteFaltantes) {
+    if (currentSolicitud && currentSolicitud.reporteFaltantes) {
       // Inicializar cada ítem faltante: por defecto marcado para despachar con la cantidad reportada
-      const initial = solicitud.reporteFaltantes.map((f, idx) => ({
+      const initial = currentSolicitud.reporteFaltantes.map((f, idx) => ({
         index: idx,
         codigo: f.codigo || '',
         descripcion: f.descripcion || '',
@@ -43,13 +50,13 @@ export function DespacharFaltantesModal({
       }));
       setItemsState(initial);
 
-      const existingDigits = solicitud.folio ? String(solicitud.folio).replace(/^TR/i, '') : '';
+      const existingDigits = currentSolicitud.folio ? String(currentSolicitud.folio).replace(/^TR/i, '') : '';
       setFolioEnvioDigits(existingDigits);
       setNotas('');
     }
-  }, [solicitud]);
+  }, [currentSolicitud]);
 
-  if (!isOpen || !solicitud) return null;
+  if (!shouldRender || !currentSolicitud) return null;
 
   const toggleItemDespachado = (idx, despachado) => {
     setItemsState(prev =>
@@ -74,7 +81,7 @@ export function DespacharFaltantesModal({
   const totalItemsToDispatch = itemsState.filter(i => i.despachado).length;
 
   const handleConfirm = () => {
-    const fullFolio = folioEnvioDigits.trim() ? `TR${folioEnvioDigits.trim()}` : solicitud.folio || '';
+    const fullFolio = folioEnvioDigits.trim() ? `TR${folioEnvioDigits.trim()}` : currentSolicitud.folio || '';
 
     const payload = {
       folioEnvio: fullFolio,
@@ -93,8 +100,17 @@ export function DespacharFaltantesModal({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-5 bg-slate-900/60 backdrop-blur-md animate-fade-in select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 flex flex-col my-0 sm:my-auto max-h-[100dvh] sm:max-h-[92dvh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 overscroll-contain pb-[env(safe-area-inset-bottom)] sm:pb-0">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isProcessing) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
+      >
 
         {/* HEADER */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between gap-3 bg-slate-50/70 shrink-0">
@@ -108,15 +124,16 @@ export function DespacharFaltantesModal({
               </h3>
             </div>
             <p className="text-xs text-slate-500">
-              Sucursal: <strong className="text-slate-800">{solicitud.sucursalOrigen}</strong> &bull; Folio:{' '}
+              Sucursal: <strong className="text-slate-800">{currentSolicitud.sucursalOrigen}</strong> &bull; Folio:{' '}
               <span className="font-mono font-bold text-blue-700">
-                {solicitud.folio || formatTransferFolio(solicitud)}
+                {currentSolicitud.folio || formatTransferFolio(currentSolicitud)}
               </span>
             </p>
           </div>
 
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             disabled={isProcessing}
             className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
           >
@@ -269,7 +286,7 @@ export function DespacharFaltantesModal({
         <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             disabled={isProcessing}
             className="px-4 py-2.5 rounded-2xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
           >

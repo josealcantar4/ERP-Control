@@ -150,22 +150,22 @@ body {
 @keyframes popoverEnterFromIcon {
   0% {
     opacity: 0;
-    transform: translateY(-12px) scale(0.9);
+    transform: translateY(-10px) scale(0.95);
   }
   100% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: none;
   }
 }
 
 @keyframes popoverExitToIcon {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: none;
   }
   100% {
     opacity: 0;
-    transform: translateY(-12px) scale(0.9);
+    transform: translateY(-10px) scale(0.95);
   }
 }
 
@@ -188,13 +188,16 @@ body {
 }
 
 .animate-popover-enter {
-  animation: popoverEnterFromIcon 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity;
+  animation: popoverEnterFromIcon 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .animate-popover-exit {
-  animation: popoverExitToIcon 0.18s cubic-bezier(0.32, 0, 0.67, 0) forwards;
-  will-change: transform, opacity;
+  animation: popoverExitToIcon 0.16s cubic-bezier(0.32, 0, 0.67, 0) forwards;
+  pointer-events: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .animate-backdrop-enter {
@@ -203,6 +206,47 @@ body {
 
 .animate-backdrop-exit {
   animation: backdropFadeOut 0.18s ease-in forwards;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   ANIMACIONES FLUIDAS DE MODALES (EXPANSIÓN DESDE EL BOTÓN / RETRACCIÓN AL CERRAR)
+   Inspiradas en las transiciones de apertura/cierre de iOS / iPadOS
+   Garantizan nitidez absoluta (sin fuentes borrosas) y salida sin saltos
+   ========================================================================== */
+@keyframes modalZoomInFromOrigin {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes modalZoomOutToOrigin {
+  0% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+.animate-modal-enter {
+  animation: modalZoomInFromOrigin 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.animate-modal-exit {
+  animation: modalZoomOutToOrigin 0.18s cubic-bezier(0.32, 0, 0.67, 0) forwards;
+  pointer-events: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ==========================================================================

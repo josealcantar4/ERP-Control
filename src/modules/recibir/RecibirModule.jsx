@@ -1,28 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X } from 'lucide-react';
-import { transferService, formatTransferFolio } from '../transferencias';
+import { transferService, formatTransferFolio, canUserReceive } from '../transferencias';
 import { transitionView } from '../../shared';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
-    return list.filter(
-      s =>
-        (s.estado === 'completada' || s.estado === 'faltantes_despachados') &&
-        (s.usuarioSolicitante === currentUser?.username ||
-         (currentUser?.sede && s.sucursalOrigen?.toLowerCase() === currentUser?.sede?.toLowerCase()))
-    );
+    return list.filter(s => canUserReceive(s, currentUser));
   });
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({});
   const [checkedNewFaltantes, setCheckedNewFaltantes] = useState({});
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [confirmIncomplete, setConfirmIncomplete] = useState(false);
-
-  // Bloquear scroll de fondo cuando el modal de reporte de faltantes esté abierto
-  useBodyScrollLock(isReportModalOpen);
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
     return list.length === 0;
@@ -30,33 +22,8 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      // Mostrar pedidos despachados inicialmente y re-despachos de faltantes
-      const validos = list.filter((s) => {
-        if (s.estado !== 'completada' && s.estado !== 'faltantes_despachados') {
-          return false;
-        }
-
-        const isAdmin =
-          currentUser?.username?.toLowerCase() === 'administrador' ||
-          currentUser?.roles?.includes('admin');
-        if (isAdmin) return true;
-
-        if (s.usuarioSolicitante === currentUser?.username) return true;
-
-        const userSede = (currentUser?.sede || '').toLowerCase();
-        const userArea = (currentUser?.area || '').toLowerCase();
-        const solSede = (s.sucursalOrigen || '').toLowerCase();
-        const solArea = (s.areaOrigen || '').toLowerCase();
-
-        if (!userSede || solSede !== userSede) return false;
-
-        // Si la sede tiene sub-áreas y el pedido especificó áreaOrigen
-        if (userArea && userArea !== 'externo' && solArea) {
-          return solArea === userArea;
-        }
-
-        return true;
-      });
+      // Mostrar pedidos despachados inicialmente y re-despachos de faltantes según sede y área receptora
+      const validos = list.filter((s) => canUserReceive(s, currentUser));
       setSolicitudes(validos);
       setIsLoadingOrders(false);
 
@@ -427,46 +394,106 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       )}
 
       {/* MODAL INLINE: REPORTE DE FALTANTES */}
-      {isReportModalOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md animate-fade-in overflow-y-auto overscroll-contain">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-5 animate-scale-in my-auto max-h-[90vh] overflow-y-auto overscroll-contain">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Aviso: Revisión Incompleta</h3>
-                <p className="text-xs text-slate-500 mt-1">No has seleccionado todos los elementos. Faltan productos físicos en la caja.</p>
-              </div>
-            </div>
-
-            <label className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl cursor-pointer">
-              <input type="checkbox" checked={confirmIncomplete} onChange={(e) => setConfirmIncomplete(e.target.checked)} className="mt-0.5 w-4 h-4 text-red-600 rounded" />
-              <span className="text-xs font-bold text-red-900">No he recibido el pedido completo y quiero reportar faltantes a Matriz.</span>
-            </label>
-
-            {confirmIncomplete && (
-              <div className="max-h-40 overflow-y-auto border-t border-slate-100 pt-3 text-xs">
-                <span className="font-bold text-slate-700 block mb-2">Se reportará lo siguiente:</span>
-                <ul className="space-y-1 text-slate-600">
-                  {selectedOrder.items.filter((_, i) => !checkedItems[i]).map((it, idx) => (
-                    <li key={idx} className="flex justify-between border-b border-slate-50 pb-1">
-                      <span className="truncate">{it.descripcion}</span>
-                      <strong className="font-mono">{it.cantidadDespachada}pz</strong>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="pt-2 flex gap-2 justify-end">
-              <button onClick={() => setIsReportModalOpen(false)} className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-semibold rounded-2xl cursor-pointer transition-colors hover:bg-slate-200">Cancelar</button>
-              <button disabled={!confirmIncomplete} onClick={sendReport} className={`px-4 py-2.5 text-white text-xs font-bold rounded-2xl transition-all cursor-pointer ${confirmIncomplete ? 'bg-red-600 hover:bg-red-500' : 'bg-red-300'}`}>Enviar Reporte</button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <ReportIncompleteModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        confirmIncomplete={confirmIncomplete}
+        setConfirmIncomplete={setConfirmIncomplete}
+        selectedOrder={selectedOrder}
+        checkedItems={checkedItems}
+        sendReport={sendReport}
+      />
     </div>
   );
+}
+
+function ReportIncompleteModal({
+  isOpen,
+  onClose,
+  confirmIncomplete,
+  setConfirmIncomplete,
+  selectedOrder,
+  checkedItems,
+  sendReport
+}) {
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender || !selectedOrder) return null;
+
+  const content = (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-5 my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[90vh] overflow-y-auto overscroll-contain ${cardClass}`}
+      >
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-slate-900">Aviso: Revisión Incompleta</h3>
+            <p className="text-xs text-slate-500 mt-1">No has seleccionado todos los elementos. Faltan productos físicos en la caja.</p>
+          </div>
+        </div>
+
+        <label className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl cursor-pointer">
+          <input
+            type="checkbox"
+            checked={confirmIncomplete}
+            onChange={(e) => setConfirmIncomplete(e.target.checked)}
+            className="mt-0.5 w-4 h-4 text-red-600 rounded"
+          />
+          <span className="text-xs font-bold text-red-900">No he recibido el pedido completo y quiero reportar faltantes a Matriz.</span>
+        </label>
+
+        {confirmIncomplete && (
+          <div className="max-h-40 overflow-y-auto border-t border-slate-100 pt-3 text-xs">
+            <span className="font-bold text-slate-700 block mb-2">Se reportará lo siguiente:</span>
+            <ul className="space-y-1 text-slate-600">
+              {selectedOrder.items.filter((_, i) => !checkedItems[i]).map((it, idx) => (
+                <li key={idx} className="flex justify-between border-b border-slate-50 pb-1">
+                  <span className="truncate">{it.descripcion}</span>
+                  <strong className="font-mono">{it.cantidadDespachada}pz</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="pt-2 flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-semibold rounded-2xl cursor-pointer transition-colors hover:bg-slate-200"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={!confirmIncomplete}
+            onClick={() => {
+              handleClose();
+              sendReport();
+            }}
+            className={`px-4 py-2.5 text-white text-xs font-bold rounded-2xl transition-all cursor-pointer ${
+              confirmIncomplete ? 'bg-red-600 hover:bg-red-500 active:scale-95' : 'bg-red-300'
+            }`}
+          >
+            Enviar Reporte
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

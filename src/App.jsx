@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { userService, organizationService, AdminUsersModule, LoginScreen } from './modules/usuarios';
 import { catalogService, CatalogUploadModule, CatalogSyncModal } from './modules/catalogo';
-import { transferService } from './modules/transferencias';
+import { transferService, TransferDetailModal, dismissNotification } from './modules/transferencias';
 import { SolicitarModule } from './modules/solicitar';
 import { DespacharModule } from './modules/despachar';
 import { RecibirModule } from './modules/recibir';
@@ -34,8 +34,22 @@ export default function App() {
 
   // Estado del modal y alertas de notificaciones
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const isNotificationsOpenRef = useRef(false);
+  useEffect(() => {
+    isNotificationsOpenRef.current = isNotificationsOpen;
+  }, [isNotificationsOpen]);
   const [materialNotifications, setMaterialNotifications] = useState([]);
   const [transferNotifications, setTransferNotifications] = useState([]);
+  const [notificationDetailTransfer, setNotificationDetailTransfer] = useState(null);
+
+  const handleViewTransferDetail = useCallback((solicitud, notifId) => {
+    setIsNotificationsOpen(false);
+    if (notifId) {
+      dismissNotification(notifId);
+      setTransferNotifications(prev => prev.filter(n => n.id !== notifId));
+    }
+    setNotificationDetailTransfer(solicitud);
+  }, []);
 
   // Notificaciones unificadas en tiempo real (Transferencias + Material)
   const notificationsList = React.useMemo(() => {
@@ -242,6 +256,7 @@ export default function App() {
         if (savedUser.roles[0] === 'solicitar') targetScreen = 'solicitar';
         else if (savedUser.roles[0] === 'despachar') targetScreen = 'despachar';
         else if (savedUser.roles[0] === 'material') targetScreen = 'material';
+        else if (savedUser.roles[0] === 'admin') targetScreen = 'admin';
       }
 
       setCurrentScreen(targetScreen);
@@ -256,6 +271,16 @@ export default function App() {
     setIsLoading(false);
   }, [performScreenRefresh]);
 
+  useEffect(() => {
+    const handleUserUpdated = (e) => {
+      if (e.detail) {
+        setCurrentUser(e.detail);
+      }
+    };
+    window.addEventListener('erp_current_user_updated', handleUserUpdated);
+    return () => window.removeEventListener('erp_current_user_updated', handleUserUpdated);
+  }, []);
+
   const handleLoginSuccess = (user) => {
     transitionView(() => {
       setCurrentUser(user);
@@ -264,6 +289,7 @@ export default function App() {
         if (user.roles[0] === 'solicitar') targetScreen = 'solicitar';
         else if (user.roles[0] === 'despachar') targetScreen = 'despachar';
         else if (user.roles[0] === 'material') targetScreen = 'material';
+        else if (user.roles[0] === 'admin') targetScreen = 'admin';
       }
       setCurrentScreen(targetScreen);
       localStorage.setItem('currentScreen', targetScreen);
@@ -337,6 +363,11 @@ export default function App() {
         notificationCount={notificationsList.length}
         isNotificationsOpen={isNotificationsOpen}
         onOpenNotifications={() => {
+          if (isNotificationsOpenRef.current) {
+            setIsNotificationsOpen(false);
+            return;
+          }
+
           transferService.unlockAudioEngine();
           if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission();
@@ -350,7 +381,7 @@ export default function App() {
             const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial);
             setMaterialNotifications(freshMaterialNotifs);
           }
-          setIsNotificationsOpen(prev => !prev);
+          setIsNotificationsOpen(true);
         }}
       />
 
@@ -380,6 +411,14 @@ export default function App() {
           }
           navigateTo(screen);
         }}
+        onViewTransferDetail={handleViewTransferDetail}
+      />
+
+      {/* Modal de Detalle de Transferencia consultado desde Notificaciones */}
+      <TransferDetailModal
+        isOpen={Boolean(notificationDetailTransfer)}
+        solicitud={notificationDetailTransfer}
+        onClose={() => setNotificationDetailTransfer(null)}
       />
 
       {/* Indicador de actualización de pantalla discreto estilo iOS (sin opacar el fondo) */}
@@ -430,7 +469,10 @@ export default function App() {
             />
           )}
           {currentScreen === 'upload-catalog' && (
-            <CatalogUploadModule onBack={() => navigateTo('dashboard')} />
+            <CatalogUploadModule
+              currentUser={currentUser}
+              onBack={() => navigateTo('dashboard')}
+            />
           )}
         </div>
       </main>

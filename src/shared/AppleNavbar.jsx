@@ -13,10 +13,10 @@ export function AppleNavbar({
   isNotificationsOpen = false
 }) {
   const { isOnline } = useOnlineStatus();
-  const isAdmin = currentUser?.username?.toLowerCase() === 'administrador';
+  const isAdmin = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
 
   return (
-    <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 transition-colors vt-navbar">
+    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/80 transition-colors vt-navbar">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         
         {/* Brand & Sede */}
@@ -70,7 +70,8 @@ export function AppleNavbar({
                   ? 'bg-purple-600 text-white shadow-sm'
                   : 'bg-slate-100 hover:bg-purple-50 text-slate-600 hover:text-purple-700'
               }`}
-              title="Gestión de Usuarios y Sedes"
+              title="Gestión de Usuarios, Sedes y Áreas"
+              aria-label="Gestión de Usuarios, Sedes y Áreas"
             >
               <Users className="w-4 h-4" />
             </button>

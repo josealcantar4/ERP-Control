@@ -16,7 +16,6 @@ import {
 import {
   playNotificationSound,
   unlockAudioEngine,
-  TransferDetailModal,
   dismissNotification
 } from '../modules/transferencias';
 
@@ -27,7 +26,8 @@ export function NotificationsModal({
   onMarkAsReplaced,
   onNavigateToMaterial,
   onNavigateToScreen,
-  onDismissNotification
+  onDismissNotification,
+  onViewTransferDetail
 }) {
   const [filterTab, setFilterTab] = useState('todas'); // 'todas' | 'pedidos' | 'material'
   const [shouldRender, setShouldRender] = useState(isOpen);
@@ -40,8 +40,6 @@ export function NotificationsModal({
     arrowLeft: 340
   }));
 
-  const [detailModalSolicitud, setDetailModalSolicitud] = useState(null);
-  const [viewingNotifId, setViewingNotifId] = useState(null);
   const [localDismissedIds, setLocalDismissedIds] = useState(new Set());
 
   const handleDismiss = (notifId, e) => {
@@ -49,14 +47,6 @@ export function NotificationsModal({
     dismissNotification(notifId);
     setLocalDismissedIds(prev => new Set(prev).add(notifId));
     if (onDismissNotification) onDismissNotification(notifId);
-  };
-
-  const handleCloseDetailModal = () => {
-    if (viewingNotifId) {
-      handleDismiss(viewingNotifId);
-      setViewingNotifId(null);
-    }
-    setDetailModalSolicitud(null);
   };
 
   const [permissionState, setPermissionState] = useState(() => {
@@ -152,8 +142,10 @@ export function NotificationsModal({
       const box = document.getElementById('notification-messagebox-card');
       const bell = document.getElementById('navbar-notification-bell-btn');
 
-      if (box && box.contains(e.target)) return;
-      if (bell && bell.contains(e.target)) return;
+      if (box && (box === e.target || box.contains(e.target))) return;
+      if (bell && (bell === e.target || bell.contains(e.target) || (e.target.closest && e.target.closest('#navbar-notification-bell-btn')))) {
+        return;
+      }
 
       onClose();
     };
@@ -209,7 +201,7 @@ export function NotificationsModal({
         id="notification-messagebox-card"
         role="dialog"
         aria-label="Panel de Notificaciones"
-        className={`fixed z-50 bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl shadow-slate-900/20 border border-slate-200/90 flex flex-col max-h-[82vh] sm:max-h-[520px] select-none overscroll-contain ${
+        className={`fixed z-[60] bg-white rounded-3xl shadow-2xl shadow-slate-900/20 border border-slate-200 flex flex-col max-h-[82vh] sm:max-h-[520px] overscroll-contain ${
           isClosing
             ? 'animate-popover-exit pointer-events-none'
             : 'animate-popover-enter'
@@ -223,7 +215,7 @@ export function NotificationsModal({
       >
         {/* EL PICO (Carett / Flecha indicadora apuntando directamente a la campana) */}
         <div
-          className="absolute -top-[7px] w-3.5 h-3.5 bg-white border-t border-l border-slate-200/90 z-20 pointer-events-none"
+          className="absolute -top-[7px] w-3.5 h-3.5 bg-white border-t border-l border-slate-200 z-20 pointer-events-none"
           style={{
             left: `${coords.arrowLeft}px`,
             transform: 'translateX(-50%) rotate(45deg)'
@@ -377,10 +369,21 @@ export function NotificationsModal({
                   <Truck className="w-3.5 h-3.5 text-indigo-600" />
                 );
 
+                const handleTransferAction = () => {
+                  if (notif.tipo === 'faltantes_entregados' && notif.solicitud) {
+                    if (onViewTransferDetail) {
+                      onViewTransferDetail(notif.solicitud, notif.id);
+                    }
+                  } else if (onNavigateToScreen && notif.actionScreen) {
+                    onNavigateToScreen(notif.actionScreen, notif.solicitudId);
+                  }
+                };
+
                 return (
                   <div
                     key={notif.id}
-                    className={`p-3 rounded-2xl border transition-all space-y-2 ${cardBorder}`}
+                    onClick={handleTransferAction}
+                    className={`p-3 rounded-2xl border transition-all space-y-2 cursor-pointer active:scale-[0.99] hover:shadow-xs group ${cardBorder}`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -398,7 +401,10 @@ export function NotificationsModal({
                         </span>
                         <button
                           type="button"
-                          onClick={(e) => handleDismiss(notif.id, e)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDismiss(notif.id, e);
+                          }}
                           className="w-5 h-5 rounded-full hover:bg-slate-200/70 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
                           title="Descartar aviso"
                         >
@@ -420,18 +426,14 @@ export function NotificationsModal({
                       {notif.actionScreen && (
                         <button
                           type="button"
-                          onClick={() => {
-                            if (notif.tipo === 'faltantes_entregados' && notif.solicitud) {
-                              setDetailModalSolicitud(notif.solicitud);
-                              setViewingNotifId(notif.id);
-                            } else if (onNavigateToScreen) {
-                              onNavigateToScreen(notif.actionScreen, notif.solicitudId);
-                            }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTransferAction();
                           }}
-                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs group-hover:bg-blue-600"
                         >
                           <span>{notif.actionText}</span>
-                          <ArrowRight className="w-3 h-3" />
+                          <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                         </button>
                       )}
                     </div>
@@ -443,10 +445,18 @@ export function NotificationsModal({
               const isOverdue = notif.tipo === 'vencida';
               const it = notif.item;
 
+              const handleMaterialAction = () => {
+                if (onNavigateToMaterial) {
+                  onClose();
+                  onNavigateToMaterial();
+                }
+              };
+
               return (
                 <div
                   key={notif.id}
-                  className={`p-3 rounded-2xl border transition-all space-y-2 ${
+                  onClick={handleMaterialAction}
+                  className={`p-3 rounded-2xl border transition-all space-y-2 cursor-pointer active:scale-[0.99] hover:shadow-xs group ${
                     isOverdue
                       ? 'bg-red-50/50 border-red-200/80 hover:border-red-300'
                       : 'bg-amber-50/40 border-amber-200/80 hover:border-amber-300'
@@ -478,7 +488,10 @@ export function NotificationsModal({
                       </span>
                       <button
                         type="button"
-                        onClick={(e) => handleDismiss(notif.id, e)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDismiss(notif.id, e);
+                        }}
                         className="w-5 h-5 rounded-full hover:bg-slate-200/70 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
                         title="Descartar aviso"
                       >
@@ -518,7 +531,10 @@ export function NotificationsModal({
                     {onMarkAsReplaced && (
                       <button
                         type="button"
-                        onClick={() => onMarkAsReplaced(notif.materialId)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onMarkAsReplaced(notif.materialId);
+                        }}
                         className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 border border-emerald-200 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
                       >
                         <CheckCircle2 className="w-3 h-3" />
@@ -529,14 +545,14 @@ export function NotificationsModal({
                     {onNavigateToMaterial && (
                       <button
                         type="button"
-                        onClick={() => {
-                          onClose();
-                          onNavigateToMaterial();
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMaterialAction();
                         }}
-                        className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                        className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs group-hover:bg-blue-600"
                       >
                         <span>Ver en Módulo</span>
-                        <ArrowRight className="w-3 h-3" />
+                        <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                       </button>
                     )}
                   </div>
@@ -553,15 +569,6 @@ export function NotificationsModal({
           </span>
         </div>
       </div>
-
-      {/* MODAL DE DETALLE DE TRANSFERENCIA (SOLO LECTURA) AL CONSULTAR CONFIRMACIONES */}
-      {detailModalSolicitud && (
-        <TransferDetailModal
-          isOpen={Boolean(detailModalSolicitud)}
-          solicitud={detailModalSolicitud}
-          onClose={handleCloseDetailModal}
-        />
-      )}
     </>
   );
 

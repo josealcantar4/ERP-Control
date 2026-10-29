@@ -323,6 +323,244 @@ function hasEventBeenNotified(key) {
   return getNotifiedEventKeys().has(key);
 }
 
+// ============================================================================
+// REGLAS UNIFICADAS DE PRIVACIDAD, FILTRADO Y PARTICIPANTES (SEDES Y ÁREAS)
+// ============================================================================
+export function isAreaExcludedFromTransfers(areaName) {
+  if (!areaName) return false;
+  try {
+    const raw = localStorage.getItem('erp_control_areas');
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const found = list.find(a => a.nombre?.toLowerCase() === areaName.toLowerCase());
+        return Boolean(found?.excluirTransferencias);
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
+export function getTransferParticipants(transfer) {
+  if (!transfer) {
+    return {
+      recipientSede: '',
+      recipientArea: '',
+      recipientUser: '',
+      dispatchSede: '',
+      dispatchArea: '',
+      dispatchUser: '',
+      isDirect: false
+    };
+  }
+
+  const isDirect = Boolean(transfer.esDespachoDirecto || transfer.sinSolicitud);
+
+  if (isDirect) {
+    // En despacho directo: la sede y área receptora representan el destino físico de la entrega.
+    const recipientSede = (transfer.sucursalReceptora || transfer.sucursalOrigen || '').trim();
+    const recipientArea = (transfer.areaReceptora !== undefined && transfer.areaReceptora !== null
+      ? transfer.areaReceptora
+      : (transfer.areaOrigen || '')).trim();
+    const recipientUser = (transfer.usuarioDestino || '').trim();
+
+    // La sede y área despachadora representan el origen que surtió los productos.
+    const dispatchSede = (transfer.sucursalDespachadora || transfer.sucursalDestino || '').trim();
+    const dispatchArea = (transfer.areaDespachadora !== undefined && transfer.areaDespachadora !== null
+      ? transfer.areaDespachadora
+      : (transfer.areaDestino || '')).trim();
+    const dispatchUser = (transfer.usuarioDespacho || '').trim();
+
+    return {
+      recipientSede,
+      recipientArea,
+      recipientUser,
+      dispatchSede,
+      dispatchArea,
+      dispatchUser,
+      isDirect: true
+    };
+  } else {
+    // En transferencia estándar (por solicitud previa):
+    // Origen = quien solicitó y ahora recibirá la caja.
+    // Destino = quien despachó el pedido.
+    const recipientSede = (transfer.sucursalOrigen || '').trim();
+    const recipientArea = (transfer.areaOrigen || '').trim();
+    const recipientUser = (transfer.usuarioSolicitante || '').trim();
+
+    const dispatchSede = (transfer.sucursalDestino || '').trim();
+    const dispatchArea = (transfer.areaDestino || '').trim();
+    const dispatchUser = (transfer.usuarioDestino || transfer.usuarioDespacho || '').trim();
+
+    return {
+      recipientSede,
+      recipientArea,
+      recipientUser,
+      dispatchSede,
+      dispatchArea,
+      dispatchUser,
+      isDirect: false
+    };
+  }
+}
+
+export function canUserViewInSolicitar(transfer, currentUser) {
+  if (!currentUser || !transfer) return false;
+  const username = (currentUser.username || '').toLowerCase().trim();
+  const isRootAdmin = username === 'administrador';
+
+  // 1. Usuarios excluidos o en áreas administrativas no ven solicitudes operativas
+  if (currentUser.excluirDestinatario) return false;
+  if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) return false;
+
+  // 2. Requiere rol de solicitar
+  const uRoles = currentUser.roles || [];
+  if (!uRoles.includes('solicitar') && !isRootAdmin) return false;
+
+  // Despachos directos no se listan en el historial de solicitudes enviadas (se reciben en Recibir)
+  if (transfer.esDespachoDirecto || transfer.sinSolicitud) return false;
+
+  if (transfer.usuarioSolicitante && transfer.usuarioSolicitante.toLowerCase() === username) {
+    return true;
+  }
+
+  if (transfer.estado === 'borrador') {
+    return transfer.usuarioSolicitante && transfer.usuarioSolicitante.toLowerCase() === username;
+  }
+
+  const userSede = (currentUser.sede || '').toLowerCase().trim();
+  const userArea = (currentUser.area || '').toLowerCase().trim();
+
+  const { recipientSede, recipientArea } = getTransferParticipants(transfer);
+  const solSede = recipientSede.toLowerCase();
+  const solArea = recipientArea.toLowerCase();
+
+  if (!userSede || solSede !== userSede) {
+    if (isRootAdmin && !userSede) return true;
+    return false;
+  }
+
+  if (solArea) {
+    if (!userArea) return false;
+    return solArea === userArea || solArea.includes(userArea) || userArea.includes(solArea);
+  }
+
+  return !userArea;
+}
+
+export function canUserDispatch(transfer, currentUser) {
+  if (!currentUser || !transfer) return false;
+  const username = (currentUser.username || '').toLowerCase().trim();
+  const isRootAdmin = username === 'administrador';
+
+  // 1. Si el área del usuario está excluida de transferencias, jamás despacha
+  if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) {
+    return false;
+  }
+
+  // 2. Debe contar con rol operativo de 'despachar' (el rol 'admin' es solo para cuentas/sedes)
+  const uRoles = currentUser.roles || [];
+  if (!uRoles.includes('despachar') && !isRootAdmin) return false;
+
+  const userSede = (currentUser.sede || '').toLowerCase().trim();
+  const userArea = (currentUser.area || '').toLowerCase().trim();
+  const isPatente = userArea.includes('patente');
+  const isGenerico = userArea.includes('generic') || userArea.includes('genéric');
+
+  const { dispatchSede, dispatchArea, dispatchUser } = getTransferParticipants(transfer);
+
+  if (dispatchUser && dispatchUser.toLowerCase() === username) {
+    return true;
+  }
+
+  if (transfer.usuarioDestino && transfer.usuarioDestino.toLowerCase() === username) {
+    return true;
+  }
+
+  const dSede = dispatchSede.toLowerCase();
+  const dArea = dispatchArea.toLowerCase();
+
+  const matchesSede = !dSede
+    ? (userSede.includes('matriz') || userSede === '' || isRootAdmin)
+    : dSede === userSede;
+
+  if (!matchesSede) {
+    if (isRootAdmin && !userSede) return true;
+    return false;
+  }
+
+  if (dArea) {
+    if (!userArea) {
+      if (isRootAdmin) return true;
+      return false;
+    }
+    if (isPatente) return dArea.includes('patente');
+    if (isGenerico) return dArea.includes('generic') || dArea.includes('genéric');
+    return dArea === userArea || dArea.includes(userArea) || userArea.includes(dArea);
+  }
+
+  return true;
+}
+
+export function canUserReceive(transfer, currentUser) {
+  if (!currentUser || !transfer) return false;
+  if (transfer.estado !== 'completada' && transfer.estado !== 'faltantes_despachados') {
+    return false;
+  }
+
+  // 1. Si el usuario está excluido como destinatario, JAMÁS recibe pedidos ni alertas de recepción
+  if (currentUser.excluirDestinatario) {
+    return false;
+  }
+
+  // 2. Si el área del usuario está marcada como excluida de transferencias (ej. administrativa), tampoco recibe
+  if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) {
+    return false;
+  }
+
+  const username = (currentUser.username || '').toLowerCase().trim();
+  const isRootAdmin = username === 'administrador';
+  const uRoles = currentUser.roles || [];
+
+  // 3. Debe contar con rol operativo de 'solicitar' o 'recibir' (el rol 'admin' es solo para cuentas/sedes)
+  const hasReceiveRole = uRoles.includes('solicitar') || uRoles.includes('recibir');
+  if (!hasReceiveRole && !isRootAdmin) {
+    return false;
+  }
+
+  const userSede = (currentUser.sede || '').toLowerCase().trim();
+  const userArea = (currentUser.area || '').toLowerCase().trim();
+
+  const { recipientSede, recipientArea, recipientUser } = getTransferParticipants(transfer);
+  const rSede = recipientSede.toLowerCase();
+  const rArea = recipientArea.toLowerCase();
+
+  // 4. Si el pedido fue dirigido a un usuario específico y es el actual
+  if (recipientUser && recipientUser.toLowerCase() === username) {
+    return true;
+  }
+
+  // 5. Coincidencia de Sede Receptora
+  if (!userSede || rSede !== userSede) {
+    if (isRootAdmin && !userSede) return true;
+    return false;
+  }
+
+  // 6. Coincidencia de Sub-Área Receptora
+  if (rArea) {
+    // Si la transferencia va a un área específica (ej. "Farmacia"):
+    if (!userArea) {
+      if (isRootAdmin) return true;
+      return false;
+    }
+    return rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea);
+  }
+
+  // 7. Si la transferencia no tiene sub-área específica (va a toda la sucursal general / punto directo):
+  // Cualquier usuario con rol en esa sucursal (no excluido) puede recibirla.
+  return true;
+}
+
 const activeSolicitudesCallbacks = new Set();
 let globalSolicitudesUnsub = null;
 let isInitialSolicitudesLoad = true;
@@ -331,12 +569,14 @@ let cachedActiveUser = null;
 const knownDocStates = new Map();
 
 function getActiveUserForNotifications() {
-  if (cachedActiveUser && cachedActiveUser.username) return cachedActiveUser;
   try {
-    return JSON.parse(localStorage.getItem('erp_current_user') || '{}');
-  } catch {
-    return {};
-  }
+    const raw = localStorage.getItem('erp_current_user');
+    if (raw) {
+      const u = JSON.parse(raw);
+      if (u && u.username) return u;
+    }
+  } catch {}
+  return cachedActiveUser || {};
 }
 
 function ensureGlobalSolicitudesSubscription() {
@@ -362,11 +602,6 @@ function ensureGlobalSolicitudesSubscription() {
           // 2. Evaluador de eventos en vivo posteriores a la carga inicial
           const activeUser = getActiveUserForNotifications();
           const uName = (activeUser.username || '').toLowerCase();
-          const uSede = (activeUser.sede || '').toLowerCase();
-          const uArea = (activeUser.area || '').toLowerCase();
-          const isAdmin = uName === 'administrador' || activeUser.roles?.includes('admin');
-          const isPatente = uArea.includes('patente');
-          const isGenerico = uArea.includes('generic') || uArea.includes('genéric');
 
           snap.docChanges().forEach(change => {
             if (change.type === 'added' || change.type === 'modified') {
@@ -388,53 +623,33 @@ function ensureGlobalSolicitudesSubscription() {
               }
 
               const folioTxt = data.folio || 'Sin Folio';
-              const destUser = (data.usuarioDestino || '').toLowerCase();
-              const destSede = (data.sucursalDestino || '').toLowerCase();
-              const destArea = (data.areaDestino || '').toLowerCase();
               const solUser = (data.usuarioSolicitante || '').toLowerCase();
-              const solSede = (data.sucursalOrigen || '').toLowerCase();
-              const solArea = (data.areaOrigen || '').toLowerCase();
-              const uRoles = cachedActiveUser?.roles || [];
-              const canDispatch = uRoles.includes('despachar') || isAdmin;
-
-              // Helper de coincidencia de área de destino
-              const matchesDestArea = !destArea || !uArea || destArea === uArea ||
-                (isPatente && destArea.includes('patente')) ||
-                (isGenerico && (destArea.includes('generic') || destArea.includes('genéric')));
+              const { recipientSede, recipientArea, dispatchSede, dispatchArea, isDirect } = getTransferParticipants(data);
 
               // 1. Si entra una solicitud nueva, alertar a los despachadores de la sede/área destino
-              if (data.estado === 'enviada') {
-                const isForMe =
-                  isAdmin ||
-                  (canDispatch && solUser !== uName && (
-                    destUser === uName ||
-                    ((!destSede || destSede === uSede) && matchesDestArea)
-                  ));
+              if (data.estado === 'enviada' || data.estado === 'en_despacho') {
+                const isForMe = canUserDispatch(data, activeUser) && solUser !== uName;
 
                 if (isForMe) {
                   markEventAsNotified(notifKey);
-                  const fromTxt = data.areaOrigen
-                    ? `${data.sucursalOrigen} (${data.areaOrigen})`
-                    : (data.sucursalOrigen || 'Sucursal');
-                  const destTxt = data.areaDestino ? ` para ${data.areaDestino}` : '';
+                  const fromTxt = recipientArea
+                    ? `${recipientSede} (${recipientArea})`
+                    : (recipientSede || 'Sucursal');
+                  const destTxt = dispatchArea ? ` para ${dispatchArea}` : '';
                   showNotification('Nueva Solicitud Recibida', `${fromTxt} ha solicitado el pedido ${folioTxt}${destTxt}.`);
                 }
               }
 
               // 2. Si se despacha la caja, alertar al solicitante / área origen
               if (data.estado === 'completada') {
-                const matchesSolArea = !solArea || !uArea || solArea === uArea;
-                const isForMyBranch =
-                  isAdmin ||
-                  solUser === uName ||
-                  ((uSede && solSede === uSede) && matchesSolArea && (data.usuarioDespacho || '').toLowerCase() !== uName);
+                const isForMe = canUserReceive(data, activeUser) && (data.usuarioDespacho || '').toLowerCase() !== uName;
 
-                if (isForMyBranch) {
+                if (isForMe) {
                   markEventAsNotified(notifKey);
-                  const originSender = data.sucursalDestino
-                    ? `${data.sucursalDestino}${data.areaDestino ? ` (${data.areaDestino})` : ''}`
-                    : (data.areaDestino || 'Bodega');
-                  const msg = data.esDespachoDirecto || data.sinSolicitud
+                  const originSender = dispatchSede
+                    ? `${dispatchSede}${dispatchArea ? ` (${dispatchArea})` : ''}`
+                    : (dispatchArea || 'Bodega');
+                  const msg = isDirect
                     ? `${originSender} envió un pedido directo (${folioTxt}) para tu área.`
                     : `Tu pedido ${folioTxt} ha sido enviado por ${originSender}. Listo para recibir.`;
                   showNotification('Pedido Despachado en Camino', msg);
@@ -443,29 +658,22 @@ function ensureGlobalSolicitudesSubscription() {
 
               // 3. Si hay faltantes, alertar al área que despachó
               if (data.estado === 'recibida_incompleta') {
-                const isForMe =
-                  isAdmin ||
-                  destUser === uName ||
-                  (canDispatch && (!destSede || destSede === uSede) && matchesDestArea);
+                const isForMe = canUserDispatch(data, activeUser);
 
                 if (isForMe) {
                   markEventAsNotified(notifKey);
-                  const fromTxt = data.areaOrigen
-                    ? `${data.sucursalOrigen} (${data.areaOrigen})`
-                    : (data.sucursalOrigen || 'Sucursal');
+                  const fromTxt = recipientArea
+                    ? `${recipientSede} (${recipientArea})`
+                    : (recipientSede || 'Sucursal');
                   showNotification('Reporte de Inconsistencia', `${fromTxt} reportó faltantes en el pedido ${folioTxt}.`);
                 }
               }
 
               // 4. Si se re-despachan los faltantes, alertar al solicitante / área origen
               if (data.estado === 'faltantes_despachados') {
-                const matchesSolArea = !solArea || !uArea || solArea === uArea;
-                const isForMyBranch =
-                  isAdmin ||
-                  solUser === uName ||
-                  ((uSede && solSede === uSede) && matchesSolArea);
+                const isForMe = canUserReceive(data, activeUser);
 
-                if (isForMyBranch) {
+                if (isForMe) {
                   markEventAsNotified(notifKey);
                   showNotification('Faltantes Despachados', `Se enviaron los productos faltantes del pedido ${folioTxt}. Revisa la caja entrante.`);
                 }
@@ -473,16 +681,13 @@ function ensureGlobalSolicitudesSubscription() {
 
               // 5. Si Sucursal confirma recepción final con faltantes resueltos, alertar a despachador
               if (data.estado === 'recibida' && data.reporteFaltantes?.length > 0) {
-                const isForMe =
-                  isAdmin ||
-                  destUser === uName ||
-                  (canDispatch && (!destSede || destSede === uSede) && matchesDestArea);
+                const isForMe = canUserDispatch(data, activeUser);
 
                 if (isForMe) {
                   markEventAsNotified(notifKey);
-                  const fromTxt = data.areaOrigen
-                    ? `${data.sucursalOrigen} (${data.areaOrigen})`
-                    : (data.sucursalOrigen || 'Sucursal');
+                  const fromTxt = recipientArea
+                    ? `${recipientSede} (${recipientArea})`
+                    : (recipientSede || 'Sucursal');
                   showNotification('Faltantes Entregados', `${fromTxt} confirmó la recepción de faltantes del pedido ${folioTxt}.`);
                 }
               }
@@ -855,6 +1060,10 @@ export const transferService = {
       areaOrigen: dispatchData.areaOrigen || '',
       sucursalDestino: dispatchData.sucursalDestino || '',
       areaDestino: dispatchData.areaDestino || '',
+      sucursalReceptora: dispatchData.sucursalReceptora || dispatchData.sucursalOrigen || '',
+      areaReceptora: dispatchData.areaReceptora || dispatchData.areaOrigen || '',
+      sucursalDespachadora: dispatchData.sucursalDespachadora || dispatchData.sucursalDestino || '',
+      areaDespachadora: dispatchData.areaDespachadora || dispatchData.areaDestino || '',
       usuarioSolicitante: dispatchData.usuarioSolicitante || dispatchData.sucursalOrigen || 'Despacho Directo',
       usuarioDestino: dispatchData.usuarioDestino || '',
       usuarioDespacho: dispatchData.usuarioDespacho || '',
@@ -917,12 +1126,16 @@ export const transferService = {
       id: draft.id || ('disp-draft-' + Date.now()),
       folio: draft.folio || '',
       sucursalOrigen: draft.sucursalOrigen || '',
-      usuarioSolicitante: draft.sucursalOrigen || 'Despacho Directo',
-      usuarioDestino: draft.usuarioDestino || '',
-      usuarioDespacho: draft.usuarioDespacho || '',
       areaOrigen: draft.areaOrigen || '',
       sucursalDestino: draft.sucursalDestino || '',
       areaDestino: draft.areaDestino || '',
+      sucursalReceptora: draft.sucursalReceptora || draft.sucursalOrigen || '',
+      areaReceptora: draft.areaReceptora || draft.areaOrigen || '',
+      sucursalDespachadora: draft.sucursalDespachadora || draft.sucursalDestino || '',
+      areaDespachadora: draft.areaDespachadora || draft.areaDestino || '',
+      usuarioSolicitante: draft.usuarioSolicitante || draft.sucursalOrigen || 'Despacho Directo',
+      usuarioDestino: draft.usuarioDestino || '',
+      usuarioDespacho: draft.usuarioDespacho || '',
       esTransferenciaInterna: Boolean(
         draft.esTransferenciaInterna ||
         (draft.sucursalOrigen && draft.sucursalDestino && draft.sucursalOrigen === draft.sucursalDestino)
@@ -1112,15 +1325,6 @@ export const transferService = {
     if (!currentUser || !Array.isArray(solicitudes)) return [];
 
     const username = (currentUser.username || '').toLowerCase().trim();
-    const userSede = (currentUser.sede || '').toLowerCase().trim();
-    const userArea = (currentUser.area || '').toLowerCase().trim();
-    const uRoles = currentUser?.roles || [];
-    const isAdmin = username === 'administrador' || uRoles.includes('admin');
-    const canDispatch = uRoles.includes('despachar') || isAdmin;
-    const canReceive = uRoles.includes('recibir') || uRoles.includes('solicitar') || isAdmin;
-    const isPatente = userArea.includes('patente');
-    const isGenerico = userArea.includes('generic') || userArea.includes('genéric');
-
     const notifs = [];
 
     solicitudes.forEach(s => {
@@ -1128,35 +1332,18 @@ export const transferService = {
 
       const solFolio = s.folio || 'Sin Folio';
       const itemsCount = s.items?.length || 0;
-      const destUser = (s.usuarioDestino || '').toLowerCase().trim();
-      const destSede = (s.sucursalDestino || '').toLowerCase().trim();
-      const destArea = (s.areaDestino || '').toLowerCase().trim();
+      const { recipientSede, recipientArea, dispatchSede, dispatchArea, isDirect } = getTransferParticipants(s);
       const solUser = (s.usuarioSolicitante || '').toLowerCase().trim();
-      const solSede = (s.sucursalOrigen || '').toLowerCase().trim();
-      const solArea = (s.areaOrigen || '').toLowerCase().trim();
-
-      // Coincidencia con área de destino (quien atiende/despacha):
-      const matchesDestArea = !destArea || !userArea || destArea === userArea ||
-        (isPatente && destArea.includes('patente')) ||
-        (isGenerico && (destArea.includes('generic') || destArea.includes('genéric')));
-
-      // Coincidencia con área de origen (quien solicitó/recibe):
-      const matchesSolArea = !solArea || !userArea || solArea === userArea;
 
       // 1. NOTIFICACIÓN: Solicitud recibida pendiente de atender (para Despachadores de la sede/área destino)
       if (s.estado === 'enviada' || s.estado === 'en_despacho') {
-        const isForMe =
-          isAdmin ||
-          (canDispatch && solUser !== username && (
-            destUser === username ||
-            ((!destSede || destSede === userSede) && matchesDestArea)
-          ));
+        const isForMe = canUserDispatch(s, currentUser) && solUser !== username;
 
         if (isForMe) {
-          const fromTxt = s.areaOrigen
-            ? `${s.sucursalOrigen} (${s.areaOrigen})`
-            : (s.sucursalOrigen || 'Sucursal');
-          const destTxt = s.areaDestino ? ` para ${s.areaDestino}` : '';
+          const fromTxt = recipientArea
+            ? `${recipientSede} (${recipientArea})`
+            : (recipientSede || 'Sucursal');
+          const destTxt = dispatchArea ? ` para ${dispatchArea}` : '';
           const isSurtido = s.estado === 'en_despacho';
 
           notifs.push({
@@ -1177,18 +1364,14 @@ export const transferService = {
         }
       }
 
-      // 2. NOTIFICACIÓN: Pedido despachado en camino (para Sucursal / Farmacia / Área origen)
+      // 2. NOTIFICACIÓN: Pedido despachado en camino (para Sucursal / Farmacia / Área origen que recibe)
       if (s.estado === 'completada') {
-        const isForMyBranch =
-          isAdmin ||
-          solUser === username ||
-          (canReceive && (!userSede || solSede === userSede) && matchesSolArea && (s.usuarioDespacho || '').toLowerCase() !== username);
+        const isForMyBranch = canUserReceive(s, currentUser) && (s.usuarioDespacho || '').toLowerCase() !== username;
 
         if (isForMyBranch) {
-          const isDirect = s.esDespachoDirecto || s.sinSolicitud;
-          const originSender = s.sucursalDestino
-            ? `${s.sucursalDestino}${s.areaDestino ? ` (${s.areaDestino})` : ''}`
-            : (s.areaDestino || 'Bodega');
+          const originSender = dispatchSede
+            ? `${dispatchSede}${dispatchArea ? ` (${dispatchArea})` : ''}`
+            : (dispatchArea || 'Bodega');
 
           notifs.push({
             id: `tr-comp-${s.id}`,
@@ -1210,15 +1393,12 @@ export const transferService = {
 
       // 3. NOTIFICACIÓN: Inconsistencias o faltantes reportados (para Despachador de la sede que surtió)
       if (s.estado === 'recibida_incompleta') {
-        const isForMe =
-          isAdmin ||
-          destUser === username ||
-          (canDispatch && (!destSede || destSede === userSede) && matchesDestArea);
+        const isForMe = canUserDispatch(s, currentUser);
 
         if (isForMe) {
-          const fromTxt = s.areaOrigen
-            ? `${s.sucursalOrigen} (${s.areaOrigen})`
-            : (s.sucursalOrigen || 'Sucursal');
+          const fromTxt = recipientArea
+            ? `${recipientSede} (${recipientArea})`
+            : (recipientSede || 'Sucursal');
 
           notifs.push({
             id: `tr-falt-${s.id}`,
@@ -1238,10 +1418,7 @@ export const transferService = {
 
       // 4. NOTIFICACIÓN: Faltantes re-despachados en camino (para Sucursal / Área origen)
       if (s.estado === 'faltantes_despachados') {
-        const isForMyBranch =
-          isAdmin ||
-          solUser === username ||
-          (canReceive && (!userSede || solSede === userSede) && matchesSolArea);
+        const isForMyBranch = canUserReceive(s, currentUser);
 
         if (isForMyBranch) {
           notifs.push({
@@ -1262,15 +1439,12 @@ export const transferService = {
 
       // 5. NOTIFICACIÓN: Confirmación de recepción de faltantes entregados (para Despachador)
       if (s.estado === 'recibida' && s.reporteFaltantes?.length > 0) {
-        const isForMe =
-          isAdmin ||
-          destUser === username ||
-          (canDispatch && (!destSede || destSede === userSede) && matchesDestArea);
+        const isForMe = canUserDispatch(s, currentUser);
 
         if (isForMe) {
-          const fromTxt = s.areaOrigen
-            ? `${s.sucursalOrigen} (${s.areaOrigen})`
-            : (s.sucursalOrigen || 'Sucursal');
+          const fromTxt = recipientArea
+            ? `${recipientSede} (${recipientArea})`
+            : (recipientSede || 'Sucursal');
 
           notifs.push({
             id: `tr-falt-entregados-${s.id}`,
@@ -1294,6 +1468,11 @@ export const transferService = {
       .filter(n => !dismissedSet.has(n.id))
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   },
+
+  canUserViewInSolicitar,
+  canUserDispatch,
+  canUserReceive,
+  getTransferParticipants,
 
   playNotificationSound,
   unlockAudioEngine,

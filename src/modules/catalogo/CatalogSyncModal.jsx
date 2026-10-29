@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function CatalogSyncModal({
   isOpen,
@@ -11,17 +11,24 @@ export function CatalogSyncModal({
   onRetry,
   onDismiss
 }) {
-  useBodyScrollLock(isOpen);
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose: onDismiss
+  });
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   const isDone = status === 'done';
   const isError = status === 'error';
   const percent = progress?.percent || 0;
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-6 select-none overflow-y-auto overscroll-contain">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[100dvh] sm:max-h-[90dvh] overflow-y-auto overscroll-contain shadow-2xl border border-slate-100 text-center space-y-5 my-0 sm:my-auto animate-in fade-in zoom-in-95 duration-200 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-7">
+    <div className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto overscroll-contain shadow-2xl border border-slate-100 text-center space-y-5 my-auto ${cardClass}`}
+      >
         
         {/* ICONO DE ESTADO */}
         <div>
@@ -101,7 +108,8 @@ export function CatalogSyncModal({
         <div className="pt-1">
           {isDone && (
             <button
-              onClick={onDismiss}
+              type="button"
+              onClick={handleClose}
               className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
             >
               <span>Continuar</span>
@@ -112,6 +120,7 @@ export function CatalogSyncModal({
           {isError && (
             <div className="space-y-2">
               <button
+                type="button"
                 onClick={onRetry}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
               >
@@ -119,7 +128,8 @@ export function CatalogSyncModal({
                 <span>Reintentar Sincronización</span>
               </button>
               <button
-                onClick={onDismiss}
+                type="button"
+                onClick={handleClose}
                 className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-2xl transition-all cursor-pointer"
               >
                 Continuar con versión local

@@ -24,13 +24,13 @@ import {
 } from 'lucide-react';
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService, formatTransferFolio } from '../transferencias';
+import { transferService, canUserDispatch } from '../transferencias';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { useBodyScrollLock } from '../../hooks';
+import { useModalAnimation } from '../../hooks';
 
 export function DespachoDirectoModal({
   isOpen,
@@ -38,7 +38,10 @@ export function DespachoDirectoModal({
   onClose,
   onSuccess
 }) {
-  useBodyScrollLock(isOpen);
+  const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
 
   // Pestañas del modal: 'captura' | 'historial'
   const [activeTab, setActiveTab] = useState('captura');
@@ -113,7 +116,7 @@ export function DespachoDirectoModal({
 
       const unsubSolicitudes = transferService.subscribeSolicitudes((list) => {
         const drafts = list.filter(
-          s => s.estado === 'borrador' && (s.sinSolicitud || s.esDespachoDirecto)
+          s => s.estado === 'borrador' && (s.sinSolicitud || s.esDespachoDirecto) && canUserDispatch(s, currentUser)
         );
         setDirectDrafts(drafts);
       });
@@ -202,13 +205,13 @@ export function DespachoDirectoModal({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  if (!isOpen) return null;
+  if (!shouldRender) return null;
 
   // Cargar un borrador existente del historial para continuar capturando
   const handleLoadDraft = (draft) => {
     setCurrentDraftId(draft.id);
-    setSelectedSede(draft.sucursalOrigen || '');
-    setSelectedArea(draft.areaDestino || '');
+    setSelectedSede(draft.sucursalReceptora || draft.sucursalOrigen || '');
+    setSelectedArea(draft.areaReceptora || draft.areaDestino || draft.areaOrigen || '');
     const cleanDigits = (draft.folio || '').replace(/^TR/i, '');
     setFolioDigits(cleanDigits);
 
@@ -285,9 +288,13 @@ export function DespachoDirectoModal({
         id: currentDraftId,
         folio: fullFolio,
         sucursalOrigen: selectedSede.trim(),
-        areaOrigen: currentUser?.area || '',
+        areaOrigen: selectedArea ? selectedArea.trim() : '',
+        sucursalReceptora: selectedSede.trim(),
+        areaReceptora: selectedArea ? selectedArea.trim() : '',
         sucursalDestino: currentUser?.sede || 'Bodega',
-        areaDestino: selectedArea || '',
+        areaDestino: currentUser?.area || '',
+        sucursalDespachadora: currentUser?.sede || 'Bodega',
+        areaDespachadora: currentUser?.area || '',
         esTransferenciaInterna: (selectedSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase(),
         usuarioSolicitante: selectedSede.trim() || 'Despacho Directo',
         usuarioDespacho: currentUser?.username || 'Bodega',
@@ -460,9 +467,13 @@ export function DespachoDirectoModal({
         id: currentDraftId,
         folio: fullFolio,
         sucursalOrigen: selectedSede.trim(),
-        areaOrigen: currentUser?.area || '',
+        areaOrigen: selectedArea ? selectedArea.trim() : '',
+        sucursalReceptora: selectedSede.trim(),
+        areaReceptora: selectedArea ? selectedArea.trim() : '',
         sucursalDestino: currentUser?.sede || 'Bodega',
-        areaDestino: selectedArea || '',
+        areaDestino: currentUser?.area || '',
+        sucursalDespachadora: currentUser?.sede || 'Bodega',
+        areaDespachadora: currentUser?.area || '',
         usuarioSolicitante: selectedSede.trim(),
         usuarioDespacho: currentUser?.username || 'Bodega',
         esTransferenciaInterna: isTargetDirectOwnSede,
@@ -485,8 +496,17 @@ export function DespachoDirectoModal({
   const totalUnits = packedItems.reduce((acc, it) => acc + (it.cantidad || 0), 0);
 
   const modalContent = (
-    <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6 select-none overflow-y-auto overscroll-contain animate-fade-in">
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 max-h-[100dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden my-0 sm:my-auto overscroll-contain animate-in fade-in zoom-in-95 duration-200 pb-[env(safe-area-inset-bottom)] sm:pb-0">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isSubmitting) handleClose();
+      }}
+      className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
+      >
         
         {/* ENCABEZADO CON PESTAÑAS */}
         <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0 bg-slate-50/70 space-y-3">
@@ -506,7 +526,8 @@ export function DespachoDirectoModal({
             </div>
 
             <button
-              onClick={onClose}
+              type="button"
+              onClick={handleClose}
               disabled={isSubmitting}
               className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
             >
@@ -923,7 +944,7 @@ export function DespachoDirectoModal({
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             disabled={isSubmitting}
             className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-2xl transition-all cursor-pointer disabled:opacity-50"
           >

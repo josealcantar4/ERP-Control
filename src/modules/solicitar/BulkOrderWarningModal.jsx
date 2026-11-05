@@ -9,6 +9,7 @@ import {
   Building2
 } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { playCheckSound } from '../../shared';
 
 export function BulkOrderWarningModal({
   isOpen,
@@ -165,7 +166,13 @@ export function BulkOrderWarningModal({
                 type="checkbox"
                 disabled={countdown > 0}
                 checked={isAgreed}
-                onChange={(e) => setIsAgreed(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  if (checked) {
+                    playCheckSound();
+                  }
+                  setIsAgreed(checked);
+                }}
                 className="w-4 h-4 mt-0.5 rounded text-amber-600 focus:ring-amber-500 cursor-pointer disabled:cursor-not-allowed"
               />
               <div className="text-xs">

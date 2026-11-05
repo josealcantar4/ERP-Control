@@ -24,13 +24,15 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isScreenUpdating, setIsScreenUpdating] = useState(false);
 
-  // Estado del modal de sincronización automática de catálogo post-login
+  // Estado del modal de sincronización automática de catálogo
   const [syncModal, setSyncModal] = useState({
     isOpen: false,
     status: 'checking',
     progress: { percent: 0, currentBatch: 0, totalBatches: 0, message: '', totalRecords: 0 },
     error: null
   });
+  const isCatalogSyncingRef = useRef(false);
+  const lastCatalogCheckTimeRef = useRef(0);
 
   // Estado del modal y alertas de notificaciones
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -99,10 +101,136 @@ export default function App() {
     return () => window.removeEventListener('erp_notifications_dismissed', handleDismissed);
   }, []);
 
-  // Verificación de información nueva en segundo plano al abrir cualquier pantalla
-  // EXCLUSIÓN: El módulo 'upload-catalog' no muestra spinner ni ejecuta esta verificación.
+  // Sincronización SIEMPRE VISIBLE del Catálogo Central para todos los usuarios
+  const runCatalogAutoSync = useCallback(async (force = false) => {
+    if (isCatalogSyncingRef.current) return;
+
+    const now = Date.now();
+    // Throttling: evitar verificaciones repetitivas con menos de 4 segundos de separación salvo forzado
+    if (!force && (now - lastCatalogCheckTimeRef.current < 4000)) {
+      return;
+    }
+    lastCatalogCheckTimeRef.current = now;
+
+    try {
+      if (!force) {
+        // Consulta ultraligera de metadatos (1 byte) al Servidor Central
+        const check = await catalogService.checkServerCatalogVersion();
+        
+        // Si ya está actualizado y hay datos locales: CERO descargas, acceso inmediato
+        if (check.upToDate) {
+          return;
+        }
+      }
+
+      isCatalogSyncingRef.current = true;
+
+      // SIEMPRE VISIBLE: Mostrar el modal inmediatamente con backdrop y barra de progreso
+      setSyncModal({
+        isOpen: true,
+        status: 'downloading',
+        progress: {
+          percent: 5,
+          currentBatch: 0,
+          totalBatches: 0,
+          message: 'Detectada nueva versión en Servidor Central. Conectando...',
+          totalRecords: 0
+        },
+        error: null
+      });
+
+      const result = await catalogService.syncCatalogFromServer((status) => {
+        setSyncModal(prev => ({
+          ...prev,
+          isOpen: true,
+          status: status.phase === 'done' ? 'done' : status.phase,
+          progress: status
+        }));
+      });
+
+      setSyncModal(prev => ({
+        ...prev,
+        isOpen: true,
+        status: 'done',
+        progress: {
+          percent: 100,
+          currentBatch: 0,
+          totalBatches: 0,
+          message: `Sincronización completada con éxito (${result.totalRecords.toLocaleString()} productos disponibles).`,
+          totalRecords: result.totalRecords
+        }
+      }));
+
+      // Notificar reactivamente a otros módulos (CatalogUploadModule, Solicitudes, etc.)
+      window.dispatchEvent(new CustomEvent('erp_catalog_synced', { detail: result }));
+
+      // Se mantiene visible para que el usuario pueda presionar "Continuar"; con respaldo automático tras 6 segundos
+      setTimeout(() => {
+        setSyncModal(prev => (prev.status === 'done' ? { ...prev, isOpen: false } : prev));
+      }, 6000);
+
+    } catch (err) {
+      console.warn('Error durante sincronización del catálogo:', err);
+      setSyncModal(prev => ({
+        ...prev,
+        isOpen: true,
+        status: 'error',
+        error: err.message || 'Error al conectar con el Servidor Central.'
+      }));
+    } finally {
+      isCatalogSyncingRef.current = false;
+    }
+  }, []);
+
+  // Suscripción reactiva para disparar sincronizaciones visibles desde cualquier módulo (ej. botón Forzar)
+  useEffect(() => {
+    const handleTriggerSync = (e) => {
+      const force = e.detail?.force ?? true;
+      runCatalogAutoSync(force);
+    };
+    window.addEventListener('erp_trigger_catalog_sync', handleTriggerSync);
+    return () => window.removeEventListener('erp_trigger_catalog_sync', handleTriggerSync);
+  }, [runCatalogAutoSync]);
+
+  // Suscripción en tiempo real a actualizaciones del catálogo para TODOS los usuarios conectados
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const unsubscribe = catalogService.subscribeCatalogVersion(async (serverMeta) => {
+      if (!serverMeta) return;
+
+      const localFingerprint = localStorage.getItem('erp_catalog_last_fingerprint');
+      const localModified = localStorage.getItem('erp_catalog_last_modified');
+      const localCount = await catalogService.getLocalBaseCount();
+
+      // Si el servidor Firestore notifica una versión más reciente que la local
+      const isOutdated = localCount === 0 ||
+        (serverMeta.fingerprint && localFingerprint && serverMeta.fingerprint !== localFingerprint) ||
+        (serverMeta.lastModified && localModified && serverMeta.lastModified !== localModified) ||
+        (!localFingerprint && serverMeta.fingerprint);
+
+      if (isOutdated && !isCatalogSyncingRef.current) {
+        runCatalogAutoSync(true);
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [currentUser, runCatalogAutoSync]);
+
+  // Verificación de información nueva al abrir cualquier pantalla
   const performScreenRefresh = useCallback(async (screen) => {
-    if (!screen || screen === 'upload-catalog') {
+    if (!screen) {
+      setIsScreenUpdating(false);
+      return;
+    }
+
+    // Verificación del catálogo central para todas las pantallas
+    runCatalogAutoSync();
+
+    // El módulo 'upload-catalog' gestiona sus propios spinners internos
+    if (screen === 'upload-catalog') {
       setIsScreenUpdating(false);
       return;
     }
@@ -150,7 +278,36 @@ export default function App() {
         setIsScreenUpdating(false);
       }, remaining);
     }
-  }, []);
+  }, [runCatalogAutoSync]);
+
+  // Listener para sincronización automática reactiva del Catálogo Central:
+  // 1. Al re-enfocar la pestaña/ventana (ej. el usuario subió el Excel en Drive y vuelve al ERP)
+  // 2. Al cambiar la visibilidad de la página (visibilitychange)
+  // 3. Verificación periódica cada 60 segundos
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        runCatalogAutoSync();
+      }
+    };
+
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        runCatalogAutoSync();
+      }
+    }, 60000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      clearInterval(intervalId);
+    };
+  }, [currentUser, runCatalogAutoSync]);
 
   // Solicitar permiso de notificaciones Push del navegador/dispositivo
   useEffect(() => {
@@ -177,69 +334,6 @@ export default function App() {
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }
   }, [currentScreen, currentUser]);
-
-  // Sincronización automática silenciosa post-login
-  const runCatalogAutoSync = async (force = false) => {
-    try {
-      if (!force) {
-        // Consulta silenciosa de metadatos al Servidor Central
-        const check = await catalogService.checkServerCatalogVersion();
-        
-        // Si ya está actualizado y hay datos locales: CERO descargas, acceso inmediato!
-        if (check.upToDate) {
-          return;
-        }
-      }
-
-      // Si hay archivo nuevo o la base local está vacía, mostrar modal transparente
-      setSyncModal({
-        isOpen: true,
-        status: 'downloading',
-        progress: {
-          percent: 5,
-          currentBatch: 0,
-          totalBatches: 0,
-          message: 'Conectando con el Servidor Central...',
-          totalRecords: 0
-        },
-        error: null
-      });
-
-      const result = await catalogService.syncCatalogFromServer((status) => {
-        setSyncModal(prev => ({
-          ...prev,
-          status: status.phase === 'done' ? 'done' : 'saving',
-          progress: status
-        }));
-      });
-
-      setSyncModal(prev => ({
-        ...prev,
-        status: 'done',
-        progress: {
-          percent: 100,
-          currentBatch: 0,
-          totalBatches: 0,
-          message: 'Sincronización completada con éxito.',
-          totalRecords: result.totalRecords
-        }
-      }));
-
-      // Cierre automático del modal tras éxito
-      setTimeout(() => {
-        setSyncModal(prev => ({ ...prev, isOpen: false }));
-      }, 1500);
-
-    } catch (err) {
-      console.warn('Error durante auto-sincronización del catálogo:', err);
-      setSyncModal(prev => ({
-        ...prev,
-        isOpen: true,
-        status: 'error',
-        error: err.message || 'Error al conectar con el Servidor Central.'
-      }));
-    }
-  };
 
   // 2. Verificar sesión guardada al iniciar la PWA
   useEffect(() => {
@@ -400,8 +494,13 @@ export default function App() {
         onNavigateToMaterial={() => {
           navigateTo('material');
         }}
-        onNavigateToScreen={(screen, orderId) => {
+        onNavigateToScreen={(screen, orderId, notif) => {
           setIsNotificationsOpen(false);
+          if (notif?.id) {
+            dismissNotification(notif.id);
+            setTransferNotifications(prev => prev.filter(n => n.id !== notif.id));
+            setMaterialNotifications(prev => prev.filter(n => n.id !== notif.id));
+          }
           if (orderId) {
             if (screen === 'recibir') {
               sessionStorage.setItem('erp_recibir_order_id', orderId);
@@ -410,6 +509,10 @@ export default function App() {
             }
           }
           navigateTo(screen);
+          // Disparar evento para apertura reactiva inmediata si el módulo ya se encuentra montado
+          window.dispatchEvent(new CustomEvent('erp_open_solicitud', {
+            detail: { screen, orderId, notif }
+          }));
         }}
         onViewTransferDetail={handleViewTransferDetail}
       />
@@ -418,7 +521,13 @@ export default function App() {
       <TransferDetailModal
         isOpen={Boolean(notificationDetailTransfer)}
         solicitud={notificationDetailTransfer}
-        onClose={() => setNotificationDetailTransfer(null)}
+        onClose={() => {
+          if (notificationDetailTransfer?.id) {
+            dismissNotification(`tr-falt-${notificationDetailTransfer.id}`);
+            dismissNotification(`tr-falt-entregados-${notificationDetailTransfer.id}`);
+          }
+          setNotificationDetailTransfer(null);
+        }}
       />
 
       {/* Indicador de actualización de pantalla discreto estilo iOS (sin opacar el fondo) */}

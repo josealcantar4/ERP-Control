@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -14,9 +14,11 @@ import {
   Loader2,
   X,
   PackagePlus,
-  Minus
+  Minus,
+  FileText,
+  AlertTriangle
 } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserDispatch } from '../transferencias';
+import { transferService, formatTransferFolio, canUserDispatch, playCheckSound } from '../transferencias';
 import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
@@ -26,7 +28,7 @@ import { MarqueeText } from '../../shared/MarqueeText';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 import { DespachoDirectoModal } from './DespachoDirectoModal';
-import { transitionView } from '../../shared';
+import { transitionView, QuantityStepper } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function DespacharModule({ currentUser, onBack, onRefresh }) {
@@ -95,12 +97,58 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   });
 
   const closeDialog = () => {
-    setDialog(prev => ({ ...prev, isOpen: false }));
+    setDialog(prev => ({ ...prev, isOpen: false, children: null }));
   };
 
   const isAdmin =
     currentUser?.username?.toLowerCase() === 'administrador' ||
     currentUser?.roles?.includes('admin');
+
+  // Apertura directa y reactiva de cualquier solicitud solicitada por ID (notificaciones, clics externos, etc.)
+  const openOrderById = useCallback((targetId) => {
+    if (!targetId) return;
+    const all = (solicitudes && solicitudes.length > 0)
+      ? solicitudes
+      : (transferService.getLocalSolicitudes() || []).filter(s => canUserDispatch(s, currentUser));
+    const target = all.find(s => s.id === targetId);
+    if (!target) return;
+
+    if (
+      target.estado === 'recibida' ||
+      target.estado === 'completada' ||
+      target.estado === 'cerrada_con_faltantes' ||
+      target.estado === 'faltantes_despachados'
+    ) {
+      setDetailSolicitud(target);
+      setSelectedSolicitud(null);
+      setSelectedFaltanteSolicitud(null);
+      sessionStorage.removeItem('erp_despachar_solicitud_id');
+      transferService.dismissNotification(`tr-falt-${target.id}`);
+      transferService.dismissNotification(`tr-falt-entregados-${target.id}`);
+    } else if (target.estado === 'recibida_incompleta') {
+      setSelectedFaltanteSolicitud(target);
+      setSelectedSolicitud(null);
+      setDetailSolicitud(null);
+      sessionStorage.removeItem('erp_despachar_solicitud_id');
+      transferService.dismissNotification(`tr-falt-${target.id}`);
+    } else if (target.estado === 'enviada' || target.estado === 'en_despacho') {
+      handleSelectSolicitud(target);
+      setSelectedFaltanteSolicitud(null);
+      setDetailSolicitud(null);
+    }
+  }, [solicitudes, currentUser]);
+
+  // Listener para evento reactivo desde el messagebox de notificaciones (sin depender de recarga)
+  useEffect(() => {
+    const handleOpenEvent = (e) => {
+      const detail = e.detail;
+      if (detail && detail.screen === 'despachar' && detail.orderId) {
+        openOrderById(detail.orderId);
+      }
+    };
+    window.addEventListener('erp_open_solicitud', handleOpenEvent);
+    return () => window.removeEventListener('erp_open_solicitud', handleOpenEvent);
+  }, [openOrderById]);
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
@@ -124,10 +172,13 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
             setDetailSolicitud(refreshed);
             setSelectedSolicitud(null);
             sessionStorage.removeItem('erp_despachar_solicitud_id');
+            transferService.dismissNotification(`tr-falt-${refreshed.id}`);
+            transferService.dismissNotification(`tr-falt-entregados-${refreshed.id}`);
           } else if (refreshed.estado === 'recibida_incompleta') {
             setSelectedFaltanteSolicitud(refreshed);
             setSelectedSolicitud(null);
             sessionStorage.removeItem('erp_despachar_solicitud_id');
+            transferService.dismissNotification(`tr-falt-${refreshed.id}`);
           } else if (refreshed.estado === 'enviada' || refreshed.estado === 'en_despacho') {
             setSelectedSolicitud(refreshed);
             setDispatchFolioDigits(prev => {
@@ -246,6 +297,11 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   const handleToggleItem = async (index) => {
     if (!selectedSolicitud) return;
+    const item = selectedSolicitud.items?.[index];
+    const willBeChecked = !item?.atendido;
+    if (willBeChecked) {
+      playCheckSound();
+    }
     await transferService.toggleItemAtendido(selectedSolicitud.id, index);
   };
 
@@ -314,6 +370,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         descripcion: selectedExtraItem.descripcion,
         cantidad: qty
       });
+      playCheckSound();
       resetExtraModal();
     } catch (err) {
       setDialog({
@@ -330,7 +387,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleRemoveExtraItem = async (e, index) => {
-    e.stopPropagation();
+    if (e && e.stopPropagation) e.stopPropagation();
     const item = selectedSolicitud?.items?.[index];
     const itemName = item?.descripcion ? `"${item.descripcion}"` : 'este producto extra';
 
@@ -355,20 +412,51 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  const handleUpdateExtraItemQty = async (e, index, delta) => {
-    e.stopPropagation();
+  const handleUpdateExtraQty = async (index, newQty) => {
     if (!selectedSolicitud) return;
-    const item = selectedSolicitud.items?.[index];
-    if (!item || !item.esExtra) return;
-    const newQty = (Number(item.cantidadDespachada) || 1) + delta;
     if (newQty <= 0) {
-      handleRemoveExtraItem(e, index);
+      handleRemoveExtraItem(null, index);
       return;
     }
+    const item = selectedSolicitud.items?.[index];
+    if (!item || !item.esExtra) return;
     const updatedItems = [...selectedSolicitud.items];
     updatedItems[index] = { ...item, cantidadDespachada: newQty };
     setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
     await transferService.updateExtraItemQty(selectedSolicitud.id, index, newQty);
+  };
+
+  // Ajuste de cantidad de un producto solicitado normal (min: 0, max: cantidadSolicitada)
+  const handleUpdateRequestedItemQty = async (index, newQty) => {
+    if (!selectedSolicitud) return;
+    const item = selectedSolicitud.items?.[index];
+    if (!item) return;
+    const maxQty = item.cantidadSolicitada !== undefined ? Number(item.cantidadSolicitada) : 999999;
+    const validQty = Math.max(0, Math.min(maxQty, Number(newQty)));
+
+    const updatedItems = [...selectedSolicitud.items];
+    updatedItems[index] = {
+      ...item,
+      cantidadDespachada: validQty
+    };
+    setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
+    await transferService.updateItemDespachoQty(selectedSolicitud.id, index, validQty, item.motivoAjusteDespacho);
+  };
+
+  // Campo de justificación opcional para faltantes en despacho
+  const handleUpdateItemJustification = async (index, motivo) => {
+    if (!selectedSolicitud) return;
+    const item = selectedSolicitud.items?.[index];
+    if (!item) return;
+
+    const updatedItems = [...selectedSolicitud.items];
+    updatedItems[index] = {
+      ...item,
+      motivoAjusteDespacho: motivo
+    };
+    setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
+    const qtyDesp = item.cantidadDespachada !== undefined ? item.cantidadDespachada : item.cantidadSolicitada;
+    await transferService.updateItemDespachoQty(selectedSolicitud.id, index, qtyDesp, motivo);
   };
 
   const handleExtraScanDetected = async (barcode, itemObject) => {
@@ -437,31 +525,105 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     }
 
     const fullFolio = `TR${dispatchFolioDigits.trim()}`;
-    const allChecked = selectedSolicitud.items?.every(i => i.atendido);
+    const uninspectedItems = (selectedSolicitud.items || []).filter(i => !i.atendido);
+    const allChecked = uninspectedItems.length === 0;
+
+    const executeComplete = async () => {
+      closeDialog();
+      setIsProcessing(true);
+      const currentSol = selectedSolicitud;
+      try {
+        const itemsFinal = (currentSol.items || []).map(item => ({
+          ...item,
+          cantidadDespachada: item.cantidadDespachada !== undefined
+            ? Number(item.cantidadDespachada)
+            : (item.esExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada ?? 1))
+        }));
+
+        const ajustesDespacho = itemsFinal
+          .filter(i => !i.esExtra && i.cantidadDespachada < Number(i.cantidadSolicitada ?? 1))
+          .map(i => ({
+            codigo: i.codigo,
+            descripcion: i.descripcion,
+            cantidadSolicitada: Number(i.cantidadSolicitada ?? 1),
+            cantidadDespachada: Number(i.cantidadDespachada),
+            diferencia: Number(i.cantidadSolicitada ?? 1) - Number(i.cantidadDespachada),
+            motivo: i.motivoAjusteDespacho || ''
+          }));
+
+        await transferService.completeSolicitud(currentSol.id, fullFolio, {
+          items: itemsFinal,
+          ajustesDespacho,
+          usuarioDespachador: currentUser?.username || 'despacho'
+        });
+
+        setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio, items: itemsFinal, ajustesDespacho });
+        setSelectedSolicitud(null);
+        setDispatchFolioDigits('');
+        sessionStorage.removeItem('erp_despachar_solicitud_id');
+      } finally {
+        setIsProcessing(false);
+      }
+    };
 
     if (!allChecked) {
       setDialog({
         isOpen: true,
         type: 'confirm',
         title: 'Productos pendientes en caja',
-        message: `Aún tienes productos sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho con folio ${fullFolio} de todas formas?`,
+        message: `Tienes ${uninspectedItems.length} producto${uninspectedItems.length === 1 ? '' : 's'} sin marcar como empacados en la caja física.\n¿Deseas finalizar y enviar el despacho con folio ${fullFolio} de todas formas?`,
         confirmText: 'Finalizar de todos modos',
         cancelText: 'Continuar empacando',
         variant: 'danger',
-        onConfirm: async () => {
-          closeDialog();
-          setIsProcessing(true);
-          const currentSol = selectedSolicitud;
-          try {
-            await transferService.completeSolicitud(currentSol.id, fullFolio);
-            setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio });
-            setSelectedSolicitud(null);
-            setDispatchFolioDigits('');
-            sessionStorage.removeItem('erp_despachar_solicitud_id');
-          } finally {
-            setIsProcessing(false);
-          }
-        },
+        children: (
+          <div className="space-y-2 pt-1 text-left">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+              <span className="flex items-center gap-1.5 text-red-700">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                <span>Productos sin marcar ({uninspectedItems.length}):</span>
+              </span>
+              <span className="font-mono text-[11px] text-slate-500 font-semibold">
+                {uninspectedItems.reduce((acc, it) => {
+                  const q = it.cantidadDespachada !== undefined
+                    ? Number(it.cantidadDespachada)
+                    : (it.esExtra ? Number(it.cantidad || 1) : Number(it.cantidadSolicitada || 1));
+                  return acc + q;
+                }, 0)} pzas totales
+              </span>
+            </div>
+
+            <div className="max-h-48 sm:max-h-56 overflow-y-auto divide-y divide-slate-100 rounded-2xl border border-red-200/80 bg-red-50/40 p-2 text-xs overscroll-contain shadow-2xs">
+              {uninspectedItems.map((item, idx) => {
+                const qty = item.cantidadDespachada !== undefined
+                  ? Number(item.cantidadDespachada)
+                  : (item.esExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada || 1));
+                return (
+                  <div key={idx} className="py-2 first:pt-1 last:pb-1 flex items-center justify-between gap-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-800 truncate block text-xs" title={item.descripcion}>
+                          {item.descripcion}
+                        </span>
+                        {item.esExtra && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-purple-100 text-purple-700 uppercase">
+                            Extra
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                        Código: {item.codigo}
+                      </span>
+                    </div>
+                    <span className="shrink-0 px-2.5 py-1 rounded-xl font-mono text-xs font-extrabold bg-white text-red-700 border border-red-200 shadow-2xs">
+                      {qty} pz
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ),
+        onConfirm: executeComplete,
         onCancel: closeDialog
       });
       return;
@@ -475,20 +637,8 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       confirmText: 'Confirmar y Despachar',
       cancelText: 'Revisar',
       variant: 'success',
-      onConfirm: async () => {
-        closeDialog();
-        setIsProcessing(true);
-        const currentSol = selectedSolicitud;
-        try {
-          await transferService.completeSolicitud(currentSol.id, fullFolio);
-          setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio });
-          setSelectedSolicitud(null);
-          setDispatchFolioDigits('');
-          sessionStorage.removeItem('erp_despachar_solicitud_id');
-        } finally {
-          setIsProcessing(false);
-        }
-      },
+      children: null,
+      onConfirm: executeComplete,
       onCancel: closeDialog
     });
   };
@@ -942,95 +1092,116 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
           {/* Interactive To-Do Packing List */}
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
-            {selectedSolicitud.items?.map((item, index) => (
-              <div
-                key={index}
-                onClick={() => handleToggleItem(index)}
-                className={`p-4 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
-                  item.atendido ? 'bg-emerald-50/40' : 'hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                      item.atendido
-                        ? 'bg-emerald-500 text-white shadow-sm scale-105'
-                        : 'border-2 border-slate-300 text-transparent'
-                    }`}
-                  >
-                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                  </div>
+            {selectedSolicitud.items?.map((item, index) => {
+              const isExtra = Boolean(item.esExtra);
+              const maxQty = isExtra ? undefined : Number(item.cantidadSolicitada ?? 1);
+              const currentQty = item.cantidadDespachada !== undefined
+                ? Number(item.cantidadDespachada)
+                : (isExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada ?? 1));
+              const hasFaltante = !isExtra && currentQty < maxQty;
+              const isZero = currentQty === 0;
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4
-                        className={`text-sm font-semibold truncate ${
+              return (
+                <div
+                  key={index}
+                  className={`p-4 transition-colors ${
+                    item.atendido ? 'bg-emerald-50/40' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <div
+                    onClick={() => handleToggleItem(index)}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
                           item.atendido
-                            ? 'line-through text-slate-400'
-                            : 'text-slate-900 font-bold'
+                            ? 'bg-emerald-500 text-white shadow-sm scale-105'
+                            : 'border-2 border-slate-300 text-transparent'
                         }`}
                       >
-                        {item.descripcion}
-                      </h4>
-                      {item.esExtra && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 shrink-0">
-                          EXTRA
-                        </span>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4
+                            className={`text-sm font-semibold truncate ${
+                              item.atendido
+                                ? 'line-through text-slate-400'
+                                : 'text-slate-900 font-bold'
+                            }`}
+                          >
+                            {item.descripcion}
+                          </h4>
+                          {isExtra && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 shrink-0">
+                              EXTRA
+                            </span>
+                          )}
+                          {hasFaltante && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                              {isZero ? 'Sin existencias (0 pz)' : `Envío parcial (${currentQty}/${maxQty})`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-0.5">
+                          <span>Código: {item.codigo}</span>
+                          {!isExtra && (
+                            <>
+                              <span>•</span>
+                              <span>Solicitadas: <strong>{maxQty} pz</strong></span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center" onClick={(e) => e.stopPropagation()}>
+                      {isExtra ? (
+                        <QuantityStepper
+                          value={currentQty}
+                          min={1}
+                          onChange={(newVal) => handleUpdateExtraQty(index, newVal)}
+                          onDelete={(e) => handleRemoveExtraItem(e, index)}
+                          showDelete={true}
+                        />
+                      ) : (
+                        <QuantityStepper
+                          value={currentQty}
+                          min={0}
+                          max={maxQty}
+                          onChange={(newVal) => handleUpdateRequestedItemQty(index, newVal)}
+                          onDelete={() => handleUpdateRequestedItemQty(index, 0)}
+                          showDelete={true}
+                        />
                       )}
                     </div>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      Código: {item.codigo}
-                    </span>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  {item.esExtra ? (
-                    <>
-                      <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-2xs">
-                        <button
-                          type="button"
-                          onClick={(e) => handleUpdateExtraItemQty(e, index, -1)}
-                          className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                          title="Disminuir piezas"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="font-mono font-bold text-xs px-2 text-slate-800 min-w-8 text-center select-none">
-                          {item.cantidadDespachada}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => handleUpdateExtraItemQty(e, index, 1)}
-                          className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                          title="Aumentar piezas"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => handleRemoveExtraItem(e, index)}
-                        className="w-8 h-8 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer"
-                        title="Eliminar extra"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </>
-                  ) : (
-                    <span
-                      className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold ${
-                        item.atendido
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-slate-100 text-slate-800'
-                      }`}
+                  {/* Campo de justificación dinámico: Si el despachador reduce la cantidad de las solicitadas */}
+                  {hasFaltante && (
+                    <div
+                      className="mt-3 pt-3 border-t border-slate-200 animate-fade-in sm:pl-9"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {item.cantidadSolicitada} pzas
-                    </span>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 mb-1.5">
+                        <FileText className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Motivo del ajuste / faltante</span>
+                        <span className="text-[11px] font-normal text-slate-400">(Opcional):</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={item.motivoAjusteDespacho || ''}
+                        onChange={(e) => handleUpdateItemJustification(index, e.target.value)}
+                        placeholder="Ej. Producto dañado en almacén o Falta de stock temporal"
+                        className="w-full text-xs px-3.5 py-2.5 bg-slate-50 hover:bg-white focus:bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 placeholder:text-slate-400 shadow-2xs transition-all font-medium"
+                      />
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Finalize Button - Solo para órdenes pendientes de despacho o surtido */}
@@ -1107,20 +1278,33 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         onInputChange={(val) => setDialog(prev => ({ ...prev, inputValue: val }))}
         onConfirm={dialog.onConfirm}
         onCancel={dialog.onCancel}
-      />
+      >
+        {dialog.children}
+      </ModalDialog>
 
       {/* Modal de Detalle de Transferencia Completada */}
       <TransferDetailModal
         isOpen={Boolean(detailSolicitud)}
         solicitud={detailSolicitud}
-        onClose={() => setDetailSolicitud(null)}
+        onClose={() => {
+          if (detailSolicitud?.id) {
+            transferService.dismissNotification(`tr-falt-${detailSolicitud.id}`);
+            transferService.dismissNotification(`tr-falt-entregados-${detailSolicitud.id}`);
+          }
+          setDetailSolicitud(null);
+        }}
       />
 
       {/* Modal Independiente para Atender y Despachar Faltantes */}
       <DespacharFaltantesModal
         isOpen={Boolean(selectedFaltanteSolicitud)}
         solicitud={selectedFaltanteSolicitud}
-        onClose={() => setSelectedFaltanteSolicitud(null)}
+        onClose={() => {
+          if (selectedFaltanteSolicitud?.id) {
+            transferService.dismissNotification(`tr-falt-${selectedFaltanteSolicitud.id}`);
+          }
+          setSelectedFaltanteSolicitud(null);
+        }}
         onConfirmResolution={handleConfirmFaltantesResolution}
         isProcessing={isProcessing}
       />

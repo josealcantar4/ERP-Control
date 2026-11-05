@@ -38,6 +38,8 @@ function saveLocalSolicitudes(list) {
 let sharedAudioCtx = null;
 let notificationAudioBuffer = null;
 let html5NotificationAudio = null;
+let checkAudioBuffer = null;
+let html5CheckAudio = null;
 let isAudioEngineUnlocked = false;
 
 function getSharedAudioContext() {
@@ -58,7 +60,15 @@ function getHtml5Audio() {
   return html5NotificationAudio;
 }
 
-// Cargar y decodificar el MP3 en memoria de forma asíncrona
+function getHtml5CheckAudio() {
+  if (!html5CheckAudio && typeof Audio !== 'undefined') {
+    html5CheckAudio = new Audio('/check.mp3');
+    html5CheckAudio.preload = 'auto';
+  }
+  return html5CheckAudio;
+}
+
+// Cargar y decodificar el MP3 de notificación en memoria de forma asíncrona
 async function preloadNotificationBuffer() {
   if (notificationAudioBuffer) return notificationAudioBuffer;
   try {
@@ -71,6 +81,22 @@ async function preloadNotificationBuffer() {
     return notificationAudioBuffer;
   } catch (_err) {
     // Si decodeAudioData falla inicialmente porque ctx está suspendido, se reintentará con el primer gesto
+    return null;
+  }
+}
+
+// Cargar y decodificar el MP3 de marcado/check en memoria RAM
+async function preloadCheckBuffer() {
+  if (checkAudioBuffer) return checkAudioBuffer;
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return null;
+    const response = await fetch('/check.mp3');
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    checkAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return checkAudioBuffer;
+  } catch (_err) {
     return null;
   }
 }
@@ -108,9 +134,25 @@ export function unlockAudioEngine() {
     }
   } catch (_e) {}
 
-  // Si el buffer no se había cargado, precargarlo ahora que el usuario interactuó
+  try {
+    const checkAudio = getHtml5CheckAudio();
+    if (checkAudio) {
+      const p = checkAudio.play();
+      if (p && p.then) {
+        p.then(() => {
+          checkAudio.pause();
+          checkAudio.currentTime = 0;
+        }).catch(() => {});
+      }
+    }
+  } catch (_e) {}
+
+  // Si los buffers no se habían cargado, precargarlos ahora que el usuario interactuó
   if (!notificationAudioBuffer) {
     preloadNotificationBuffer();
+  }
+  if (!checkAudioBuffer) {
+    preloadCheckBuffer();
   }
 
   isAudioEngineUnlocked = true;
@@ -140,7 +182,98 @@ if (typeof window !== 'undefined') {
   // Iniciar precarga de red al montar el script
   setTimeout(() => {
     preloadNotificationBuffer();
+    preloadCheckBuffer();
   }, 100);
+}
+
+function playCheckChime() {
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.08);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  } catch (_e) {}
+}
+
+/**
+ * Reproduce el sonido de confirmación al marcar/seleccionar un elemento en listas
+ * (despacho, surtido, recepción física de caja, etc.).
+ * Implementado con Web Audio API buffer decodificado en RAM (0ms de latencia, polifónico).
+ */
+export function playCheckSound() {
+  let playedSuccessfully = false;
+
+  // 1. Web Audio API con buffer en RAM (latencia 0ms, polifónico, sin cortes)
+  try {
+    const ctx = getSharedAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      if (checkAudioBuffer) {
+        const src = ctx.createBufferSource();
+        src.buffer = checkAudioBuffer;
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0.95, ctx.currentTime);
+        src.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        src.start(0);
+        playedSuccessfully = true;
+      } else {
+        preloadCheckBuffer().then((buf) => {
+          if (buf && sharedAudioCtx) {
+            const s = sharedAudioCtx.createBufferSource();
+            s.buffer = buf;
+            const g = sharedAudioCtx.createGain();
+            g.gain.setValueAtTime(0.95, sharedAudioCtx.currentTime);
+            s.connect(g);
+            g.connect(sharedAudioCtx.destination);
+            s.start(0);
+          }
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[Audio] Error al reproducir buffer check:', err);
+  }
+
+  // 2. Elemento HTML5 Audio como refuerzo/fallback
+  if (!playedSuccessfully) {
+    try {
+      const audio = getHtml5CheckAudio();
+      if (audio) {
+        audio.currentTime = 0;
+        const p = audio.play();
+        if (p && p.catch) {
+          p.catch(() => {
+            playCheckChime();
+          });
+        }
+        playedSuccessfully = true;
+      }
+    } catch (_e) {
+      playCheckChime();
+    }
+  }
+
+  // 3. Fallback sintetizado si ambos fallan
+  if (!playedSuccessfully) {
+    playCheckChime();
+  }
 }
 
 function playNotificationChime() {
@@ -937,6 +1070,45 @@ export const transferService = {
     return true;
   },
 
+  async updateItemDespachoQty(solicitudId, itemIndex, cantidadDespachada, motivoAjuste = undefined) {
+    if (isFirebaseConfigured) {
+      try {
+        const docRef = doc(db, 'solicitudes', solicitudId);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          const items = [...(data.items || [])];
+          if (items[itemIndex]) {
+            items[itemIndex].cantidadDespachada = cantidadDespachada;
+            if (motivoAjuste !== undefined) {
+              items[itemIndex].motivoAjusteDespacho = motivoAjuste;
+            }
+            const newEstado = data.estado === 'enviada' ? 'en_despacho' : data.estado;
+            await updateDoc(docRef, { items, estado: newEstado });
+          }
+        }
+      } catch (err) {
+        console.warn('Error actualizando cantidad de despacho en Firebase:', err);
+      }
+    }
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.map(s => {
+      if (s.id === solicitudId) {
+        const items = [...(s.items || [])];
+        if (items[itemIndex]) {
+          items[itemIndex] = {
+            ...items[itemIndex],
+            cantidadDespachada,
+            ...(motivoAjuste !== undefined ? { motivoAjusteDespacho: motivoAjuste } : {})
+          };
+        }
+        return { ...s, items };
+      }
+      return s;
+    }));
+    return true;
+  },
+
   async addExtraItem(solicitudId, extraItem) {
     const newItem = {
       codigo: extraItem.codigo,
@@ -1033,10 +1205,27 @@ export const transferService = {
     return true;
   },
 
-  async completeSolicitud(solicitudId, folio = null) {
-    const updateData = { estado: 'completada' };
+  async completeSolicitud(solicitudId, folio = null, dispatchDetails = null) {
+    const updateData = {
+      estado: 'completada',
+      fechaDespacho: new Date().toISOString()
+    };
     if (folio) {
       updateData.folio = folio;
+    }
+    if (dispatchDetails) {
+      if (dispatchDetails.items) {
+        updateData.items = dispatchDetails.items;
+      }
+      if (dispatchDetails.ajustesDespacho) {
+        updateData.ajustesDespacho = dispatchDetails.ajustesDespacho;
+      }
+      if (dispatchDetails.usuarioDespachador) {
+        updateData.usuarioDespachador = dispatchDetails.usuarioDespachador;
+      }
+      if (dispatchDetails.observacionesDespacho) {
+        updateData.observaciones = dispatchDetails.observacionesDespacho;
+      }
     }
 
     if (isFirebaseConfigured) {
@@ -1209,6 +1398,72 @@ export const transferService = {
     return true;
   },
 
+  // Finalizar recepción con reporte detallado de discrepancias (faltantes, ausencias y extras)
+  async receiveWithDiscrepancies(solicitudId, discrepancyPayload = {}) {
+    if (!solicitudId) return false;
+    const {
+      discrepancias = [],
+      observaciones = '',
+      usuarioReceptor = '',
+      itemsActualizados = null
+    } = discrepancyPayload;
+
+    const faltantes = discrepancias
+      .filter(d => d.tipo === 'faltante' || d.tipo === 'ausencia_total')
+      .map(d => ({
+        codigo: d.codigo,
+        descripcion: d.descripcion,
+        cantidadSolicitada: d.cantidadEsperada,
+        cantidadDespachada: d.cantidadEsperada,
+        cantidadRecibida: d.cantidadRecibida,
+        cantidadFaltante: Math.abs(d.diferencia),
+        esAusenciaTotal: d.tipo === 'ausencia_total'
+      }));
+
+    const extras = discrepancias
+      .filter(d => d.tipo === 'extra')
+      .map(d => ({
+        codigo: d.codigo,
+        descripcion: d.descripcion,
+        cantidadEsperada: d.cantidadEsperada,
+        cantidadRecibida: d.cantidadRecibida,
+        cantidadExtra: d.diferencia
+      }));
+
+    const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
+
+    const updatePayload = {
+      estado,
+      reporteFaltantes: faltantes,
+      reporteDiscrepancias: {
+        fecha: new Date().toISOString(),
+        usuarioReceptor: usuarioReceptor || '',
+        observaciones: observaciones || '',
+        discrepancias: discrepancias,
+        totalFaltantes: faltantes.reduce((sum, f) => sum + (f.cantidadFaltante || 0), 0),
+        totalExtras: extras.reduce((sum, e) => sum + (e.cantidadExtra || 0), 0),
+        resuelto: false
+      },
+      fechaReporteFaltantes: new Date().toISOString()
+    };
+
+    if (Array.isArray(itemsActualizados) && itemsActualizados.length > 0) {
+      updatePayload.items = itemsActualizados;
+    }
+
+    if (isFirebaseConfigured) {
+      try {
+        await updateDoc(doc(db, 'solicitudes', solicitudId), updatePayload);
+      } catch (err) {
+        console.warn('Error guardando discrepancias de recepción en Firebase:', err);
+      }
+    }
+
+    const list = getLocalSolicitudes();
+    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+    return true;
+  },
+
   // Atender y despachar reporte de faltantes desde Bodega/Matriz
   async resolveReporteFaltantes(solicitudId, resolutionData) {
     if (!solicitudId) return false;
@@ -1216,6 +1471,8 @@ export const transferService = {
       i => i.despachado && Number(i.cantidadDespachada || 0) > 0
     );
     const nuevoEstado = hasDispatchedItems ? 'faltantes_despachados' : 'cerrada_con_faltantes';
+
+    const currentSol = getLocalSolicitudes().find(s => s.id === solicitudId);
 
     const updatePayload = {
       estado: nuevoEstado,
@@ -1229,6 +1486,15 @@ export const transferService = {
       fechaDespachoFaltantes: hasDispatchedItems ? new Date().toISOString() : null
     };
 
+    if (currentSol?.reporteDiscrepancias) {
+      updatePayload.reporteDiscrepancias = {
+        ...currentSol.reporteDiscrepancias,
+        resuelto: true,
+        fechaResolucion: new Date().toISOString(),
+        usuarioResolucion: resolutionData.usuarioResolucion || ''
+      };
+    }
+
     if (isFirebaseConfigured) {
       try {
         await updateDoc(doc(db, 'solicitudes', solicitudId), updatePayload);
@@ -1239,6 +1505,10 @@ export const transferService = {
 
     const list = getLocalSolicitudes();
     saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+
+    // Descartar de inmediato la notificación de faltantes/discrepancias
+    dismissNotification(`tr-falt-${solicitudId}`);
+
     return true;
   },
 
@@ -1391,8 +1661,23 @@ export const transferService = {
         }
       }
 
-      // 3. NOTIFICACIÓN: Inconsistencias o faltantes reportados (para Despachador de la sede que surtió)
-      if (s.estado === 'recibida_incompleta') {
+      // 3. NOTIFICACIÓN: Inconsistencias, faltantes o discrepancias reportadas (para Despachador de la sede que surtió)
+      // Se muestra ÚNICAMENTE si está verdaderamente pendiente de atención (no si ya fue atendido o re-despachado)
+      const yaAtendido = Boolean(
+        s.resolucionFaltantes ||
+        s.estado === 'faltantes_despachados' ||
+        s.estado === 'cerrada_con_faltantes' ||
+        s.estado === 'recibida' ||
+        s.estado === 'completada' ||
+        s.reporteDiscrepancias?.resuelto === true
+      );
+
+      const isPendienteAtencion = !yaAtendido && (
+        s.estado === 'recibida_incompleta' ||
+        (s.reporteDiscrepancias && !s.reporteDiscrepancias.resuelto)
+      );
+
+      if (isPendienteAtencion) {
         const isForMe = canUserDispatch(s, currentUser);
 
         if (isForMe) {
@@ -1400,18 +1685,29 @@ export const transferService = {
             ? `${recipientSede} (${recipientArea})`
             : (recipientSede || 'Sucursal');
 
+          const hasDiscrepancy = Boolean(s.reporteDiscrepancias);
+          const totalFalt = s.reporteDiscrepancias?.totalFaltantes ?? s.reporteFaltantes?.length ?? 0;
+          const totalExt = s.reporteDiscrepancias?.totalExtras ?? 0;
+
+          let diffDetails = [];
+          if (totalFalt > 0) diffDetails.push(`${totalFalt} faltantes`);
+          if (totalExt > 0) diffDetails.push(`${totalExt} extras`);
+          const diffSummaryText = diffDetails.length > 0 ? ` (${diffDetails.join(', ')})` : '';
+
           notifs.push({
             id: `tr-falt-${s.id}`,
             solicitudId: s.id,
             categoria: 'transferencia',
             tipo: 'reporte_faltantes',
-            titulo: `Faltantes: ${fromTxt}`,
-            subtitulo: `Folio: ${solFolio}`,
-            mensaje: `${fromTxt} reportó productos faltantes en el folio ${solFolio}. Requiere re-despacho de faltantes.`,
-            fecha: s.fechaReporteFaltantes || s.fecha || new Date().toISOString(),
+            titulo: hasDiscrepancy ? `Discrepancias: ${fromTxt}` : `Faltantes: ${fromTxt}`,
+            subtitulo: `Folio: ${solFolio}${diffSummaryText}`,
+            mensaje: hasDiscrepancy
+              ? `${fromTxt} reportó diferencias en el folio ${solFolio}${diffSummaryText}. Revisa el reporte para aclaración o re-despacho.`
+              : `${fromTxt} reportó productos faltantes en el folio ${solFolio}. Requiere re-despacho de faltantes.`,
+            fecha: s.reporteDiscrepancias?.fecha || s.fechaReporteFaltantes || s.fecha || new Date().toISOString(),
             solicitud: s,
             actionScreen: 'despachar',
-            actionText: 'Revisar Faltantes'
+            actionText: hasDiscrepancy ? 'Ver Discrepancias' : 'Revisar Faltantes'
           });
         }
       }
@@ -1475,6 +1771,7 @@ export const transferService = {
   getTransferParticipants,
 
   playNotificationSound,
+  playCheckSound,
   unlockAudioEngine,
   dismissNotification,
   getDismissedNotifications

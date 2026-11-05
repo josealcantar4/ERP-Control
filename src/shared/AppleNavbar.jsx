@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pill, LogOut, Wifi, WifiOff, Users, Bell } from 'lucide-react';
+import { LogOut, Wifi, WifiOff, Users, Bell } from 'lucide-react';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
 
@@ -24,8 +24,10 @@ export function AppleNavbar({
           onClick={() => onNavigate && onNavigate('dashboard')}
           className="flex items-center gap-3 cursor-pointer select-none"
         >
-          <div className="w-9 h-9 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-sm">
-            <Pill className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-sky-500 to-teal-600 text-white flex items-center justify-center shadow-sm overflow-hidden shrink-0">
+            <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full p-1.5">
+              <path d="M224 128H288V224H384V288H288V384H224V288H128V224H224V128Z" fill="white" />
+            </svg>
           </div>
           <div>
             <div className="flex items-center gap-1.5">

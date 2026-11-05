@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pill, Lock, User, ArrowRight, AlertCircle } from 'lucide-react';
+import { Lock, User, ArrowRight, AlertCircle } from 'lucide-react';
 import { userService } from './userService';
 
 export function LoginScreen({ onLoginSuccess }) {
@@ -28,9 +28,11 @@ export function LoginScreen({ onLoginSuccess }) {
       
       {/* Brand Header */}
       <div className="text-center mb-6 space-y-1.5">
-        <div className="w-14 h-14 rounded-3xl bg-blue-600 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20">
-          <Pill className="w-7 h-7" />
-        </div>
+        <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-sky-500 to-teal-600 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20 overflow-hidden">
+            <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full p-2">
+              <path d="M224 128H288V224H384V288H288V384H224V288H128V224H224V128Z" fill="white" />
+            </svg>
+          </div>
         <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
           ERP Control
         </h1>

@@ -904,15 +904,23 @@ function AdminUserModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 overflow-hidden p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+        className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900">{editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}</h3>
+        {/* ENCABEZADO ESTÁTICO */}
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900">
+              {editingUser ? `Modificar a @${editingUser.username}` : 'Registrar Nuevo Usuario'}
+            </h3>
+          </div>
           <button
             type="button"
             onClick={handleClose}
@@ -921,12 +929,17 @@ function AdminUserModal({
             <X className="w-4 h-4" />
           </button>
         </div>
-        {formError && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" /><span>{formError}</span>
-          </div>
-        )}
-        <form onSubmit={handleSaveUser} className="space-y-3.5 text-xs">
+
+        {/* FORMULARIO CON CONTENIDO DESPLAZABLE Y BOTONES ESTÁTICOS */}
+        <form onSubmit={handleSaveUser} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {/* CONTENIDO DESPLAZABLE */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
+            {formError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
           <div>
             <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre Completo *</label>
             <input type="text" required placeholder="Ej. Juan Pérez" value={userForm.nombre} onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
@@ -1178,9 +1191,21 @@ function AdminUserModal({
             </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
-            <button type="button" onClick={handleClose} className="px-4 py-2.5 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
-            <button type="submit" className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
+          </div>
+
+          {/* PIE DE ACCIONES ESTÁTICO (SIEMPRE VISIBLE) */}
+          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-2xl cursor-pointer transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer"
+            >
               {editingUser ? 'Guardar Cambios' : 'Registrar'}
             </button>
           </div>
@@ -1215,18 +1240,24 @@ function AdminSedeModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 p-4 sm:p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+        className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <Building2 className="w-4 h-4" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
+          </div>
           <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
         </div>
-        <form onSubmit={handleSaveSede} className="space-y-3.5 text-xs">
+        <form onSubmit={handleSaveSede} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
           <div>
             <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre de la Sede *</label>
             <input type="text" required placeholder="Ej. Sucursal San Jorge o Matriz Centro" value={sedeForm.nombre} onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
@@ -1348,9 +1379,10 @@ function AdminSedeModal({
               Las áreas asociadas provienen del catálogo de Áreas. Si una sede tiene sub-áreas, se requerirá seleccionarla al solicitar o despachar.
             </p>
           </div>
+          </div>
 
-          <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
+          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
             <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
               {editingSede ? 'Actualizar Sede' : 'Guardar Sede'}
             </button>
@@ -1381,52 +1413,59 @@ function AdminAreaModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 p-6 space-y-4 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto my-auto overscroll-contain ${cardClass}`}
+        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <Layers className="w-4 h-4" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
+          </div>
           <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
         </div>
-        <form onSubmit={handleSaveArea} className="space-y-3.5 text-xs">
-          <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre del Área *</label>
-            <input
-              type="text"
-              required
-              placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
-              value={areaForm.nombre}
-              onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <div 
-            onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}
-            className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
-          >
-            <input
-              type="checkbox"
-              checked={areaForm.excluirTransferencias}
-              onChange={(e) => setAreaForm({ ...areaForm, excluirTransferencias: e.target.checked })}
-              className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-            />
+        <form onSubmit={handleSaveArea} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
             <div>
-              <span className="block text-xs font-bold text-slate-800">
-                Excluir de transferencias y pedidos
-              </span>
-              <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
-                Esta área no participará para pedir ni despachar productos (ej. Administrativo, Contabilidad, Dirección). No aparecerá como destino de transferencias ni cajas.
-              </span>
+              <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre del Área *</label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
+                value={areaForm.nombre}
+                onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div 
+              onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}
+              className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
+            >
+              <input
+                type="checkbox"
+                checked={areaForm.excluirTransferencias}
+                onChange={(e) => setAreaForm({ ...areaForm, excluirTransferencias: e.target.checked })}
+                className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+              />
+              <div>
+                <span className="block text-xs font-bold text-slate-800">
+                  Excluir de transferencias y pedidos
+                </span>
+                <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
+                  Esta área no participará para pedir ni despachar productos (ej. Administrativo, Contabilidad, Dirección). No aparecerá como destino de transferencias ni cajas.
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
-            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 text-slate-600 font-semibold rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors">Cancelar</button>
+          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
             <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
               {editingArea ? 'Actualizar' : 'Guardar Área'}
             </button>

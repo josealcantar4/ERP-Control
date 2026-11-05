@@ -21,7 +21,8 @@ export function ModalDialog({
   onInputChange,
   onConfirm,
   onCancel,
-  onClose
+  onClose,
+  children
 }) {
   const isConfirmActionRef = React.useRef(false);
 
@@ -66,7 +67,7 @@ export function ModalDialog({
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 overflow-hidden p-5 sm:p-6 space-y-4 my-auto overscroll-contain max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] ${cardClass}`}
+        className={`bg-white rounded-3xl w-full ${children ? 'max-w-md' : 'max-w-sm'} shadow-2xl border border-slate-100 overflow-hidden p-5 sm:p-6 space-y-4 my-auto overscroll-contain max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col ${cardClass}`}
       >
         
         {/* Header Icon + Title */}
@@ -102,6 +103,13 @@ export function ModalDialog({
             )}
           </div>
         </div>
+
+        {/* Custom Body / Children Content */}
+        {children && (
+          <div className="pt-0.5 min-h-0 flex-1 overflow-y-auto">
+            {children}
+          </div>
+        )}
 
         {/* Optional Input for Prompt type with AutoScroll & Carousel */}
         {type === 'prompt' && (

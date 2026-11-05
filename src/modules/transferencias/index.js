@@ -2,6 +2,7 @@ export {
   transferService,
   formatTransferFolio,
   playNotificationSound,
+  playCheckSound,
   unlockAudioEngine,
   dismissNotification,
   getDismissedNotifications,

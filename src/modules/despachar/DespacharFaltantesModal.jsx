@@ -10,9 +10,11 @@ import {
   Building2,
   Calendar,
   FileText,
-  Loader2
+  Loader2,
+  Minus,
+  Plus
 } from 'lucide-react';
-import { formatTransferFolio } from '../transferencias';
+import { formatTransferFolio, playCheckSound } from '../transferencias';
 import { MarqueeText } from '../../shared/MarqueeText';
 import { useModalAnimation } from '../../hooks';
 
@@ -59,15 +61,59 @@ export function DespacharFaltantesModal({
   if (!shouldRender || !currentSolicitud) return null;
 
   const toggleItemDespachado = (idx, despachado) => {
+    if (despachado) {
+      playCheckSound();
+    }
     setItemsState(prev =>
       prev.map(it => (it.index === idx ? { ...it, despachado } : it))
     );
   };
 
-  const updateItemCantidad = (idx, val) => {
-    const num = Math.max(1, parseInt(val, 10) || 1);
+  const updateItemCantidad = (idx, rawVal) => {
+    // Si el usuario borra el valor con retroceso, permitimos que quede vacío en el input para que pueda teclear libremente
+    if (rawVal === '') {
+      setItemsState(prev =>
+        prev.map(it => (it.index === idx ? { ...it, cantidadDespachada: '' } : it))
+      );
+      return;
+    }
+
+    const item = itemsState.find(it => it.index === idx);
+    const max = item?.cantidadFaltanteReportada || 999999;
+    const parsed = parseInt(rawVal, 10);
+    if (isNaN(parsed)) return;
+
+    const clamped = Math.max(1, Math.min(max, parsed));
     setItemsState(prev =>
-      prev.map(it => (it.index === idx ? { ...it, cantidadDespachada: num } : it))
+      prev.map(it => (it.index === idx ? { ...it, cantidadDespachada: clamped } : it))
+    );
+  };
+
+  const handleBlurCantidad = (idx) => {
+    setItemsState(prev =>
+      prev.map(it => {
+        if (it.index === idx) {
+          const max = it.cantidadFaltanteReportada || 1;
+          const num = parseInt(it.cantidadDespachada, 10);
+          const validNum = isNaN(num) || num < 1 ? 1 : Math.min(max, num);
+          return { ...it, cantidadDespachada: validNum };
+        }
+        return it;
+      })
+    );
+  };
+
+  const stepItemCantidad = (idx, delta) => {
+    setItemsState(prev =>
+      prev.map(it => {
+        if (it.index === idx) {
+          const max = it.cantidadFaltanteReportada || 1;
+          const current = parseInt(it.cantidadDespachada, 10) || 1;
+          const next = Math.max(1, Math.min(max, current + delta));
+          return { ...it, cantidadDespachada: next };
+        }
+        return it;
+      })
     );
   };
 
@@ -77,8 +123,14 @@ export function DespacharFaltantesModal({
     );
   };
 
-  const hasAnyDispatched = itemsState.some(i => i.despachado && i.cantidadDespachada > 0);
-  const totalItemsToDispatch = itemsState.filter(i => i.despachado).length;
+  const updateItemMotivoParcial = (idx, motivo) => {
+    setItemsState(prev =>
+      prev.map(it => (it.index === idx ? { ...it, motivoParcial: motivo } : it))
+    );
+  };
+
+  const hasAnyDispatched = itemsState.some(i => i.despachado && (parseInt(i.cantidadDespachada, 10) || 0) > 0);
+  const totalItemsToDispatch = itemsState.filter(i => i.despachado && (parseInt(i.cantidadDespachada, 10) || 0) > 0).length;
 
   const handleConfirm = () => {
     const fullFolio = folioEnvioDigits.trim() ? `TR${folioEnvioDigits.trim()}` : currentSolicitud.folio || '';
@@ -86,14 +138,20 @@ export function DespacharFaltantesModal({
     const payload = {
       folioEnvio: fullFolio,
       notas: notas.trim(),
-      itemsResolucion: itemsState.map(i => ({
-        codigo: i.codigo,
-        descripcion: i.descripcion,
-        cantidadFaltanteReportada: i.cantidadFaltanteReportada,
-        despachado: i.despachado,
-        cantidadDespachada: i.despachado ? i.cantidadDespachada : 0,
-        motivoNoDespacho: !i.despachado ? i.motivoNoDespacho : ''
-      }))
+      itemsResolucion: itemsState.map(i => {
+        const rawQty = parseInt(i.cantidadDespachada, 10);
+        const validQty = isNaN(rawQty) || rawQty < 1 ? 1 : Math.min(i.cantidadFaltanteReportada, rawQty);
+        return {
+          codigo: i.codigo,
+          descripcion: i.descripcion,
+          cantidadFaltanteReportada: i.cantidadFaltanteReportada,
+          despachado: i.despachado,
+          cantidadDespachada: i.despachado ? validQty : 0,
+          motivoNoDespacho: !i.despachado ? i.motivoNoDespacho : '',
+          motivoParcial: i.despachado && validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : '',
+          motivo: !i.despachado ? i.motivoNoDespacho : (validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : '')
+        };
+      })
     };
 
     onConfirmResolution(payload);
@@ -209,19 +267,62 @@ export function DespacharFaltantesModal({
 
                   {/* CONTROLES CONDICIONALES SEGÚN SELECCIÓN */}
                   {it.despachado ? (
-                    <div className="flex items-center gap-2 pt-1 border-t border-emerald-100 text-xs">
-                      <span className="text-emerald-800 font-semibold">Cantidad a enviar:</span>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          min="1"
-                          max={it.cantidadFaltanteReportada}
-                          value={it.cantidadDespachada}
-                          onChange={e => updateItemCantidad(it.index, e.target.value)}
-                          className="w-16 bg-white border border-emerald-300 rounded-lg px-2 py-1 text-center font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        <span className="text-[11px] text-emerald-700 font-medium">piezas</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-100 text-xs">
+                      <span className="text-emerald-900 font-semibold">Cantidad a enviar:</span>
+                      <div className="flex items-center gap-2">
+                        {/* Control stepper con [ - ] input [ + ] */}
+                        <div className="inline-flex items-center bg-white border border-emerald-300 rounded-xl shadow-2xs overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => stepItemCantidad(it.index, -1)}
+                            disabled={(parseInt(it.cantidadDespachada, 10) || 1) <= 1}
+                            className="w-7 h-7 flex items-center justify-center text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 active:scale-90 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                            title="Disminuir piezas (-1)"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={it.cantidadDespachada !== undefined ? it.cantidadDespachada : ''}
+                            onChange={e => updateItemCantidad(it.index, e.target.value)}
+                            onBlur={() => handleBlurCantidad(it.index)}
+                            className="w-12 py-1 text-center font-mono font-extrabold text-xs text-slate-900 bg-transparent focus:outline-none focus:bg-emerald-50/50"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => stepItemCantidad(it.index, 1)}
+                            disabled={(parseInt(it.cantidadDespachada, 10) || 1) >= it.cantidadFaltanteReportada}
+                            className="w-7 h-7 flex items-center justify-center text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 active:scale-90 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                            title="Aumentar piezas (+1)"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <span className="text-[11px] font-mono text-emerald-800 font-bold">
+                          de {it.cantidadFaltanteReportada} pz
+                        </span>
                       </div>
+
+                      {/* Campo de justificación opcional si envía menos de lo que faltaba */}
+                      {(parseInt(it.cantidadDespachada, 10) || 1) < it.cantidadFaltanteReportada && (
+                        <div className="w-full mt-2.5 pt-2 border-t border-emerald-100 flex flex-col sm:flex-row sm:items-center gap-1.5 animate-fade-in">
+                          <label className="text-[11px] font-bold text-emerald-900 shrink-0 flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-emerald-600" />
+                            <span>Motivo faltante parcial (opcional):</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={it.motivoParcial || ''}
+                            onChange={e => updateItemMotivoParcial(it.index, e.target.value)}
+                            placeholder="Ej. Solo cuento con 2 pzas en almacén"
+                            className="w-full text-xs px-2.5 py-1.5 bg-white border border-emerald-200 hover:border-emerald-300 focus:border-emerald-500 rounded-xl focus:outline-none text-slate-800 placeholder:text-slate-400 font-medium"
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 pt-1 border-t border-slate-200 text-xs">

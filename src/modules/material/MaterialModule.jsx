@@ -24,6 +24,7 @@ import { organizationService } from '../usuarios/organizationService';
 import { MaterialFormModal } from './MaterialFormModal';
 import { MaterialTypesModal } from './MaterialTypesModal';
 import { MaterialPersonalModal } from './MaterialPersonalModal';
+import { playCheckSound } from '../../shared';
 import { ModalDialog } from '../../shared/ModalDialog';
 
 export function MaterialModule({ currentUser, onBack, onRefresh }) {
@@ -217,6 +218,9 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
 
   const handleToggleEstado = async (item) => {
     const nextStatus = item.estado === 'activo' ? 'reemplazado' : 'activo';
+    if (nextStatus === 'reemplazado') {
+      playCheckSound();
+    }
     await materialService.markAsStatus(item.id, nextStatus);
   };
 

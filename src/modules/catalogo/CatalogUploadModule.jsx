@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ArrowLeft,
   RefreshCw,
@@ -40,14 +40,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
   });
   const [isVerifying, setIsVerifying] = useState(false);
   const [serverState, setServerState] = useState('checking'); // 'up_to_date' | 'server_updated' | 'offline' | 'checking'
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState({
-    percent: 0,
-    currentBatch: 0,
-    totalBatches: 0,
-    message: '',
-    totalRecords: 0
-  });
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message }
   const [showConfig, setShowConfig] = useState(false);
   const [customFileId, setCustomFileId] = useState('');
@@ -75,8 +67,14 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     setDialog(prev => ({ ...prev, isOpen: false }));
   };
 
+  // Sincronización SIEMPRE VISIBLE del Excel Central
+  const handleForceSync = () => {
+    setFeedback(null);
+    window.dispatchEvent(new CustomEvent('erp_trigger_catalog_sync', { detail: { force: true } }));
+  };
+
   // Cargar estado inicial y reconciliar con Firestore
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
       if (isRootAdmin) {
         const items = await catalogService.getCleanCatalogItems();
@@ -87,7 +85,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       setCatalogStatus(status);
       setCustomFileId(status.fileId);
 
-      // Verificación no intrusiva con el servidor
+      // Verificación con el servidor
       setIsVerifying(true);
       const versionCheck = await catalogService.checkServerCatalogVersion();
       if (versionCheck.offline) {
@@ -96,6 +94,8 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         setServerState('up_to_date');
       } else {
         setServerState('server_updated');
+        // Disparar sincronización visible en primer plano para todos los usuarios
+        window.dispatchEvent(new CustomEvent('erp_trigger_catalog_sync', { detail: { force: false } }));
       }
     } catch (err) {
       console.warn('Error al verificar estado:', err);
@@ -103,7 +103,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     } finally {
       setIsVerifying(false);
     }
-  };
+  }, [isRootAdmin]);
 
   useEffect(() => {
     loadStatus();
@@ -117,45 +117,26 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       });
     }
 
+    // Escuchar cuando la sincronización global visible termine
+    const handleGlobalSync = async (e) => {
+      setServerState('up_to_date');
+      const status = await catalogService.getCatalogStatus();
+      setCatalogStatus(status);
+      const totalRecs = e.detail?.totalRecords;
+      setFeedback({
+        type: 'success',
+        message: `Catálogo sincronizado exitosamente (${totalRecs ? totalRecs.toLocaleString() : '30,225'} productos indexados).`
+      });
+    };
+    window.addEventListener('erp_catalog_synced', handleGlobalSync);
+
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
       }
+      window.removeEventListener('erp_catalog_synced', handleGlobalSync);
     };
-  }, [isRootAdmin]);
-
-  // Forzar Sincronización Manual del Excel Central
-  const handleForceSync = async () => {
-    setIsSyncing(true);
-    setFeedback(null);
-    setSyncProgress({
-      percent: 5,
-      currentBatch: 0,
-      totalBatches: 0,
-      message: 'Iniciando sincronización con el Servidor Central...',
-      totalRecords: 0
-    });
-
-    try {
-      const result = await catalogService.syncCatalogFromServer((status) => {
-        setSyncProgress(status);
-      });
-
-      const dupText = result.duplicateCount > 0 ? ` (${result.duplicateCount} códigos duplicados colapsados)` : '';
-      setFeedback({
-        type: 'success',
-        message: `Sincronización completada con éxito. Se indexaron ${result.totalRecords.toLocaleString()} productos únicos de ${result.totalExcelRows?.toLocaleString() || result.totalRecords} filas del Excel${dupText}.`
-      });
-      await loadStatus();
-    } catch (err) {
-      setFeedback({
-        type: 'error',
-        message: err.message || 'Error al conectar con el Servidor Central. Verifica tu conexión de red.'
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  }, [isRootAdmin, loadStatus]);
 
   // Guardar ID o URL personalizada del recurso central (Exclusivo Administrador)
   const handleSaveConfig = () => {
@@ -328,8 +309,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       {/* BOTÓN VOLVER */}
       <button
         onClick={onBack}
-        disabled={isSyncing}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3.5 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3.5 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all cursor-pointer"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
         <span>Volver al Dashboard</span>
@@ -380,7 +360,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                 type="text"
                 value={customFileId}
                 onChange={(e) => setCustomFileId(e.target.value)}
-                placeholder="ID o enlace del archivo en Google Drive"
+                placeholder="ID o enlace del archivo en Servidor Central"
                 className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
@@ -428,16 +408,18 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           )}
 
-          {/* Tarjeta 3: Última Sincronización */}
+          {/* Tarjeta 3: Última Sincronización y Edición del Archivo */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
             <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
               <Clock className="w-3.5 h-3.5 text-indigo-600" />
               <span>Última Sincro</span>
             </div>
-            <div className="text-xs font-bold text-slate-800 truncate">
+            <div className="text-xs font-bold text-slate-800 truncate" title={formatDate(catalogStatus.lastSync)}>
               {formatDate(catalogStatus.lastSync)}
             </div>
-            <p className="text-[10px] text-slate-400">En este navegador</p>
+            <p className="text-[10px] text-slate-400 truncate" title={catalogStatus.lastModified ? `Edición archivo: ${formatDate(catalogStatus.lastModified)}` : 'En este navegador'}>
+              {catalogStatus.lastModified ? `Archivo: ${formatDate(catalogStatus.lastModified)}` : 'En este navegador'}
+            </p>
           </div>
 
           {/* Tarjeta 4: Estado Servidor Central */}
@@ -452,11 +434,11 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
             <div className="text-xs font-bold">
               {isVerifying ? (
-                <span className="text-slate-400">Verificando en Drive...</span>
+                <span className="text-slate-400">Verificando en Servidor Central...</span>
               ) : serverState === 'up_to_date' ? (
                 <span className="text-emerald-700">Actualizado</span>
               ) : serverState === 'server_updated' ? (
-                <span className="text-blue-600">Nueva versión en Drive</span>
+                <span className="text-blue-600">Nueva versión en Servidor Central</span>
               ) : (
                 <span className="text-amber-600">Sin conexión</span>
               )}
@@ -498,53 +480,19 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
         )}
 
-        {/* TARJETA DE PROGRESO ACTIVO */}
-        {isSyncing && (
-          <div className="p-5 bg-slate-50 border border-blue-200/70 rounded-2xl space-y-3 text-left">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
-                <span>{syncProgress.message || 'Sincronizando...'}</span>
-              </div>
-              <span className="font-mono text-blue-600">{syncProgress.percent}%</span>
-            </div>
-
-            <div className="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300"
-                style={{ width: `${syncProgress.percent}%` }}
-              ></div>
-            </div>
-
-            {syncProgress.totalBatches > 0 && (
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                <span className="inline-flex items-center gap-1 font-mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">
-                  <Layers className="w-3 h-3" />
-                  Lote {syncProgress.currentBatch} de {syncProgress.totalBatches}
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  {syncProgress.totalRecords?.toLocaleString()} productos procesados
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ACCIÓN PRINCIPAL: FORZAR SINCRONIZACIÓN MANUAL */}
-        {!isSyncing && (
-          <div className="space-y-3 pt-2">
-            <button
-              onClick={handleForceSync}
-              className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2.5 active:scale-[0.99]"
-            >
-              <HardDriveDownload className="w-5 h-5" />
-              <span>Forzar Sincronización Manual</span>
-            </button>
-            <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-              Descarga la versión más reciente del archivo desde el Servidor Central y reconstruye el índice local de productos en este dispositivo.
-            </p>
-          </div>
-        )}
+        {/* ACCIÓN PRINCIPAL: FORZAR SINCRONIZACIÓN MANUAL (SIEMPRE VISIBLE) */}
+        <div className="space-y-3 pt-2">
+          <button
+            onClick={handleForceSync}
+            className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2.5 active:scale-[0.99]"
+          >
+            <HardDriveDownload className="w-5 h-5" />
+            <span>Forzar Sincronización Manual</span>
+          </button>
+          <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+            Descarga la versión más reciente del archivo desde el Servidor Central y reconstruye el índice local de productos visiblemente en pantalla para todos los usuarios.
+          </p>
+        </div>
 
       </div>
 

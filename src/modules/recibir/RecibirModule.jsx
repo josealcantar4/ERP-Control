@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserReceive } from '../transferencias';
-import { transitionView } from '../../shared';
-import { useModalAnimation } from '../../hooks';
+import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X, RotateCcw, FileText, ChevronRight } from 'lucide-react';
+import { transferService, formatTransferFolio, canUserReceive, playCheckSound } from '../transferencias';
+import { transitionView, QuantityStepper, DiscrepancySummaryModal } from '../../shared';
 
 export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
@@ -12,9 +10,14 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
   });
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({});
+  const [receivedQuantities, setReceivedQuantities] = useState({});
   const [checkedNewFaltantes, setCheckedNewFaltantes] = useState({});
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [confirmIncomplete, setConfirmIncomplete] = useState(false);
+  const [newFaltantesQuantities, setNewFaltantesQuantities] = useState({});
+  
+  // Estado para el modal de resumen de discrepancias
+  const [isDiscrepancyModalOpen, setIsDiscrepancyModalOpen] = useState(false);
+  const [discrepanciesToReport, setDiscrepanciesToReport] = useState([]);
+
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
     return list.length === 0;
@@ -41,12 +44,34 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     return () => unsubscribe();
   }, [currentUser, selectedOrder?.id]);
 
+  // Listener para apertura inmediata reactiva al presionar notificaciones sin esperar remount
+  useEffect(() => {
+    const handleOpenEvent = (e) => {
+      const detail = e.detail;
+      if (detail && detail.screen === 'recibir' && detail.orderId) {
+        const all = (solicitudes && solicitudes.length > 0)
+          ? solicitudes
+          : (transferService.getLocalSolicitudes() || []).filter(s => canUserReceive(s, currentUser));
+        const found = all.find(s => s.id === detail.orderId);
+        if (found) {
+          openOrder(found);
+          transferService.dismissNotification(`tr-falt-env-${found.id}`);
+          transferService.dismissNotification(`tr-comp-${found.id}`);
+        }
+      }
+    };
+    window.addEventListener('erp_open_solicitud', handleOpenEvent);
+    return () => window.removeEventListener('erp_open_solicitud', handleOpenEvent);
+  }, [solicitudes, currentUser]);
+
   const openOrder = (sol) => {
     transitionView(() => {
       setSelectedOrder(sol);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
       setCheckedItems({});
+      setReceivedQuantities({});
       setCheckedNewFaltantes({});
+      setNewFaltantesQuantities({});
       if (sol && sol.id) {
         sessionStorage.setItem('erp_recibir_order_id', sol.id);
       } else {
@@ -60,39 +85,134 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       setSelectedOrder(null);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
       setCheckedItems({});
+      setReceivedQuantities({});
       setCheckedNewFaltantes({});
+      setNewFaltantesQuantities({});
       sessionStorage.removeItem('erp_recibir_order_id');
     }, { direction: 'back' });
   };
 
-  const toggleItem = (index) => {
-    setCheckedItems(prev => ({ ...prev, [index]: !prev[index] }));
+  const getExpectedQty = (item) => Number(item?.cantidadDespachada ?? item?.cantidadSolicitada ?? 1);
+  const getReceivedQty = (index, item) => {
+    return receivedQuantities[index] !== undefined ? receivedQuantities[index] : getExpectedQty(item);
   };
 
-  const toggleNewFaltante = (index) => {
-    setCheckedNewFaltantes(prev => ({ ...prev, [index]: !prev[index] }));
+  // Ajuste de cantidades con stepper [ - ] / [ + ] / [ 🗑️ ]
+  const handleQuantityChange = (index, newQty) => {
+    const item = selectedOrder?.items?.[index];
+    if (!item) return;
+    if (!checkedItems[index]) {
+      playCheckSound();
+    }
+    setReceivedQuantities(prev => ({ ...prev, [index]: newQty }));
+    setCheckedItems(prev => ({ ...prev, [index]: true }));
   };
 
+  // Toque sobre la fila: Si el producto tiene discrepancia se bloquea para selección normal; si no, toggle
+  const handleRowClick = (index) => {
+    const item = selectedOrder?.items?.[index];
+    if (!item) return;
+    const expected = getExpectedQty(item);
+    const current = getReceivedQty(index, item);
+    const hasDiscrepancy = current !== expected;
+
+    // Si tiene discrepancia, se mantiene bloqueado en modo revisado con discrepancia
+    if (hasDiscrepancy) {
+      return;
+    }
+
+    setCheckedItems(prev => {
+      const willBeChecked = !prev[index];
+      if (willBeChecked) {
+        playCheckSound();
+        setReceivedQuantities(q => ({ ...q, [index]: expected }));
+      }
+      return { ...prev, [index]: willBeChecked };
+    });
+  };
+
+  // Re-despacho de faltantes
+  const getExpectedNewFaltanteQty = (item) => Number(item?.cantidadDespachada || item?.cantidadFaltanteReportada || 1);
+  const getReceivedNewFaltanteQty = (idx, item) => {
+    return newFaltantesQuantities[idx] !== undefined ? newFaltantesQuantities[idx] : getExpectedNewFaltanteQty(item);
+  };
+
+  const handleNewFaltanteQtyChange = (idx, newQty) => {
+    if (!checkedNewFaltantes[idx]) {
+      playCheckSound();
+    }
+    setNewFaltantesQuantities(prev => ({ ...prev, [idx]: newQty }));
+    setCheckedNewFaltantes(prev => ({ ...prev, [idx]: true }));
+  };
+
+  const handleNewFaltanteRowClick = (idx) => {
+    const item = selectedOrder?.resolucionFaltantes?.itemsResolucion?.filter(i => i.despachado)?.[idx];
+    if (!item) return;
+    const expected = getExpectedNewFaltanteQty(item);
+    const current = getReceivedNewFaltanteQty(idx, item);
+    if (current !== expected) return;
+
+    setCheckedNewFaltantes(prev => {
+      const willBeChecked = !prev[idx];
+      if (willBeChecked) {
+        playCheckSound();
+        setNewFaltantesQuantities(q => ({ ...q, [idx]: expected }));
+      }
+      return { ...prev, [idx]: willBeChecked };
+    });
+  };
+
+  // Validación final al presionar "Listo, Terminar Revisión"
   const handleListo = () => {
-    const isAllChecked = selectedOrder.items?.every((_, i) => checkedItems[i]);
+    if (!selectedOrder?.items) return;
 
-    if (!isAllChecked) {
-      setConfirmIncomplete(false);
-      setIsReportModalOpen(true);
+    const discrepancies = [];
+    selectedOrder.items.forEach((item, index) => {
+      const expected = getExpectedQty(item);
+      const isChecked = checkedItems[index];
+      // Si el ítem no fue revisado por el usuario, se toma como 0 (ausencia total)
+      const received = isChecked ? getReceivedQty(index, item) : 0;
+      const diff = received - expected;
+
+      if (diff !== 0) {
+        discrepancies.push({
+          codigo: item.codigo,
+          descripcion: item.descripcion,
+          cantidadEsperada: expected,
+          cantidadRecibida: received,
+          diferencia: diff,
+          tipo: received === 0 ? 'ausencia_total' : (diff < 0 ? 'faltante' : 'extra')
+        });
+      }
+    });
+
+    if (discrepancies.length > 0) {
+      setDiscrepanciesToReport(discrepancies);
+      setIsDiscrepancyModalOpen(true);
     } else {
-      finalizeReceive([]); // Todo completo, sin faltantes
+      finalizeReceive([]); // Todo completo, sin discrepancias
     }
   };
 
-  const finalizeReceive = async (faltantes) => {
+  const finalizeReceive = async (faltantes = []) => {
     await transferService.receiveSolicitud(selectedOrder.id, faltantes);
-    setIsReportModalOpen(false);
+    setIsDiscrepancyModalOpen(false);
     closeOrder();
   };
 
-  const sendReport = () => {
-    const faltantes = selectedOrder.items.filter((_, i) => !checkedItems[i]);
-    finalizeReceive(faltantes);
+  const handleConfirmDiscrepancies = async (summaryData) => {
+    await transferService.receiveWithDiscrepancies(selectedOrder.id, {
+      discrepancias: summaryData.discrepancias,
+      observaciones: summaryData.observaciones,
+      usuarioReceptor: currentUser?.username || 'sucursal',
+      itemsActualizados: selectedOrder.items.map((it, idx) => ({
+        ...it,
+        cantidadRecibida: getReceivedQty(idx, it),
+        cantidadEsperada: getExpectedQty(it)
+      }))
+    });
+    setIsDiscrepancyModalOpen(false);
+    closeOrder();
   };
 
   // Manejo de finalización de recepción para re-despacho de faltantes
@@ -100,24 +220,34 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     const itemsResolucion = selectedOrder.resolucionFaltantes?.itemsResolucion || [];
     const newlyDispatched = itemsResolucion.filter(i => i.despachado);
 
-    const isAllChecked = newlyDispatched.every((_, i) => checkedNewFaltantes[i]);
+    const itemsRecibidos = [];
+    const itemsAunFaltantes = [];
 
-    if (!isAllChecked) {
-      const itemsAunFaltantes = newlyDispatched.filter((_, i) => !checkedNewFaltantes[i]);
-      const itemsRecibidos = newlyDispatched.filter((_, i) => checkedNewFaltantes[i]);
+    newlyDispatched.forEach((item, idx) => {
+      const isChecked = checkedNewFaltantes[idx];
+      const dispatchedQty = getExpectedNewFaltanteQty(item);
+      const receivedQty = isChecked ? getReceivedNewFaltanteQty(idx, item) : 0;
 
-      await transferService.receiveFaltantes(selectedOrder.id, {
-        itemsRecibidos,
-        itemsAunFaltantes,
-        usuarioRecepcion: currentUser?.username || 'sucursal'
-      });
-    } else {
-      await transferService.receiveFaltantes(selectedOrder.id, {
-        itemsRecibidos: newlyDispatched,
-        itemsAunFaltantes: [],
-        usuarioRecepcion: currentUser?.username || 'sucursal'
-      });
-    }
+      if (receivedQty > 0) {
+        itemsRecibidos.push({
+          ...item,
+          cantidadRecibida: receivedQty
+        });
+      }
+
+      if (receivedQty < dispatchedQty) {
+        itemsAunFaltantes.push({
+          ...item,
+          cantidadAunFaltante: dispatchedQty - receivedQty
+        });
+      }
+    });
+
+    await transferService.receiveFaltantes(selectedOrder.id, {
+      itemsRecibidos,
+      itemsAunFaltantes,
+      usuarioRecepcion: currentUser?.username || 'sucursal'
+    });
     closeOrder();
   };
 
@@ -163,11 +293,12 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                 return (
                   <div
                     key={sol.id}
-                    className={`bg-white rounded-3xl p-5 border shadow-sm flex items-center justify-between gap-3 hover:shadow-md transition-all cursor-pointer group ios-card-hover ${
+                    onClick={() => openOrder(sol)}
+                    className={`bg-white rounded-3xl p-5 border shadow-sm flex items-center justify-between gap-3 hover:shadow-md transition-all cursor-pointer group ios-card-hover active:scale-[0.99] ${
                       isFaltante ? 'border-purple-200 hover:border-purple-400' : 'border-slate-200/80 hover:border-indigo-400'
                     }`}
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className={`text-lg font-bold font-mono tracking-tight ${
                           isFaltante ? 'text-purple-700' : 'text-indigo-700'
@@ -201,14 +332,25 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                           : `${sol.items?.length || 0} productos en total`}
                       </p>
                     </div>
-                    <button
-                      onClick={() => openOrder(sol)}
-                      className={`px-4 py-2.5 text-white font-bold text-xs rounded-2xl shadow-sm cursor-pointer transition-all active:scale-95 ${
-                        isFaltante ? 'bg-purple-600 hover:bg-purple-500' : 'bg-indigo-600 hover:bg-indigo-500'
-                      }`}
-                    >
-                      {isFaltante ? 'Revisar Faltantes' : 'Revisar Caja'}
-                    </button>
+
+                    <div className="shrink-0 flex items-center gap-2">
+                      <span
+                        className={`hidden sm:inline-flex px-4 py-2.5 text-white font-bold text-xs rounded-2xl shadow-sm transition-all group-hover:shadow-md ${
+                          isFaltante ? 'bg-purple-600 group-hover:bg-purple-500' : 'bg-indigo-600 group-hover:bg-indigo-500'
+                        }`}
+                      >
+                        {isFaltante ? 'Revisar Faltantes' : 'Revisar Caja'}
+                      </span>
+                      <div
+                        className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${
+                          isFaltante
+                            ? 'bg-purple-50 text-purple-600 group-hover:bg-purple-600 group-hover:text-white'
+                            : 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white'
+                        }`}
+                      >
+                        <ChevronRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -235,6 +377,23 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             <p className="text-xs text-slate-500">
               Verifica los productos nuevos enviados en esta caja. Lo recibido en la entrega anterior se mantiene conservado y bloqueado.
             </p>
+
+            {/* OBSERVACIÓN / CITA DE BODEGA AL ATENDER FALTANTES */}
+            {(selectedOrder.resolucionFaltantes?.notas || selectedOrder.observaciones) && (
+              <div className="p-3 bg-purple-50/90 rounded-2xl border border-purple-200 text-xs flex items-center justify-between gap-2.5 text-purple-950 mt-3">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <FileText className="w-4 h-4 text-purple-600 shrink-0" />
+                  <p className="text-purple-900 font-medium italic text-xs leading-snug">
+                    "{selectedOrder.resolucionFaltantes?.notas || selectedOrder.observaciones}"
+                  </p>
+                </div>
+                {selectedOrder.resolucionFaltantes?.usuarioResolucion && (
+                  <span className="text-[10px] font-semibold text-purple-700 bg-white/80 px-2.5 py-0.5 rounded-full border border-purple-200 shadow-2xs shrink-0">
+                    Atendido por: <strong>{selectedOrder.resolucionFaltantes.usuarioResolucion}</strong>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Listado Diferenciado: Lo nuevo para checar + lo pasado inmutable */}
@@ -242,45 +401,95 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             {/* 1. SECCIÓN: LO NUEVO MANDADO PARA VOLVER A CHECAR */}
             {selectedOrder.resolucionFaltantes?.itemsResolucion
               ?.filter(i => i.despachado)
-              .map((item, idx) => (
-                <div
-                  key={'new-' + idx}
-                  onClick={() => toggleNewFaltante(idx)}
-                  className={`p-4 flex items-center gap-3.5 cursor-pointer transition-all duration-200 active:scale-[0.99] border-l-4 border-l-purple-500 ${
-                    checkedNewFaltantes[idx] ? 'bg-purple-50/40' : 'bg-white hover:bg-slate-50'
-                  }`}
-                >
+              .map((item, idx) => {
+                const expected = getExpectedNewFaltanteQty(item);
+                const isChecked = Boolean(checkedNewFaltantes[idx]);
+                const current = getReceivedNewFaltanteQty(idx, item);
+                const diff = current - expected;
+                const hasDiscrepancy = isChecked && diff !== 0;
+
+                const originalItem = selectedOrder.items?.find(it => it.codigo === item.codigo);
+                const requestedQty = Number(
+                  originalItem?.cantidadSolicitada ??
+                  item.cantidadFaltanteReportada ??
+                  item.cantidadSolicitada ??
+                  expected
+                );
+                const wasPartial = Boolean(requestedQty > expected);
+                const itemMotivo = item.motivo || item.motivoParcial || item.motivoNoDespacho || (wasPartial ? selectedOrder.resolucionFaltantes?.notas : null);
+
+                return (
                   <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                      checkedNewFaltantes[idx]
-                        ? 'bg-purple-600 text-white scale-105 shadow-2xs'
-                        : 'border-2 border-purple-300'
+                    key={'new-' + idx}
+                    onClick={() => handleNewFaltanteRowClick(idx)}
+                    className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer transition-all duration-200 border-l-4 ${
+                      hasDiscrepancy
+                        ? 'bg-amber-50/40 border-l-amber-500'
+                        : isChecked
+                        ? 'bg-purple-50/40 border-l-purple-500'
+                        : 'bg-white hover:bg-slate-50 border-l-purple-300'
                     }`}
                   >
-                    <Check className="w-3.5 h-3.5 stroke-[3]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4
-                        className={`text-sm font-bold transition-colors ${
-                          checkedNewFaltantes[idx] ? 'line-through text-slate-400' : 'text-slate-900'
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                          isChecked
+                            ? 'bg-purple-600 text-white scale-105 shadow-2xs'
+                            : 'border-2 border-purple-300'
                         }`}
                       >
-                        {item.descripcion}
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-100 text-purple-700 uppercase tracking-wider">
-                        Nuevo Envío
-                      </span>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4
+                            className={`text-sm font-bold transition-colors ${
+                              isChecked && !hasDiscrepancy ? 'line-through text-slate-400' : 'text-slate-900'
+                            }`}
+                          >
+                            {item.descripcion}
+                          </h4>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-100 text-purple-700 uppercase tracking-wider">
+                            Nuevo Envío
+                          </span>
+                          {wasPartial && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-100 text-amber-800 uppercase tracking-wider border border-amber-200">
+                              Envío Parcial
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-0.5 flex-wrap">
+                          <span>Código: {item.codigo}</span>
+                          <span>•</span>
+                          <span>
+                            Esperadas: <strong className="text-slate-700">{expected} pz</strong>{' '}
+                            <span className="text-slate-500 font-semibold">
+                              ({requestedQty} pz solicitadas)
+                            </span>
+                          </span>
+                        </div>
+
+                        {/* Cita del Despachador para este producto */}
+                        {itemMotivo && (
+                          <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-purple-950 bg-purple-50/90 px-2.5 py-1 rounded-xl border border-purple-200/80">
+                            <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                            <span className="italic font-medium text-purple-900">"{itemMotivo}"</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-[11px] font-mono text-slate-400">
-                      Código: {item.codigo}
-                    </span>
+
+                    <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      <QuantityStepper
+                        value={current}
+                        min={0}
+                        onChange={(newQty) => handleNewFaltanteQtyChange(idx, newQty)}
+                        onDelete={() => handleNewFaltanteQtyChange(idx, 0)}
+                      />
+                    </div>
                   </div>
-                  <span className="px-3 py-1.5 rounded-xl font-mono text-xs font-bold bg-purple-100 text-purple-800">
-                    {item.cantidadDespachada} pzas
-                  </span>
-                </div>
-              ))}
+                );
+              })}
 
             {/* 2. SECCIÓN: FALTANTES QUE NO FUERON DESPACHADOS POR BODEGA (BLOQUEADOS) */}
             {selectedOrder.resolucionFaltantes?.itemsResolucion
@@ -358,7 +567,9 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
               )}
             </div>
             <h2 className="text-xl font-extrabold text-slate-900 font-mono">{selectedOrder.folio || formatTransferFolio(selectedOrder)}</h2>
-            <p className="text-xs text-slate-500">Toca el producto tras verificar que viene dentro de la caja.</p>
+            <p className="text-xs text-slate-500">
+              Toca el producto para marcarlo conforme, o ajusta las cantidades recibidas con los botones [ - ] y [ + ].
+            </p>
             {selectedOrder.observaciones && (
               <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 text-xs flex items-start gap-2 text-amber-900 mt-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -370,128 +581,179 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             )}
           </div>
 
+          {/* LISTA DE PRODUCTOS CON STEPPER DE AJUSTE */}
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
-            {selectedOrder.items?.map((item, index) => (
-              <div key={index} onClick={() => toggleItem(index)} className={`p-4 flex items-center gap-3 cursor-pointer transition-all duration-200 active:scale-[0.99] ${checkedItems[index] ? 'bg-indigo-50/40' : 'hover:bg-slate-50'}`}>
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${checkedItems[index] ? 'bg-indigo-500 text-white scale-105' : 'border-2 border-slate-300'}`}>
-                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+            {selectedOrder.items?.map((item, index) => {
+              const expected = getExpectedQty(item);
+              const isChecked = Boolean(checkedItems[index]);
+              const current = getReceivedQty(index, item);
+              const diff = current - expected;
+              const hasDiscrepancy = isChecked && diff !== 0;
+              const isAbsent = isChecked && current === 0;
+              const isMissing = isChecked && diff < 0 && current > 0;
+              const isExtra = isChecked && diff > 0;
+
+              const cantSolicitada = item.cantidadSolicitada !== undefined && item.cantidadSolicitada !== null
+                ? Number(item.cantidadSolicitada)
+                : null;
+              const cantDespachada = item.cantidadDespachada !== undefined && item.cantidadDespachada !== null
+                ? Number(item.cantidadDespachada)
+                : expected;
+              const hasDiffSolicitadoDespachado = Boolean(
+                cantSolicitada !== null &&
+                !item.esExtra &&
+                cantSolicitada !== cantDespachada
+              );
+
+              return (
+                <div
+                  key={index}
+                  onClick={() => handleRowClick(index)}
+                  className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 transition-all duration-200 border-l-4 ${
+                    hasDiscrepancy
+                      ? isAbsent
+                        ? 'bg-red-50/50 border-l-red-500 cursor-default'
+                        : isMissing
+                        ? 'bg-amber-50/50 border-l-amber-500 cursor-default'
+                        : 'bg-blue-50/50 border-l-blue-500 cursor-default'
+                      : isChecked
+                      ? 'bg-indigo-50/30 border-l-indigo-500 cursor-pointer active:scale-[0.995]'
+                      : 'bg-white hover:bg-slate-50 border-l-transparent cursor-pointer active:scale-[0.995]'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    {/* Indicador de Estado / Check */}
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                        isAbsent
+                          ? 'bg-red-600 text-white shadow-2xs'
+                          : isMissing
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : isExtra
+                          ? 'bg-blue-600 text-white shadow-2xs'
+                          : isChecked
+                          ? 'bg-indigo-600 text-white scale-105 shadow-2xs'
+                          : 'border-2 border-slate-300'
+                      }`}
+                    >
+                      {isAbsent ? (
+                        <X className="w-3.5 h-3.5 stroke-[3]" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      )}
+                    </div>
+
+                    {/* Información del Producto */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4
+                          className={`text-sm font-bold transition-colors ${
+                            isChecked && !hasDiscrepancy
+                              ? 'line-through text-slate-400 font-semibold'
+                              : 'text-slate-900'
+                          }`}
+                        >
+                          {item.descripcion}
+                        </h4>
+
+                        {item.esExtra && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-purple-100 text-purple-700 border border-purple-200 uppercase tracking-wider">
+                            Extra ({cantDespachada} pz)
+                          </span>
+                        )}
+
+                        {/* Etiqueta solo si no coinciden solicitadas vs despachadas */}
+                        {hasDiffSolicitadoDespachado && (
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border uppercase tracking-wider ${
+                            cantDespachada < cantSolicitada
+                              ? 'bg-amber-100 text-amber-800 border-amber-200'
+                              : 'bg-blue-100 text-blue-800 border-blue-200'
+                          }`}>
+                            {cantDespachada} despachadas ({cantSolicitada} solicitadas)
+                          </span>
+                        )}
+
+                        {/* Badges de Estado / Discrepancia en recepción */}
+                        {isAbsent && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-800 border border-red-200 uppercase tracking-wider">
+                            Ausencia Total (0 pz)
+                          </span>
+                        )}
+                        {isMissing && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200 uppercase tracking-wider">
+                            Faltan {Math.abs(diff)} pz
+                          </span>
+                        )}
+                        {isExtra && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-800 border border-blue-200 uppercase tracking-wider">
+                            +{diff} pz Extra
+                          </span>
+                        )}
+                        {isChecked && !hasDiscrepancy && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            Conforme
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-0.5 flex-wrap">
+                        <span>Código: {item.codigo}</span>
+                        <span>•</span>
+                        <span>
+                          Esperadas: <strong className="text-slate-700">{expected} pzas</strong>{' '}
+                          {hasDiffSolicitadoDespachado && (
+                            <span className="text-slate-500 font-semibold">
+                              ({cantSolicitada} pz solicitadas)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Cita/justificación del despacho si existe */}
+                      {item.motivoAjusteDespacho && (
+                        <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-amber-950 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80">
+                          <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span className="italic font-medium text-amber-900">"{item.motivoAjusteDespacho}"</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Stepper de Ajuste Numérico */}
+                  <div className="shrink-0 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+                    <QuantityStepper
+                      value={current}
+                      min={0}
+                      onChange={(newQty) => handleQuantityChange(index, newQty)}
+                      onDelete={() => handleQuantityChange(index, 0)}
+                    />
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <h4 className={`text-sm font-bold transition-colors ${checkedItems[index] ? 'line-through text-slate-400' : 'text-slate-900'}`}>{item.descripcion}</h4>
-                  <span className="text-[11px] font-mono text-slate-400">{item.codigo}</span>
-                </div>
-                <span className="px-3 py-1.5 rounded-xl font-mono text-xs font-bold bg-slate-100 text-slate-800">{item.cantidadDespachada} pzas</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="pt-2">
-            <button onClick={handleListo} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-sm rounded-3xl shadow-xl flex items-center justify-center gap-2 transition-all cursor-pointer">
-              <PackageOpen className="w-5 h-5" /><span>Listo, Terminar Revisión</span>
+            <button
+              onClick={handleListo}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold text-sm rounded-3xl shadow-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <PackageOpen className="w-5 h-5" />
+              <span>Listo, Terminar Revisión</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* MODAL INLINE: REPORTE DE FALTANTES */}
-      <ReportIncompleteModal
-        isOpen={isReportModalOpen}
-        onClose={() => setIsReportModalOpen(false)}
-        confirmIncomplete={confirmIncomplete}
-        setConfirmIncomplete={setConfirmIncomplete}
-        selectedOrder={selectedOrder}
-        checkedItems={checkedItems}
-        sendReport={sendReport}
+      {/* MODAL DE RESUMEN DE DISCREPANCIAS */}
+      <DiscrepancySummaryModal
+        isOpen={isDiscrepancyModalOpen}
+        onClose={() => setIsDiscrepancyModalOpen(false)}
+        onConfirm={handleConfirmDiscrepancies}
+        solicitud={selectedOrder}
+        discrepancias={discrepanciesToReport}
+        usuarioReceptor={currentUser?.username}
       />
     </div>
   );
-}
-
-function ReportIncompleteModal({
-  isOpen,
-  onClose,
-  confirmIncomplete,
-  setConfirmIncomplete,
-  selectedOrder,
-  checkedItems,
-  sendReport
-}) {
-  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
-    isOpen,
-    onClose
-  });
-
-  if (!shouldRender || !selectedOrder) return null;
-
-  const content = (
-    <div
-      onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
-    >
-      <div
-        ref={cardRef}
-        style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border border-slate-100 p-6 space-y-5 my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[90vh] overflow-y-auto overscroll-contain ${cardClass}`}
-      >
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Aviso: Revisión Incompleta</h3>
-            <p className="text-xs text-slate-500 mt-1">No has seleccionado todos los elementos. Faltan productos físicos en la caja.</p>
-          </div>
-        </div>
-
-        <label className="flex items-start gap-3 p-3 bg-red-50 border border-red-100 rounded-2xl cursor-pointer">
-          <input
-            type="checkbox"
-            checked={confirmIncomplete}
-            onChange={(e) => setConfirmIncomplete(e.target.checked)}
-            className="mt-0.5 w-4 h-4 text-red-600 rounded"
-          />
-          <span className="text-xs font-bold text-red-900">No he recibido el pedido completo y quiero reportar faltantes a Matriz.</span>
-        </label>
-
-        {confirmIncomplete && (
-          <div className="max-h-40 overflow-y-auto border-t border-slate-100 pt-3 text-xs">
-            <span className="font-bold text-slate-700 block mb-2">Se reportará lo siguiente:</span>
-            <ul className="space-y-1 text-slate-600">
-              {selectedOrder.items.filter((_, i) => !checkedItems[i]).map((it, idx) => (
-                <li key={idx} className="flex justify-between border-b border-slate-50 pb-1">
-                  <span className="truncate">{it.descripcion}</span>
-                  <strong className="font-mono">{it.cantidadDespachada}pz</strong>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="pt-2 flex gap-2 justify-end">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="px-4 py-2.5 bg-slate-100 text-slate-600 text-xs font-semibold rounded-2xl cursor-pointer transition-colors hover:bg-slate-200"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            disabled={!confirmIncomplete}
-            onClick={() => {
-              handleClose();
-              sendReport();
-            }}
-            className={`px-4 py-2.5 text-white text-xs font-bold rounded-2xl transition-all cursor-pointer ${
-              confirmIncomplete ? 'bg-red-600 hover:bg-red-500 active:scale-95' : 'bg-red-300'
-            }`}
-          >
-            Enviar Reporte
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

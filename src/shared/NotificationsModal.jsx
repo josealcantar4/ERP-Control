@@ -379,12 +379,14 @@ export function NotificationsModal({
                 );
 
                 const handleTransferAction = () => {
+                  handleDismiss(notif.id);
+                  onClose();
                   if (notif.tipo === 'faltantes_entregados' && notif.solicitud) {
                     if (onViewTransferDetail) {
                       onViewTransferDetail(notif.solicitud, notif.id);
                     }
                   } else if (onNavigateToScreen && notif.actionScreen) {
-                    onNavigateToScreen(notif.actionScreen, notif.solicitudId);
+                    onNavigateToScreen(notif.actionScreen, notif.solicitudId, notif);
                   }
                 };
 
@@ -455,6 +457,7 @@ export function NotificationsModal({
               const it = notif.item;
 
               const handleMaterialAction = () => {
+                handleDismiss(notif.id);
                 if (onNavigateToMaterial) {
                   onClose();
                   onNavigateToMaterial();

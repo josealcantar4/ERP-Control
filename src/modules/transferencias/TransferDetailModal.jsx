@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -12,20 +12,42 @@ import {
   PackagePlus,
   AlertCircle
 } from 'lucide-react';
-import { formatTransferFolio } from './transferService';
+import { formatTransferFolio, dismissNotification } from './transferService';
 import { useModalAnimation } from '../../hooks';
 import { MarqueeText } from '../../shared/MarqueeText';
 
 export function TransferDetailModal({ isOpen, solicitud, onClose }) {
-  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
-    isOpen: Boolean(isOpen && solicitud),
-    onClose,
-    centerOrigin: true
-  });
-
   const lastSolicitudRef = useRef(solicitud);
   if (solicitud) lastSolicitudRef.current = solicitud;
   const currentSolicitud = solicitud || lastSolicitudRef.current;
+
+  // Descartar automáticamente las notificaciones vinculadas a esta transferencia al abrirla
+  useEffect(() => {
+    if (isOpen && currentSolicitud?.id) {
+      dismissNotification(`tr-falt-${currentSolicitud.id}`);
+      dismissNotification(`tr-falt-entregados-${currentSolicitud.id}`);
+      dismissNotification(`tr-falt-env-${currentSolicitud.id}`);
+      dismissNotification(`tr-comp-${currentSolicitud.id}`);
+      dismissNotification(`tr-nueva-${currentSolicitud.id}`);
+    }
+  }, [isOpen, currentSolicitud?.id]);
+
+  const handleModalClose = () => {
+    if (currentSolicitud?.id) {
+      dismissNotification(`tr-falt-${currentSolicitud.id}`);
+      dismissNotification(`tr-falt-entregados-${currentSolicitud.id}`);
+      dismissNotification(`tr-falt-env-${currentSolicitud.id}`);
+      dismissNotification(`tr-comp-${currentSolicitud.id}`);
+      dismissNotification(`tr-nueva-${currentSolicitud.id}`);
+    }
+    if (onClose) onClose();
+  };
+
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen: Boolean(isOpen && solicitud),
+    onClose: handleModalClose,
+    centerOrigin: true
+  });
 
   if (!shouldRender || !currentSolicitud) return null;
 
@@ -231,10 +253,17 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                     <div className="shrink-0 flex items-center gap-1.5">
                       {resItem ? (
                         resItem.despachado ? (
-                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            <span>Despachado ({resItem.cantidadDespachada} pz)</span>
-                          </span>
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Despachado ({resItem.cantidadDespachada} pz)</span>
+                            </span>
+                            {(resItem.motivoParcial || resItem.motivo) && (
+                              <span className="text-[10px] text-amber-700 font-medium italic">
+                                "{resItem.motivoParcial || resItem.motivo}"
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
                             <X className="w-3 h-3 text-slate-500" />
@@ -284,6 +313,33 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
           </div>
         )}
 
+        {/* REPORTE DE PRODUCTOS EXTRA DETECTADOS EN RECEPCIÓN */}
+        {currentSolicitud.reporteDiscrepancias?.discrepancias?.some(d => d.tipo === 'extra') && (
+          <div className="mx-4 sm:mx-6 mt-4 p-4 rounded-3xl bg-blue-50/70 border border-blue-200/80 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-blue-900">
+              <span className="flex items-center gap-1.5">
+                <PackagePlus className="w-4 h-4 text-blue-600" />
+                <span>Productos Extra Reportados en Recepción:</span>
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                +{currentSolicitud.reporteDiscrepancias.totalExtras || 0} pzas extra
+              </span>
+            </div>
+            <div className="bg-white/90 rounded-2xl p-3 border border-blue-200/80 divide-y divide-slate-100 text-xs shadow-2xs space-y-1.5">
+              {currentSolicitud.reporteDiscrepancias.discrepancias
+                .filter(d => d.tipo === 'extra')
+                .map((ext, i) => (
+                  <div key={i} className="pt-1.5 first:pt-0 flex items-center justify-between gap-2">
+                    <span className="font-bold text-slate-800">{ext.descripcion}</span>
+                    <span className="font-mono text-xs font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200">
+                      +{ext.diferencia} extra (Recibidas: {ext.cantidadRecibida})
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
         {/* LISTADO DE PRODUCTOS */}
         <div className="p-4 sm:p-5 flex-1 min-h-0 overflow-y-auto space-y-3">
           <div className="flex items-center justify-between text-xs font-bold text-slate-600">
@@ -311,6 +367,25 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                     <span className="font-mono text-[10px] text-slate-400 block">
                       EAN: {item.codigo}
                     </span>
+                    {item.cantidadSolicitada !== undefined && item.cantidadDespachada !== undefined && !item.esExtra && Number(item.cantidadSolicitada) !== Number(item.cantidadDespachada) && (
+                      <span className="inline-block text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5 mr-1">
+                        {item.cantidadDespachada} despachadas ({item.cantidadSolicitada} solicitadas)
+                      </span>
+                    )}
+                    {item.motivoAjusteDespacho && (
+                      <span className="inline-block text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-0.5">
+                        Ajuste de despacho: {item.motivoAjusteDespacho}
+                      </span>
+                    )}
+                    {item.cantidadRecibida !== undefined && (
+                      <span className={`inline-block text-[10px] font-mono font-bold px-1.5 py-0.5 rounded mt-0.5 ${
+                        item.cantidadRecibida === qty
+                          ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                          : 'text-amber-800 bg-amber-50 border border-amber-200'
+                      }`}>
+                        Recibidas en caja: {item.cantidadRecibida} pz
+                      </span>
+                    )}
                   </div>
 
                   <div className="text-right shrink-0">

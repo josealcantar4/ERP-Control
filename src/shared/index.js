@@ -12,3 +12,6 @@ export { NotificationsModal } from './NotificationsModal';
 export { AutoScrollInput } from './AutoScrollInput';
 export { MarqueeText } from './MarqueeText';
 export { transitionView } from './viewTransition';
+export { QuantityStepper } from './QuantityStepper';
+export { DiscrepancySummaryModal } from './DiscrepancySummaryModal';
+export { playCheckSound, playNotificationSound } from '../modules/transferencias';

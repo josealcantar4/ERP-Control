@@ -15,12 +15,45 @@ const STORAGE_KEY_TOTAL_RECORDS = 'erp_catalog_total_records';
 const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size'; // Tamaño exacto en bytes en Drive
 const STORAGE_KEY_LAST_MODIFIED = 'erp_catalog_last_modified'; // Fecha de modificación de la versión en Drive
 const STORAGE_KEY_LAST_UPLOAD_ID = 'erp_catalog_last_upload_id'; // Upload ID único de Drive
+const STORAGE_KEY_LAST_FINGERPRINT = 'erp_catalog_last_fingerprint'; // Huella binaria ZIP determinista
 const STORAGE_KEY_EXCEL_ROWS = 'erp_catalog_excel_rows'; // Total de filas con datos en el Excel
 const STORAGE_KEY_DUPLICATES = 'erp_catalog_duplicates_count'; // Códigos duplicados detectados en el Excel
 const STORAGE_KEY_CODE_VERSION = 'erp_catalog_code_version';
-const CURRENT_CODE_VERSION = 'v3_exact_code_base_priority';
+const CURRENT_CODE_VERSION = 'v5_cors_safe_fingerprint';
 
 let memoryCache = null;
+
+function bytesToHex(arr) {
+  let hex = '';
+  for (let i = 0; i < arr.length; i++) {
+    hex += arr[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
+
+// Extrae con precisión de segundo la fecha de última edición del Excel a partir de los bytes 10-13 (MS-DOS timestamp del ZIP)
+function parseZipDateTime(bytes) {
+  if (!bytes || bytes.length < 14) return null;
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4B || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+    return null;
+  }
+  const time = bytes[10] | (bytes[11] << 8);
+  const date = bytes[12] | (bytes[13] << 8);
+
+  const hours = (time >> 11) & 0x1F;
+  const minutes = (time >> 5) & 0x3F;
+  const seconds = (time & 0x1F) * 2;
+
+  const year = ((date >> 9) & 0x7F) + 1980;
+  const month = (date >> 5) & 0x0F;
+  const day = date & 0x1F;
+
+  if (year < 1980 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day, hours, minutes, seconds);
+}
 
 // Normalización exacta de códigos: preserva ceros a la izquierda (ej. "01", "001", "1" son distintos)
 function normalizeBarcode(raw) {
@@ -169,8 +202,12 @@ export const catalogService = {
       return `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`;
     }
 
-    // Endpoint principal con soporte CORS completo y exportación binaria .xlsx
+    // Endpoint oficial principal con soporte CORS completo garantizado en todos los navegadores
     return `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
+  },
+
+  getMetadataUrl() {
+    return this.getDownloadUrl();
   },
 
   getFallbackUrls() {
@@ -179,8 +216,7 @@ export const catalogService = {
       return [];
     }
     return [
-      `https://drive.google.com/uc?export=download&id=${fileId}`,
-      `https://drive.usercontent.google.com/download?id=${fileId}&export=download`
+      `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`
     ];
   },
 
@@ -228,15 +264,33 @@ export const catalogService = {
     };
   },
 
-  // 1. VERIFICACIÓN ROBUSTA: DETECTA NUEVAS VERSIONES SUBIDAS A GOOGLE DRIVE
+  async getLocalBaseCount() {
+    return await getLocalCount(STORE_BASE);
+  },
+
+  subscribeCatalogVersion(callback) {
+    try {
+      return onSnapshot(doc(db, 'catalogo_meta', 'version'), (snapshot) => {
+        if (snapshot.exists()) {
+          callback(snapshot.data());
+        }
+      }, (err) => {
+        console.warn('Error escuchando versión central del catálogo:', err);
+      });
+    } catch (e) {
+      console.warn('Error iniciando suscripción de versión:', e);
+      return () => {};
+    }
+  },
+
+  // 1. VERIFICACIÓN ROBUSTA: DETECTA AUTOMÁTICAMENTE NUEVAS VERSIONES EN EL SERVIDOR CENTRAL
   async checkServerCatalogVersion() {
     try {
       const localCount = await getLocalCount(STORE_BASE);
       const currentConfiguredId = this.getCatalogFileId();
       const lastSyncedId = localStorage.getItem(STORAGE_KEY_SYNCED_ID);
-      const lastSize = localStorage.getItem(STORAGE_KEY_LAST_SIZE);
+      const lastFingerprint = localStorage.getItem(STORAGE_KEY_LAST_FINGERPRINT);
       const lastModified = localStorage.getItem(STORAGE_KEY_LAST_MODIFIED);
-      const lastUploadId = localStorage.getItem(STORAGE_KEY_LAST_UPLOAD_ID);
       const codeVersion = localStorage.getItem(STORAGE_KEY_CODE_VERSION);
 
       if (localCount === 0 || currentConfiguredId !== lastSyncedId || codeVersion !== CURRENT_CODE_VERSION) {
@@ -251,57 +305,63 @@ export const catalogService = {
       let response = null;
 
       try {
-        response = await fetch(checkUrl, { method: 'HEAD' });
+        response = await fetch(checkUrl, { cache: 'no-store' });
       } catch (_err) {
-        try {
-          response = await fetch(checkUrl, { headers: { Range: 'bytes=0-0' } });
-        } catch (_err2) {
-          // Si el proveedor restringe pre-vuelo de metadatos CORS, se mantiene el catálogo local
-        }
+        return { upToDate: true, error: _err.message, offline: true, localCount };
       }
 
-      if (response && (response.ok || response.status === 206)) {
-        const currentSize = response.headers.get('content-length') || 
-          response.headers.get('content-range')?.split('/')?.[1];
-        const currentModified = response.headers.get('last-modified');
-        const currentUploadId = response.headers.get('x-guploader-uploadid');
+      if (response && response.ok) {
+        let currentFingerprint = '';
+        let currentModifiedDate = null;
 
-        // 1. Si cambió la fecha de última modificación (nueva versión subida a Drive mediante "Gestión de versiones")
-        if (currentModified && lastModified && currentModified !== lastModified) {
-          return {
-            upToDate: false,
-            reason: 'file_version_modified',
-            localCount,
-            currentModified,
-            lastModified
-          };
+        if (response.body && typeof response.body.getReader === 'function') {
+          const reader = response.body.getReader();
+          try {
+            const { value } = await reader.read();
+            if (value && value.length >= 26) {
+              currentFingerprint = bytesToHex(value.slice(0, 32));
+              currentModifiedDate = parseZipDateTime(value);
+            }
+          } finally {
+            await reader.cancel();
+          }
         }
 
-        // 2. Si cambió el tamaño del archivo en bytes
-        if (currentSize && lastSize && currentSize !== '0' && currentSize !== lastSize) {
-          return {
-            upToDate: false,
-            reason: 'file_size_changed',
-            localCount,
-            currentSize,
-            lastSize
-          };
-        }
+        if (currentFingerprint) {
+          const serverIso = currentModifiedDate ? currentModifiedDate.toISOString() : null;
 
-        // 3. Si cambió el identificador único de subida de Google Drive
-        if (currentUploadId && lastUploadId && currentUploadId !== lastUploadId) {
-          return {
-            upToDate: false,
-            reason: 'file_upload_changed',
-            localCount
-          };
-        }
+          // 1. Detección por fecha exacta de última edición del Excel
+          if (serverIso && lastModified && serverIso !== lastModified) {
+            return {
+              upToDate: false,
+              reason: 'file_version_modified',
+              localCount,
+              currentModified: serverIso,
+              lastModified
+            };
+          }
 
-        // Si es la primera verificación tras la actualización de código y no había metadatos guardados
-        if ((!lastSize || !lastModified) && (currentSize || currentModified)) {
-          if (currentSize) localStorage.setItem(STORAGE_KEY_LAST_SIZE, currentSize);
-          if (currentModified) localStorage.setItem(STORAGE_KEY_LAST_MODIFIED, currentModified);
-          if (currentUploadId) localStorage.setItem(STORAGE_KEY_LAST_UPLOAD_ID, currentUploadId);
+          // 2. Detección por cambio de huella binaria determinista (CRC de hojas, timestamp interno)
+          if (lastFingerprint && currentFingerprint !== lastFingerprint) {
+            return {
+              upToDate: false,
+              reason: 'file_fingerprint_changed',
+              localCount,
+              currentFingerprint,
+              lastFingerprint,
+              currentModified: serverIso
+            };
+          }
+
+          // 3. Si no existía línea base previa
+          if (!lastFingerprint || !lastModified) {
+            return {
+              upToDate: false,
+              reason: 'missing_baseline',
+              localCount,
+              currentModified: serverIso
+            };
+          }
         }
       }
 
@@ -361,13 +421,11 @@ export const catalogService = {
     }
 
     const serverContentLength = response.headers.get('content-length') || '';
-    const serverLastModified = response.headers.get('last-modified') || '';
-    const serverUploadId = response.headers.get('x-guploader-uploadid') || '';
     const totalBytes = serverContentLength ? parseInt(serverContentLength, 10) : 0;
 
     let arrayBuffer;
 
-    if (response.body && typeof response.body.getReader === 'function' && totalBytes > 0) {
+    if (response.body && typeof response.body.getReader === 'function') {
       const reader = response.body.getReader();
       const chunks = [];
       let receivedBytes = 0;
@@ -378,14 +436,17 @@ export const catalogService = {
         chunks.push(value);
         receivedBytes += value.length;
 
-        const downloadPercent = Math.min(60, 15 + Math.round((receivedBytes / totalBytes) * 45));
+        const downloadPercent = totalBytes > 0
+          ? Math.min(60, 15 + Math.round((receivedBytes / totalBytes) * 45))
+          : Math.min(60, 15 + Math.round((receivedBytes / 4800000) * 45));
+
         if (onProgress) {
           const mbReceived = (receivedBytes / (1024 * 1024)).toFixed(1);
-          const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+          const totalText = totalBytes > 0 ? ` / ${(totalBytes / (1024 * 1024)).toFixed(1)} MB` : '';
           onProgress({
             phase: 'downloading',
             percent: downloadPercent,
-            message: `Descargando catálogo actualizado (${mbReceived} MB / ${mbTotal} MB)...`
+            message: `Descargando catálogo actualizado (${mbReceived} MB${totalText})...`
           });
         }
       }
@@ -400,6 +461,11 @@ export const catalogService = {
     } else {
       arrayBuffer = await response.arrayBuffer();
     }
+
+    const headerBytes = new Uint8Array(arrayBuffer.slice(0, 32));
+    const finalFingerprint = bytesToHex(headerBytes);
+    const finalModifiedDate = parseZipDateTime(headerBytes);
+    const finalModifiedIso = finalModifiedDate ? finalModifiedDate.toISOString() : new Date().toISOString();
 
     if (onProgress) {
       onProgress({
@@ -469,20 +535,31 @@ export const catalogService = {
     await clearAndSaveBaseCatalog(validItems, onProgress);
 
     // Guardar metadatos precisos para detección de versiones futuras y estadísticas del Excel
-    const finalSize = serverContentLength || String(arrayBuffer.byteLength);
+    const finalSize = String(arrayBuffer.byteLength);
     localStorage.setItem(STORAGE_KEY_SYNCED_ID, this.getCatalogFileId());
     localStorage.setItem(STORAGE_KEY_LAST_SYNC, new Date().toISOString());
     localStorage.setItem(STORAGE_KEY_TOTAL_RECORDS, String(validItems.length));
     localStorage.setItem(STORAGE_KEY_LAST_SIZE, finalSize);
-    if (serverLastModified) {
-      localStorage.setItem(STORAGE_KEY_LAST_MODIFIED, serverLastModified);
-    }
-    if (serverUploadId) {
-      localStorage.setItem(STORAGE_KEY_LAST_UPLOAD_ID, serverUploadId);
-    }
+    localStorage.setItem(STORAGE_KEY_LAST_MODIFIED, finalModifiedIso);
+    localStorage.setItem(STORAGE_KEY_LAST_FINGERPRINT, finalFingerprint);
     localStorage.setItem(STORAGE_KEY_EXCEL_ROWS, String(totalExcelDataRows));
     localStorage.setItem(STORAGE_KEY_DUPLICATES, String(duplicateCount));
     localStorage.setItem(STORAGE_KEY_CODE_VERSION, CURRENT_CODE_VERSION);
+
+    // Publicar versión en Firestore para que todos los usuarios conectados reciban la sincronización visible
+    try {
+      await setDoc(doc(db, 'catalogo_meta', 'version'), {
+        fileId: this.getCatalogFileId(),
+        fingerprint: finalFingerprint,
+        lastModified: finalModifiedIso,
+        lastSize: finalSize,
+        lastSync: new Date().toISOString(),
+        totalRecords: validItems.length,
+        versionId: `${finalFingerprint}_${finalSize}`
+      }, { merge: true });
+    } catch (_pubErr) {
+      console.warn('No fue posible publicar versión central en Firestore:', _pubErr);
+    }
 
     if (onProgress) {
       onProgress({

@@ -3,7 +3,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Reglas para el sistema ERP Control de Transferencias
     match /usuarios/{document} {
       allow read, write: if true;
     }
@@ -39,8 +38,6 @@ service cloud.firestore {
     match /material_personal/{document} {
       allow read, write: if true;
     }
-
-    // Por defecto bloquear cualquier otra colección no definida
     match /{document=**} {
       allow read, write: if false;
     }

@@ -82,8 +82,6 @@ export function DiscrepancySummaryModal({
               Verifica las piezas faltantes o sobrantes antes de emitir el reporte al despachador responsable.
             </p>
           </div>
-
-          {/* BADGES DE RESUMEN */}
           <div className="flex items-center gap-2 pt-1 flex-wrap">
             {faltantes.length > 0 && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-red-100/90 text-red-800 border border-red-200">
@@ -99,8 +97,6 @@ export function DiscrepancySummaryModal({
             )}
           </div>
         </div>
-
-        {/* LISTADO DE DISCREPANCIAS CON SCROLL */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-3.5 flex-1 divide-y divide-slate-100">
           {discrepancias.map((disc, idx) => {
             const isMissing = disc.tipo === 'faltante';
@@ -127,8 +123,6 @@ export function DiscrepancySummaryModal({
                       Código: {disc.codigo}
                     </span>
                   </div>
-
-                  {/* Badge de Tipo */}
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider shrink-0 ${
                       isAbsence
@@ -141,8 +135,6 @@ export function DiscrepancySummaryModal({
                     {isAbsence ? 'No Recibido' : isMissing ? 'Incompleto' : 'Piezas Extra'}
                   </span>
                 </div>
-
-                {/* Métricas: Esperado vs Recibido vs Diferencia */}
                 <div className="grid grid-cols-3 gap-2 pt-1">
                   <div className="bg-white/90 p-2 rounded-xl border border-slate-200/70 text-center">
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase">
@@ -188,8 +180,6 @@ export function DiscrepancySummaryModal({
               </div>
             );
           })}
-
-          {/* CAMPO DE OBSERVACIONES */}
           <div className="pt-2 space-y-1.5">
             <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5 text-slate-500" />
@@ -203,8 +193,6 @@ export function DiscrepancySummaryModal({
               className="w-full text-xs p-3 rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all placeholder:text-slate-400 text-slate-800"
             />
           </div>
-
-          {/* AVISO AL RESPONSABLE */}
           <div className="p-3 bg-blue-50/80 rounded-2xl border border-blue-200/70 text-[11px] text-blue-900 flex items-start gap-2 leading-relaxed">
             <Building2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <p>
@@ -217,7 +205,6 @@ export function DiscrepancySummaryModal({
           </div>
         </div>
 
-        {/* BOTONES DE ACCIÓN */}
         <div className="p-4 sm:p-5 border-t border-slate-100 bg-white flex items-center justify-end gap-2.5 shrink-0">
           <button
             type="button"

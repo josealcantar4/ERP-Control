@@ -48,7 +48,6 @@ function saveCameraSettings(settings) {
   }
 }
 
-// Helper: Detecta si una cámara es ultra gran angular (0.5x), macro o auxiliar
 function isUltraWideOrAux(label = '') {
   const l = label.toLowerCase();
   return (
@@ -66,7 +65,6 @@ function isUltraWideOrAux(label = '') {
   );
 }
 
-// Helper: Detecta si una cámara es frontal / selfie
 function isFrontCamera(label = '') {
   const l = label.toLowerCase();
   return (
@@ -78,7 +76,6 @@ function isFrontCamera(label = '') {
   );
 }
 
-// Helper: Detecta si una cámara es explícitamente el sensor principal (1x)
 function isPrimaryMainCamera(label = '') {
   const l = label.toLowerCase();
   if (isUltraWideOrAux(l) || isFrontCamera(l)) return false;
@@ -98,7 +95,6 @@ function isPrimaryMainCamera(label = '') {
   );
 }
 
-// Analiza los dispositivos disponibles y selecciona el lente principal (1x) descartando 0.5x
 function findBestMainCamera(devices) {
   if (!devices || devices.length === 0) return { selectedId: null, backCameras: [] };
 
@@ -110,19 +106,16 @@ function findBestMainCamera(devices) {
     return { selectedId: backCameras[0].id, backCameras };
   }
 
-  // 1. Buscar coincidencia explícita de lente principal
   const explicit = backCameras.find(d => isPrimaryMainCamera(d.label));
   if (explicit) {
     return { selectedId: explicit.id, backCameras };
   }
 
-  // 2. Descartar cualquier lente 0.5x / ultra wide / macro
   const nonAux = backCameras.filter(d => !isUltraWideOrAux(d.label));
   if (nonAux.length > 0) {
     return { selectedId: nonAux[0].id, backCameras };
   }
 
-  // 3. Fallback: descartar estrictamente ultra y 0.5
   const nonUltra = backCameras.filter(d => {
     const l = (d.label || '').toLowerCase();
     return !l.includes('0.5') && !l.includes('0,5') && !l.includes('ultra');
@@ -161,7 +154,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
 
     const handleViewportChange = () => {
       if (window.visualViewport) {
-        // En móviles, si la altura del visualViewport es menor que window.innerHeight - 150px
         const diff = window.innerHeight - window.visualViewport.height;
         setIsKeyboardOpen(diff > 150);
       }
@@ -184,12 +176,9 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   const scannerRef = useRef(null);
   const activeStreamRef = useRef(null);
   const activeTrackRef = useRef(null);
-
-  // Estados de control de cámara (Lente, Flash, Zoom y Enfoque)
   const [availableCameras, setAvailableCameras] = useState([]);
   const [activeCameraId, setActiveCameraId] = useState(null);
   const [cameraLabel, setCameraLabel] = useState('1x Principal');
-
   const [isTorchOn, setIsTorchOn] = useState(() => getStoredCameraSettings().torch);
   const [zoomLevel, setZoomLevel] = useState(() => getStoredCameraSettings().zoom);
   const [isFocusing, setIsFocusing] = useState(false);
@@ -211,8 +200,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     setIsTorchOn(false);
     setFocusIndicator({ x: '50%', y: '50%', visible: false });
   };
-
-  // Obtener el track de video activo desde referencia en memoria o DOM
   const getVideoTrack = () => {
     if (activeTrackRef.current && activeTrackRef.current.readyState === 'live') {
       return activeTrackRef.current;
@@ -229,11 +216,9 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     return null;
   };
 
-  // Blindaje absoluto: Forzar apagado físico de flash y liberación inmediata de hardware
   const forceStopHardware = async () => {
     setIsTorchOn(false);
 
-    // 1. Apagar linterna físicamente en el track activo en memoria
     const track = activeTrackRef.current;
     if (track) {
       try {
@@ -246,8 +231,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         } catch (_) {}
       }
     }
-
-    // 2. Apagar linterna en cualquier elemento <video> en el DOM
     try {
       const videoElem = document.querySelector('#barcode-camera-view video');
       if (videoElem && videoElem.srcObject) {
@@ -266,7 +249,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       }
     } catch (_) {}
 
-    // 3. Detener físicamente (stop) TODOS los tracks del stream activo
     if (activeStreamRef.current) {
       try {
         const tracks = activeStreamRef.current.getTracks();
@@ -279,7 +261,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       activeStreamRef.current = null;
     }
 
-    // 4. Detener físicamente el track de video
     if (activeTrackRef.current) {
       try {
         activeTrackRef.current.stop();
@@ -287,7 +268,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       activeTrackRef.current = null;
     }
 
-    // 5. Desvincular y detener streams de elementos video en el DOM
     try {
       const videoElem = document.querySelector('#barcode-camera-view video');
       if (videoElem) {
@@ -308,7 +288,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       }
     } catch (_) {}
 
-    // 6. Detener el motor Html5Qrcode si sigue activo
     if (scannerRef.current) {
       try {
         if (scannerRef.current.isScanning) {
@@ -320,7 +299,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }
   };
 
-  // Aplicar Zoom (Hardware o Fallback CSS Digital)
   const applyZoom = async (track, val) => {
     const videoElem = document.querySelector('#barcode-camera-view video');
     let hwApplied = false;
@@ -350,8 +328,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       }
     }
   };
-
-  // Aplicar Linterna / Flash
   const applyTorch = async (track, enabled) => {
     if (!track) return false;
     let ok = false;
@@ -375,7 +351,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     return ok;
   };
 
-  // Re-enfocar la cámara (Intenta medición focal por hardware y regresa a continuous)
   const triggerFocus = async (track, xRatio = 0.5, yRatio = 0.5) => {
     if (!track || !track.applyConstraints) return;
     try {
@@ -403,7 +378,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }
   };
 
-  // Efecto principal para inicializar el escáner y restaurar ajustes guardados
   useEffect(() => {
     if (!isOpen || !shouldRender || isClosing) {
       forceStopHardware();
@@ -418,7 +392,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     let pollInterval = null;
 
     async function startScanner() {
-      // 1. Limpiar cualquier instancia previa o residuo antes de inicializar
       if (scannerRef.current) {
         try {
           if (scannerRef.current.isScanning) {
@@ -429,10 +402,8 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         scannerRef.current = null;
       }
 
-      // 2. Asegurar que el contenedor del visor exista en el DOM
       let container = document.getElementById('barcode-camera-view');
       if (!container) {
-        // Breve espera de un frame para garantizar que React haya pintado el DOM
         await new Promise(resolve => requestAnimationFrame(resolve));
         container = document.getElementById('barcode-camera-view');
       }
@@ -445,8 +416,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         }
         return;
       }
-
-      // Limpiar nodos hijos huérfanos del contenedor
       try {
         container.innerHTML = '';
       } catch (_) {}
@@ -462,8 +431,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         }
         return;
       }
-
-      // Obtener cámaras con permisos otorgados para leer etiquetas reales de hardware
       let devices = [];
       try {
         devices = await Html5Qrcode.getCameras();
@@ -481,13 +448,10 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       }
 
       if (isCancelled) return;
-
-      // Seleccionar SIEMPRE el lente principal (1x), descartando explícitamente el 0.5x
       const { selectedId, backCameras } = findBestMainCamera(devices);
       setAvailableCameras(backCameras);
 
       const stored = getStoredCameraSettings();
-      // Validar que la cámara guardada no sea 0.5x ni auxiliar
       const validStoredCamera = stored.cameraId && backCameras.some(d => d.id === stored.cameraId && !isUltraWideOrAux(d.label));
       const targetCameraId = validStoredCamera ? stored.cameraId : selectedId;
 
@@ -525,8 +489,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         }
 
         setIsStarting(false);
-
-        // Polling para detectar el track de video en cuanto el elemento DOM enlace el stream
         let attempts = 0;
         pollInterval = setInterval(async () => {
           if (isCancelled) {
@@ -551,18 +513,15 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               maxZoom: caps.zoom?.max || 4
             });
 
-            // 1. Activar enfoque continuo por hardware
             try {
               await track.applyConstraints({
                 advanced: [{ focusMode: 'continuous' }]
               });
             } catch (_) {}
 
-            // 2. Restaurar zoom
             setZoomLevel(stored.zoom);
             await applyZoom(track, stored.zoom);
 
-            // 3. Restaurar linterna si el usuario la dejó encendida
             if (stored.torch && caps.torch) {
               setIsTorchOn(true);
               await applyTorch(track, true);
@@ -593,7 +552,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     };
   }, [isOpen, shouldRender, isClosing, onDetected]);
 
-  // Blindaje ante cambio de pestaña, bloqueo de teléfono o salida de la aplicación
   useEffect(() => {
     if (!isOpen) return;
 
@@ -619,7 +577,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     };
   }, [isOpen, onClose]);
 
-  // Manejar cambio manual de cámara / lente
   const handleSwitchCamera = async () => {
     if (availableCameras.length <= 1 || !scannerRef.current) return;
     const currentIndex = availableCameras.findIndex(d => d.id === activeCameraId);
@@ -691,7 +648,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }
   };
 
-  // Manejar cambio de zoom y persistir
   const handleSelectZoom = (level) => {
     setZoomLevel(level);
     const track = getVideoTrack();
@@ -701,7 +657,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     saveCameraSettings({ ...current, zoom: level });
   };
 
-  // Manejar alternancia de flash y persistir preferencia del usuario
   const handleToggleTorch = async () => {
     const nextState = !isTorchOn;
     setIsTorchOn(nextState);
@@ -712,7 +667,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     saveCameraSettings({ torch: nextState });
   };
 
-  // Manejar botón de enfoque
   const handleTriggerFocus = () => {
     setIsFocusing(true);
     setFocusIndicator({ x: '50%', y: '50%', visible: true });
@@ -726,7 +680,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     }, 700);
   };
 
-  // Manejar toque en la pantalla de la cámara para enfocar en un punto específico
   const handleCameraTap = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -815,7 +768,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] my-auto overscroll-contain ${cardClass}`}
       >
         
-        {/* ENCABEZADO */}
         <div className={`px-4 sm:px-5 ${isKeyboardActive ? 'py-2.5' : 'py-3.5'} flex items-center justify-between border-b border-slate-100 bg-white shrink-0 transition-all`}>
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -836,10 +788,8 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
           </button>
         </div>
 
-        {/* CUERPO DEL MODAL (CÁMARA + BÚSQUEDA) */}
         <div className="flex-1 overflow-y-auto flex flex-col">
           
-          {/* VISTA DE CÁMARA CON CONTROLES INTEGRADOS */}
           <div
             onClick={handleCameraTap}
             className={`relative bg-black flex items-center justify-center overflow-hidden shrink-0 cursor-crosshair transition-all duration-300 ${
@@ -851,7 +801,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
           >
             <div id="barcode-camera-view" className="w-full h-full object-cover"></div>
 
-            {/* RETÍCULA DE ENFOQUE ANIMADA AL TOCAR */}
             {focusIndicator.visible && (
               <div
                 className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-300 animate-in zoom-in-75"
@@ -863,13 +812,11 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </div>
             )}
 
-            {/* CONTROLES SUPERIORES FLOTANTES (ENFOCAR, FLASH Y LENTE) */}
             {!isStarting && !scannerError && (
               <div
                 onClick={(e) => e.stopPropagation()}
                 className={`absolute ${isKeyboardActive ? 'top-1.5 left-2 right-2' : 'top-2.5 left-2.5 right-2.5'} z-20 flex items-center justify-between pointer-events-auto transition-all`}
               >
-                {/* Botón de Enfoque */}
                 <button
                   type="button"
                   onClick={handleTriggerFocus}
@@ -881,7 +828,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                 </button>
 
                 <div className="flex items-center gap-1.5">
-                  {/* Selector / Alternador de Lente (si hay más de 1 cámara trasera) */}
                   {availableCameras.length > 1 && (
                     <button
                       type="button"
@@ -896,7 +842,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                     </button>
                   )}
 
-                  {/* Botón de Flash / Linterna */}
                   <button
                     type="button"
                     onClick={handleToggleTorch}
@@ -923,7 +868,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </div>
             )}
 
-            {/* CONTROLES INFERIORES FLOTANTES (SELECTOR DE ZOOM) */}
             {!isStarting && !scannerError && !isKeyboardActive && (
               <div
                 onClick={(e) => e.stopPropagation()}
@@ -970,8 +914,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </div>
             )}
           </div>
-
-          {/* SECCIÓN DE BÚSQUEDA MANUAL (POR CÓDIGO O NOMBRE) */}
           <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-100 space-y-2.5 sm:space-y-3 shrink-0">
             <label className="block text-xs font-semibold text-slate-700 leading-none">
               Buscar por código o nombre del producto:
@@ -1008,7 +950,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </button>
             </form>
 
-            {/* LISTA DE RESULTADOS */}
             {searchResults.length > 0 && (
               <div className="max-h-36 sm:max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 bg-white rounded-2xl shadow-sm">
                 {searchResults.map((med) => (
@@ -1031,7 +972,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </div>
             )}
 
-            {/* AVISO DE NO ENCONTRADO CON OPCIÓN DE REGISTRAR */}
             {hasSearched && searchResults.length === 0 && !isSearching && (
               <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/80 text-center text-xs text-amber-900 space-y-1.5">
                 <p className="font-semibold">No se encontraron productos</p>

@@ -62,7 +62,6 @@ export function PWAInstallPrompt() {
         <span className="hidden sm:inline">Instalar App</span>
       </button>
 
-      {/* Pop-up dialog instead of native browser alert */}
       <ModalDialog
         isOpen={showInfoModal}
         type="alert"

@@ -12,20 +12,16 @@ export function OfflineIndicator() {
     let hideTimer = null;
 
     if (!isOnline) {
-      // Si se pierde la conexión, resetear el estado del banner verde
       setShowRestored(false);
       setIsDismissing(false);
     } else if (wasOffline) {
-      // Conexión recuperada: mostrar banner verde
       setShowRestored(true);
       setIsDismissing(false);
 
-      // Iniciar animación de salida a los 9.4 segundos
       dismissTimer = setTimeout(() => {
         setIsDismissing(true);
       }, 9400);
 
-      // Desmontar completamente a los 10 segundos exactos
       hideTimer = setTimeout(() => {
         setShowRestored(false);
         setIsDismissing(false);
@@ -38,7 +34,6 @@ export function OfflineIndicator() {
     };
   }, [isOnline, wasOffline]);
 
-  // 1. BANNER OFFLINE (Permanente mientras no haya internet)
   if (!isOnline) {
     return (
       <div className="bg-amber-500 text-white px-4 py-2 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all duration-300 animate-slide-down select-none vt-offline">
@@ -50,7 +45,6 @@ export function OfflineIndicator() {
     );
   }
 
-  // 2. BANNER DE CONEXIÓN RESTABLECIDA (Desaparece tras 10 segundos con animación)
   if (showRestored) {
     return (
       <div

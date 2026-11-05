@@ -29,7 +29,7 @@ export function NotificationsModal({
   onDismissNotification,
   onViewTransferDetail
 }) {
-  const [filterTab, setFilterTab] = useState('todas'); // 'todas' | 'pedidos' | 'material'
+  const [filterTab, setFilterTab] = useState('todas');
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -67,7 +67,6 @@ export function NotificationsModal({
     }
   };
 
-  // Ciclo de animación de apertura (expandir hacia abajo) y cierre (contraer hacia el icono al revés)
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);
@@ -77,12 +76,11 @@ export function NotificationsModal({
       const timer = setTimeout(() => {
         setShouldRender(false);
         setIsClosing(false);
-      }, 180); // Duración sincronizada con animate-popover-exit (0.18s)
+      }, 180);
       return () => clearTimeout(timer);
     }
   }, [isOpen, shouldRender]);
 
-  // Calcular la posición exacta debajo del ícono de la campana y la coordenada del pico
   const updatePosition = () => {
     const bell = document.getElementById('navbar-notification-bell-btn');
     const viewportWidth = window.innerWidth;
@@ -101,7 +99,6 @@ export function NotificationsModal({
     const rect = bell.getBoundingClientRect();
     const bellCenter = rect.left + rect.width / 2;
 
-    // Alinear el contenedor para que el pico apunte al centro de la campana
     let targetLeft = bellCenter - boxWidth + 40;
 
     if (targetLeft + boxWidth > viewportWidth - 12) {
@@ -111,7 +108,6 @@ export function NotificationsModal({
       targetLeft = 12;
     }
 
-    // Calcular posición del pico relativa al cuadro contenedor
     let arrowLeft = bellCenter - targetLeft;
     arrowLeft = Math.max(26, Math.min(boxWidth - 26, arrowLeft));
 
@@ -130,13 +126,11 @@ export function NotificationsModal({
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
 
-    // Cierre con la tecla Escape
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && !isClosing) onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
 
-    // Detección de toque / clic fuera: si se toca fuera del messagebox o de la campana, se cierra
     const handlePointerDown = (e) => {
       if (isClosing) return;
 
@@ -190,7 +184,6 @@ export function NotificationsModal({
 
   const messageboxContent = (
     <>
-      {/* CAPA DE DETECCIÓN INVISIBLE: Tocar fuera del messagebox lo cierra */}
       <div
         className={`fixed inset-0 z-40 bg-slate-900/5 sm:bg-transparent transition-opacity cursor-default ${
           isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter'
@@ -205,7 +198,6 @@ export function NotificationsModal({
         aria-hidden="true"
       />
 
-      {/* MESSAGEBOX FLOTANTE: Animación desde el icono hacia abajo (apertura) y hacia el icono al revés (cierre) */}
       <div
         id="notification-messagebox-card"
         role="dialog"
@@ -222,7 +214,6 @@ export function NotificationsModal({
           transformOrigin: `${coords.arrowLeft}px -8px`
         }}
       >
-        {/* EL PICO (Carett / Flecha indicadora apuntando directamente a la campana) */}
         <div
           className="absolute -top-[7px] w-3.5 h-3.5 bg-white border-t border-l border-slate-200 z-20 pointer-events-none"
           style={{
@@ -231,8 +222,6 @@ export function NotificationsModal({
           }}
           aria-hidden="true"
         />
-
-        {/* HEADER DEL MESSAGEBOX */}
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-white rounded-t-3xl shrink-0 relative z-10">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-2xs relative">
@@ -261,8 +250,6 @@ export function NotificationsModal({
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-
-        {/* BANNER DE ACTIVACIÓN DE PERMISOS SI NO ESTÁN OTORGADOS */}
         {permissionState !== 'granted' && typeof window !== 'undefined' && 'Notification' in window && (
           <div className="px-4 py-2 bg-amber-50/95 border-b border-amber-200/80 flex items-center justify-between gap-2 text-xs">
             <span className="text-amber-800 text-[11px] font-medium leading-tight">
@@ -277,8 +264,6 @@ export function NotificationsModal({
             </button>
           </div>
         )}
-
-        {/* PESTAÑAS COMPACTAS DE FILTRADO */}
         <div className="px-4 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center gap-1 shrink-0 overflow-x-auto">
           <button
             type="button"
@@ -322,8 +307,6 @@ export function NotificationsModal({
             </button>
           )}
         </div>
-
-        {/* LISTADO DE NOTIFICACIONES */}
         <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5 max-h-[58vh] sm:max-h-[380px] overscroll-contain">
           {filteredList.length === 0 ? (
             <div className="py-8 px-4 text-center space-y-2">
@@ -339,7 +322,6 @@ export function NotificationsModal({
             </div>
           ) : (
             filteredList.map((notif) => {
-              // CASO 1: NOTIFICACIONES DE TRANSFERENCIA (SOLICITUDES, DESPACHOS, FALTANTES)
               if (notif.categoria === 'transferencia') {
                 const isNueva = notif.tipo === 'nueva_solicitud';
                 const isDespacho = notif.tipo === 'caja_despachada';
@@ -427,8 +409,6 @@ export function NotificationsModal({
                     <p className="text-[11px] text-slate-800 font-medium leading-snug">
                       {notif.mensaje}
                     </p>
-
-                    {/* METADATOS Y ACCIÓN RÁPIDA */}
                     <div className="pt-0.5 flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-[10px] font-semibold text-slate-500">
                         {notif.subtitulo}
@@ -452,7 +432,6 @@ export function NotificationsModal({
                 );
               }
 
-              // CASO 2: NOTIFICACIONES DE MATERIAL (ALERTAS DE REEMPLAZO Y VENCIMIENTO)
               const isOverdue = notif.tipo === 'vencida';
               const it = notif.item;
 
@@ -515,8 +494,6 @@ export function NotificationsModal({
                   <p className="text-[11px] text-slate-800 font-medium leading-snug">
                     {notif.mensaje}
                   </p>
-
-                  {/* METADATOS DEL ÍTEM */}
                   {it && (
                     <div className="p-2 bg-white/90 rounded-xl border border-slate-200/60 flex items-center justify-between text-[10px] gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1 font-bold text-slate-900 truncate">
@@ -538,7 +515,6 @@ export function NotificationsModal({
                     </div>
                   )}
 
-                  {/* ACCIONES RÁPIDAS */}
                   <div className="pt-0.5 flex items-center justify-end gap-1.5">
                     {onMarkAsReplaced && (
                       <button
@@ -574,7 +550,6 @@ export function NotificationsModal({
           )}
         </div>
 
-        {/* FOOTER DEL MESSAGEBOX */}
         <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/80 rounded-b-3xl flex items-center justify-center text-xs shrink-0">
           <span className="text-[10px] text-slate-400 font-medium">
             {activeNotifications.length} {activeNotifications.length === 1 ? 'notificación activa' : 'notificaciones activas'}

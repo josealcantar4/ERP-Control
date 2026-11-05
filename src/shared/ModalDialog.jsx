@@ -4,18 +4,15 @@ import { AlertCircle, CheckCircle2, HelpCircle, X, Info } from 'lucide-react';
 import { useModalAnimation } from '../hooks';
 import { AutoScrollInput } from './AutoScrollInput';
 
-/**
- * Custom React Modal for Alerts, Confirmations, and Prompts.
- * Completely replaces native browser window.alert, window.confirm, and window.prompt.
- */
+
 export function ModalDialog({
   isOpen,
-  type = 'alert', // 'alert' | 'confirm' | 'prompt'
+  type = 'alert',
   title = '',
   message = '',
   confirmText = 'Aceptar',
   cancelText = 'Cancelar',
-  variant = 'primary', // 'primary' | 'danger' | 'success'
+  variant = 'primary',
   inputValue = '',
   inputPlaceholder = '',
   onInputChange,
@@ -69,8 +66,6 @@ export function ModalDialog({
         style={cardStyle}
         className={`bg-white rounded-3xl w-full ${children ? 'max-w-md' : 'max-w-sm'} shadow-2xl border border-slate-100 overflow-hidden p-5 sm:p-6 space-y-4 my-auto overscroll-contain max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col ${cardClass}`}
       >
-        
-        {/* Header Icon + Title */}
         <div className="flex items-start gap-3">
           <div
             className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
@@ -103,15 +98,11 @@ export function ModalDialog({
             )}
           </div>
         </div>
-
-        {/* Custom Body / Children Content */}
         {children && (
           <div className="pt-0.5 min-h-0 flex-1 overflow-y-auto">
             {children}
           </div>
         )}
-
-        {/* Optional Input for Prompt type with AutoScroll & Carousel */}
         {type === 'prompt' && (
           <div className="pt-1">
             <AutoScrollInput
@@ -124,8 +115,6 @@ export function ModalDialog({
             />
           </div>
         )}
-
-        {/* Action Buttons */}
         <div className="pt-2 flex items-center justify-end gap-2">
           {type !== 'alert' && (
             <button

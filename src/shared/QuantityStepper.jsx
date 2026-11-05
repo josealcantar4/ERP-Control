@@ -1,10 +1,6 @@
 import React from 'react';
 import { Minus, Plus, Trash2 } from 'lucide-react';
 
-/**
- * Control numérico estilo "stepper" para ajuste de cantidades.
- * Incluye botones [ - ] y [ + ], visor de cantidad central y botón de papelera [ 🗑️ ] para ausencia total (0).
- */
 export function QuantityStepper({
   value = 0,
   min = 0,
@@ -13,7 +9,7 @@ export function QuantityStepper({
   onDelete,
   disabled = false,
   showDelete = true,
-  size = 'md', // 'sm' | 'md'
+  size = 'md',
   className = ''
 }) {
   const numValue = Number(value) || 0;
@@ -57,7 +53,6 @@ export function QuantityStepper({
         disabled ? 'opacity-60 cursor-not-allowed' : ''
       } ${className}`}
     >
-      {/* Botón Disminuir [ - ] */}
       <button
         type="button"
         onClick={handleDecrease}
@@ -68,7 +63,6 @@ export function QuantityStepper({
         <Minus className={iconSize} />
       </button>
 
-      {/* Número al centro */}
       <span
         className={`font-mono font-extrabold ${textSize} text-center select-none ${
           isZero ? 'text-red-600' : 'text-slate-900'
@@ -77,7 +71,6 @@ export function QuantityStepper({
         {numValue}
       </span>
 
-      {/* Botón Aumentar [ + ] */}
       <button
         type="button"
         onClick={handleIncrease}
@@ -88,7 +81,6 @@ export function QuantityStepper({
         <Plus className={iconSize} />
       </button>
 
-      {/* Botón Papelera [ 🗑️ ] */}
       {showDelete && (
         <button
           type="button"

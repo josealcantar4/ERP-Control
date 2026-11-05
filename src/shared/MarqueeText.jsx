@@ -1,15 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
 
-/**
- * MarqueeText: Contenedor de texto con carrusel/avance continuo automático
- * o interactivo al pasar el cursor / tocar cuando una descripción es demasiado larga.
- */
 export function MarqueeText({
   text = '',
   className = '',
   containerClassName = '',
-  speed = 40, // pixels per second
-  threshold = 28 // auto active if text length > threshold
+  speed = 40,
+  threshold = 28
 }) {
   const containerRef = useRef(null);
   const textRef = useRef(null);

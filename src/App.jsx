@@ -24,7 +24,6 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isScreenUpdating, setIsScreenUpdating] = useState(false);
 
-  // Estado del modal de sincronización automática de catálogo
   const [syncModal, setSyncModal] = useState({
     isOpen: false,
     status: 'checking',
@@ -34,7 +33,6 @@ export default function App() {
   const isCatalogSyncingRef = useRef(false);
   const lastCatalogCheckTimeRef = useRef(0);
 
-  // Estado del modal y alertas de notificaciones
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const isNotificationsOpenRef = useRef(false);
   useEffect(() => {
@@ -53,27 +51,22 @@ export default function App() {
     setNotificationDetailTransfer(solicitud);
   }, []);
 
-  // Notificaciones unificadas en tiempo real (Transferencias + Material)
   const notificationsList = React.useMemo(() => {
     return [...transferNotifications, ...materialNotifications];
   }, [transferNotifications, materialNotifications]);
 
-  // Suscripción reactiva en tiempo real a notificaciones de transferencias, material y catálogo limpio de Firebase
   useEffect(() => {
     if (currentUser) {
-      // 1. Alertas de Reemplazo de Material (vencidas y próximas a vencer)
       const unsubMaterial = materialService.subscribeMateriales((items) => {
         const notifs = materialService.calculateNotifications(items);
         setMaterialNotifications(notifs);
       });
 
-      // 2. Alertas de Transferencias (solicitudes recibidas, pedidos despachados, faltantes)
       const unsubSolicitudes = transferService.subscribeSolicitudes((solicitudes) => {
         const notifs = transferService.calculateTransferNotifications(solicitudes, currentUser);
         setTransferNotifications(notifs);
       }, currentUser);
 
-      // 3. Sincronización del catálogo limpio
       const unsubClean = catalogService.subscribeCleanCatalog();
 
       return () => {
@@ -88,7 +81,6 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Listener para sincronización inmediata de notificaciones descartadas
   useEffect(() => {
     const handleDismissed = (e) => {
       const dismissedId = e.detail?.notifId;
@@ -101,12 +93,10 @@ export default function App() {
     return () => window.removeEventListener('erp_notifications_dismissed', handleDismissed);
   }, []);
 
-  // Sincronización SIEMPRE VISIBLE del Catálogo Central para todos los usuarios
   const runCatalogAutoSync = useCallback(async (force = false) => {
     if (isCatalogSyncingRef.current) return;
 
     const now = Date.now();
-    // Throttling: evitar verificaciones repetitivas con menos de 4 segundos de separación salvo forzado
     if (!force && (now - lastCatalogCheckTimeRef.current < 4000)) {
       return;
     }
@@ -114,10 +104,8 @@ export default function App() {
 
     try {
       if (!force) {
-        // Consulta ultraligera de metadatos (1 byte) al Servidor Central
         const check = await catalogService.checkServerCatalogVersion();
         
-        // Si ya está actualizado y hay datos locales: CERO descargas, acceso inmediato
         if (check.upToDate) {
           return;
         }
@@ -125,7 +113,6 @@ export default function App() {
 
       isCatalogSyncingRef.current = true;
 
-      // SIEMPRE VISIBLE: Mostrar el modal inmediatamente con backdrop y barra de progreso
       setSyncModal({
         isOpen: true,
         status: 'downloading',
@@ -161,10 +148,8 @@ export default function App() {
         }
       }));
 
-      // Notificar reactivamente a otros módulos (CatalogUploadModule, Solicitudes, etc.)
       window.dispatchEvent(new CustomEvent('erp_catalog_synced', { detail: result }));
 
-      // Se mantiene visible para que el usuario pueda presionar "Continuar"; con respaldo automático tras 6 segundos
       setTimeout(() => {
         setSyncModal(prev => (prev.status === 'done' ? { ...prev, isOpen: false } : prev));
       }, 6000);
@@ -182,7 +167,6 @@ export default function App() {
     }
   }, []);
 
-  // Suscripción reactiva para disparar sincronizaciones visibles desde cualquier módulo (ej. botón Forzar)
   useEffect(() => {
     const handleTriggerSync = (e) => {
       const force = e.detail?.force ?? true;
@@ -192,7 +176,6 @@ export default function App() {
     return () => window.removeEventListener('erp_trigger_catalog_sync', handleTriggerSync);
   }, [runCatalogAutoSync]);
 
-  // Suscripción en tiempo real a actualizaciones del catálogo para TODOS los usuarios conectados
   useEffect(() => {
     if (!currentUser) return;
 
@@ -203,7 +186,6 @@ export default function App() {
       const localModified = localStorage.getItem('erp_catalog_last_modified');
       const localCount = await catalogService.getLocalBaseCount();
 
-      // Si el servidor Firestore notifica una versión más reciente que la local
       const isOutdated = localCount === 0 ||
         (serverMeta.fingerprint && localFingerprint && serverMeta.fingerprint !== localFingerprint) ||
         (serverMeta.lastModified && localModified && serverMeta.lastModified !== localModified) ||
@@ -219,17 +201,12 @@ export default function App() {
     };
   }, [currentUser, runCatalogAutoSync]);
 
-  // Verificación de información nueva al abrir cualquier pantalla
   const performScreenRefresh = useCallback(async (screen) => {
     if (!screen) {
       setIsScreenUpdating(false);
       return;
     }
-
-    // Verificación del catálogo central para todas las pantallas
     runCatalogAutoSync();
-
-    // El módulo 'upload-catalog' gestiona sus propios spinners internos
     if (screen === 'upload-catalog') {
       setIsScreenUpdating(false);
       return;
@@ -271,7 +248,6 @@ export default function App() {
     } catch (err) {
       console.warn('Error durante verificación de nueva información:', err);
     } finally {
-      // Duración mínima suave de 700ms para una animación perceptible y nativa sin parpadeos
       const elapsed = Date.now() - startTime;
       const remaining = Math.max(0, 700 - elapsed);
       setTimeout(() => {
@@ -279,11 +255,6 @@ export default function App() {
       }, remaining);
     }
   }, [runCatalogAutoSync]);
-
-  // Listener para sincronización automática reactiva del Catálogo Central:
-  // 1. Al re-enfocar la pestaña/ventana (ej. el usuario subió el Excel en Drive y vuelve al ERP)
-  // 2. Al cambiar la visibilidad de la página (visibilitychange)
-  // 3. Verificación periódica cada 60 segundos
   useEffect(() => {
     if (!currentUser) return;
 
@@ -309,14 +280,12 @@ export default function App() {
     };
   }, [currentUser, runCatalogAutoSync]);
 
-  // Solicitar permiso de notificaciones Push del navegador/dispositivo
   useEffect(() => {
     if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
       Notification.requestPermission();
     }
   }, []);
 
-  // Navegación contextual con View Transitions, persistencia automática, restablecimiento de scroll y animación de refresco
   const navigateTo = (screen, customDirection = null) => {
     const direction = customDirection || (screen === 'dashboard' ? 'back' : 'forward');
     transitionView(() => {
@@ -326,8 +295,6 @@ export default function App() {
     }, { direction });
     performScreenRefresh(screen);
   };
-
-  // 1. Guardar automáticamente la pantalla actual en localStorage y asegurar scroll superior
   useEffect(() => {
     if (currentUser && currentScreen) {
       localStorage.setItem('currentScreen', currentScreen);
@@ -335,7 +302,6 @@ export default function App() {
     }
   }, [currentScreen, currentUser]);
 
-  // 2. Verificar sesión guardada al iniciar la PWA
   useEffect(() => {
     const savedUser = userService.getCurrentUser();
     if (savedUser) {
@@ -356,10 +322,8 @@ export default function App() {
       setCurrentScreen(targetScreen);
       localStorage.setItem('currentScreen', targetScreen);
 
-      // Verificación de datos nuevos al iniciar
       performScreenRefresh(targetScreen);
 
-      // Disparar verificación silenciosa post-login
       runCatalogAutoSync();
     }
     setIsLoading(false);
@@ -389,7 +353,6 @@ export default function App() {
       localStorage.setItem('currentScreen', targetScreen);
     }, { direction: 'login' });
 
-    // Disparar verificación silenciosa post-login
     runCatalogAutoSync();
   };
 
@@ -439,7 +402,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       <OfflineIndicator />
 
-      {/* Modal de Sincronización Automática Transparente */}
       <CatalogSyncModal
         isOpen={syncModal.isOpen}
         status={syncModal.status}
@@ -478,8 +440,6 @@ export default function App() {
           setIsNotificationsOpen(true);
         }}
       />
-
-      {/* Messagebox Flotante de Notificaciones Unificadas (Transferencias + Material) */}
       <NotificationsModal
         isOpen={isNotificationsOpen}
         notifications={notificationsList}
@@ -509,7 +469,6 @@ export default function App() {
             }
           }
           navigateTo(screen);
-          // Disparar evento para apertura reactiva inmediata si el módulo ya se encuentra montado
           window.dispatchEvent(new CustomEvent('erp_open_solicitud', {
             detail: { screen, orderId, notif }
           }));
@@ -517,7 +476,6 @@ export default function App() {
         onViewTransferDetail={handleViewTransferDetail}
       />
 
-      {/* Modal de Detalle de Transferencia consultado desde Notificaciones */}
       <TransferDetailModal
         isOpen={Boolean(notificationDetailTransfer)}
         solicitud={notificationDetailTransfer}
@@ -530,7 +488,6 @@ export default function App() {
         }}
       />
 
-      {/* Indicador de actualización de pantalla discreto estilo iOS (sin opacar el fondo) */}
       <ScreenRefreshSpinner isRefreshing={isScreenUpdating} />
 
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16 vt-main">

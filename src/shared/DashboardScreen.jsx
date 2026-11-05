@@ -25,12 +25,8 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
     };
   }, []);
 
-  // Notificaciones de reemplazo de material
   const pendingMaterialAlerts = materialService.calculateNotifications(materiales).length;
-
-  // Conteos en vivo filtrados por sede y área
   const entrantesCount = solicitudes.filter(s => canUserReceive(s, currentUser)).length;
-
   const pendientesDespachoCount = solicitudes.filter(
     s => (s.estado === 'enviada' || s.estado === 'en_despacho') && canUserDispatch(s, currentUser)
   ).length;
@@ -51,8 +47,6 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
       </div>
 
       <div className={`grid gap-4 ${hasSolicitar || hasDespachar || hasMaterial || hasCatalog ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
-        
-        {/* CARD 1: SOLICITAR PEDIDO */}
         {hasSolicitar && (
           <div onClick={() => onNavigate('solicitar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
@@ -68,7 +62,6 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
           </div>
         )}
 
-        {/* CARD 1B: RECIBIR PEDIDO (Aparece si tiene rol de Solicitar) */}
         {hasSolicitar && (
           <div onClick={() => onNavigate('recibir')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
@@ -89,7 +82,6 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
           </div>
         )}
 
-        {/* CARD 2: DESPACHAR PEDIDO */}
         {hasDespachar && (
           <div onClick={() => onNavigate('despachar')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
@@ -110,7 +102,6 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
           </div>
         )}
 
-        {/* CARD 2B: REGISTRO DE MATERIAL BRINDADO */}
         {hasMaterial && (
           <div onClick={() => onNavigate('material')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[220px] active:scale-[0.985] ios-card-hover">
             <div>
@@ -134,8 +125,6 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
           </div>
         )}
 
-
-        {/* CARD: SINCRONIZAR CATÁLOGO CENTRAL */}
         {hasCatalog && (
           <div onClick={() => onNavigate('upload-catalog')} className="group relative bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-400 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[160px] active:scale-[0.985] sm:col-span-2 ios-card-hover">
              <div className="flex items-start justify-between gap-4">

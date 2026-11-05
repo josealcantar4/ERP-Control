@@ -10,11 +10,9 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #f8fafc; /* iOS Light Canvas */
+  background-color: #f8fafc;
   color: #0f172a;
 }
-
-/* Subtle iOS style scrollbar */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -32,8 +30,6 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
-
-/* iOS glass backdrop utility */
 .ios-glass {
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px);
@@ -58,8 +54,6 @@ body {
 .ios-card-hover:active {
   transform: scale(0.985);
 }
-
-/* iOS Native Animations & Transitions */
 @keyframes iosFadeIn {
   from {
     opacity: 0;
@@ -144,9 +138,6 @@ body {
   transform: scale(0.97);
 }
 
-/* ==========================================================================
-   ANIMACIONES FLUIDAS DEL MESSAGEBOX DE NOTIFICACIONES (DESDE / HACIA EL ICONO)
-   ========================================================================== */
 @keyframes popoverEnterFromIcon {
   0% {
     opacity: 0;
@@ -209,11 +200,6 @@ body {
   pointer-events: none;
 }
 
-/* ==========================================================================
-   ANIMACIONES FLUIDAS DE MODALES (EXPANSIÓN DESDE EL BOTÓN / RETRACCIÓN AL CERRAR)
-   Inspiradas en las transiciones de apertura/cierre de iOS / iPadOS
-   Garantizan nitidez absoluta (sin fuentes borrosas) y salida sin saltos
-   ========================================================================== */
 @keyframes modalZoomInFromOrigin {
   0% {
     opacity: 0;
@@ -248,15 +234,6 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
-/* ==========================================================================
-   SPA VIEW TRANSITIONS (Transiciones de Vista Nativas Estilo Apple iOS)
-   Basado en la especificación W3C y guías de web.dev
-   ========================================================================== */
-
-/* 1. Transición de Elementos Específicos (Persistent Elements)
-   Evita que elementos fijos como el navbar, headers de módulo, footer y banner offline se desplacen
-   o parpadeen mientras el contenido principal transiciona suavemente. */
 .vt-navbar {
   view-transition-name: app-navbar;
 }
@@ -277,7 +254,6 @@ body {
   view-transition-name: app-offline-banner;
 }
 
-/* Curvas de tiempo iOS Spring y duraciones optimizadas */
 ::view-transition-group(app-main-content),
 ::view-transition-group(app-navbar),
 ::view-transition-group(module-header),
@@ -294,16 +270,11 @@ body {
   height: 100%;
   width: 100%;
 }
-
-/* Si el navegador soporta View Transitions, deshabilitamos la animación CSS tradicional
-   para evitar dobles transiciones en el contenedor principal */
 @supports (view-transition-name: none) {
   .ios-page-transition {
     animation: none !important;
   }
 }
-
-/* 2. Keyframes Contextuales */
 @keyframes vtSlideOutLeft {
   from {
     opacity: 1;
@@ -387,8 +358,6 @@ body {
     transform: scale(1);
   }
 }
-
-/* Animaciones nativas fluidas para pestañas dentro de modales sin desbordamiento */
 @keyframes modalTabSlideInRight {
   from {
     opacity: 0;
@@ -419,9 +388,6 @@ body {
   animation: modalTabSlideInLeft 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* 3. Diferentes Transiciones según el Contexto */
-
-/* Contexto A: Avance / Drill-down (hacia adelante en flujo, módulos o pestañas) */
 [data-transition-direction="forward"]::view-transition-old(app-main-content) {
   animation: vtSlideOutLeft 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -429,7 +395,6 @@ body {
   animation: vtSlideInRight 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Contexto B: Retroceso / Regreso al Dashboard / Volver */
 [data-transition-direction="back"]::view-transition-old(app-main-content) {
   animation: vtSlideOutRight 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -437,15 +402,12 @@ body {
   animation: vtSlideInLeft 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Contexto C: Cambio de pestañas suave */
 [data-transition-direction="tab"]::view-transition-old(app-main-content) {
   animation: vtFadeOut 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 [data-transition-direction="tab"]::view-transition-new(app-main-content) {
   animation: vtFadeIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-
-/* Contexto D: Login / Logout (único contexto donde root transiciona) */
 [data-transition-direction="login"]::view-transition-old(root) {
   animation: vtZoomOut 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -453,7 +415,6 @@ body {
   animation: vtZoomIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 4. Respeto a las preferencias de accesibilidad */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),
   ::view-transition-old(*),
@@ -462,9 +423,6 @@ body {
   }
 }
 
-/* ==========================================================================
-   UTILIDADES PARA TEXTOS LARGOS / CARRUSEL DE TEXTO EN MEDICAMENTOS
-   ========================================================================== */
 @keyframes textMarqueeBounce {
   0%, 18% {
     transform: translateX(0%);

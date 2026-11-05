@@ -55,7 +55,6 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
         className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100/80 flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] my-auto overscroll-contain ${cardClass}`}
       >
         
-        {/* Modal Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -72,7 +71,6 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
           </button>
         </div>
 
-        {/* Scanned Drug Info Card */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1">
             <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
@@ -83,7 +81,6 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
             </div>
           </div>
 
-          {/* Numeric Input */}
           <div className="space-y-2 text-center">
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Cantidad a Solicitar
@@ -139,7 +136,6 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
             )}
           </div>
 
-          {/* Action Button: "Listo" */}
           <div className="pt-2">
             <button
               type="submit"

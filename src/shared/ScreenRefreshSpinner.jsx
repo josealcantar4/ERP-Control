@@ -1,14 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 
-/**
- * ScreenRefreshSpinner
- * 
- * Indicador de actualización flotante y discreto al estilo iOS.
- * Cumple con el requisito estricto: "solo el spinner pero sin opacar al fondo".
- * Se renderiza mediante portal en document.body con z-[99999] para mantenerse
- * permanentemente encima de todos los elementos sin interferir en los clics.
- */
 export function ScreenRefreshSpinner({ isRefreshing }) {
   if (!isRefreshing) return null;
 

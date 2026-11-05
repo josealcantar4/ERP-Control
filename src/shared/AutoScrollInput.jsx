@@ -1,16 +1,6 @@
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 
-/**
- * AutoScrollInput: Input con avance de texto automático tipo carrusel
- * para descripciones largas de medicamentos que se cortan en pantallas estrechas.
- * 
- * - Si el texto desborda el ancho visible, avanza suavemente hacia el final
- *   para permitir leer la dosis, gramaje o presentación completa.
- * - Pausa en los extremos para lectura cómoda.
- * - Se detiene al hacer clic o enfocar para no interrumpir la edición.
- * - Ofrece botones interactivos de carrusel (◀ / ▶) para navegar manualmente.
- */
 export const AutoScrollInput = forwardRef(function AutoScrollInput(
   {
     value = '',
@@ -38,12 +28,10 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
 
   const [hasOverflow, setHasOverflow] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
-  const [scrollProgress, setScrollProgress] = useState(0); // 0 (inicio) a 1 (final)
+  const [scrollProgress, setScrollProgress] = useState(0);
 
   const isFocusedRef = useRef(false);
   isFocusedRef.current = isFocused;
-
-  // Medir desbordamiento y ejecutar animación de avance
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -65,10 +53,9 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
       return;
     }
 
-    // Configuración de animación fluida
     let currentScroll = el.scrollLeft;
-    let direction = 1; // 1 = adelante, -1 = reversa
-    const speed = 0.55; // Píxeles por cuadro (~35px/segundo a 60fps)
+    let direction = 1;
+    const speed = 0.55;
 
     const step = () => {
       if (isCancelled || isFocusedRef.current || !el) return;
@@ -80,7 +67,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
         el.scrollLeft = maxScroll;
         setScrollProgress(1);
         direction = -1;
-        // Pausa de 2.2 segundos al final para leer la dosis/presentación
         timeoutId = setTimeout(() => {
           if (!isCancelled && !isFocusedRef.current) {
             animFrameId = requestAnimationFrame(step);
@@ -92,7 +78,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
         el.scrollLeft = 0;
         setScrollProgress(0);
         direction = 1;
-        // Pausa de 1.8 segundos al inicio
         timeoutId = setTimeout(() => {
           if (!isCancelled && !isFocusedRef.current) {
             animFrameId = requestAnimationFrame(step);
@@ -107,8 +92,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
       }
       animFrameId = requestAnimationFrame(step);
     };
-
-    // Esperar 1.4s antes de iniciar el avance
     timeoutId = setTimeout(() => {
       if (!isCancelled && !isFocusedRef.current) {
         animFrameId = requestAnimationFrame(step);
@@ -121,8 +104,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [value, autoAdvance, isFocused, disabled]);
-
-  // Manejo de botones de carrusel manual
   const handleScrollLeft = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -155,14 +136,11 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
 
   return (
     <div className={`relative flex items-center w-full group ${containerClassName}`}>
-      {/* Icono izquierdo opcional */}
       {Icon && (
         <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 z-10">
           <Icon className="w-4 h-4" />
         </div>
       )}
-
-      {/* Input principal */}
       <input
         ref={inputRef}
         type={type}
@@ -185,8 +163,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
         } ${className}`}
         {...restProps}
       />
-
-      {/* Controles del carrusel / Botones de navegación cuando el texto desborda */}
       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 z-10 pointer-events-auto">
         {hasOverflow && showCarouselButtons && (
           <div
@@ -217,8 +193,6 @@ export const AutoScrollInput = forwardRef(function AutoScrollInput(
             </button>
           </div>
         )}
-
-        {/* Botón de Limpiar */}
         {onClear && value && !disabled && (
           <button
             type="button"

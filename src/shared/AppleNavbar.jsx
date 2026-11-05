@@ -39,9 +39,7 @@ export function AppleNavbar({
           </div>
         </div>
 
-        {/* Right Status & Actions */}
         <div className="flex items-center gap-2.5">
-          {/* Notifications button with Live Badge Dot */}
           <button
             id="navbar-notification-bell-btn"
             type="button"
@@ -62,8 +60,6 @@ export function AppleNavbar({
               </span>
             )}
           </button>
-
-          {/* Admin shortcut button */}
           {isAdmin && onNavigate && (
             <button
               onClick={() => onNavigate(currentScreen === 'admin' ? 'dashboard' : 'admin')}
@@ -79,7 +75,6 @@ export function AppleNavbar({
             </button>
           )}
 
-          {/* Offline / Online Pill */}
           <div
             className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
               isOnline
@@ -90,11 +85,7 @@ export function AppleNavbar({
             {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             <span>{isOnline ? 'Online' : 'Offline'}</span>
           </div>
-
-          {/* PWA Install */}
           <PWAInstallPrompt />
-
-          {/* User profile & Logout */}
           <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
             <div className="text-right hidden sm:block">
               <span className="block text-xs font-bold text-slate-800 leading-tight">

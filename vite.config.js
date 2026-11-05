@@ -15,7 +15,7 @@ export default defineConfig({
         id: '/erp-control',
         name: 'ERP Control',
         short_name: 'ERP Control',
-        description: 'ERP Control - Sistema de Transferencias de Medicamentos',
+        description: 'ERP Control - Sistema de Gestión Farmacéutica',
         theme_color: '#ffffff',
         background_color: '#f8fafc',
         display: 'standalone',
@@ -53,7 +53,6 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3}'],
         importScripts: ['sw-push-listener.js'],
-        // Firestore maneja su propia persistencia local nativa multinavegador en IndexedDB
         navigateFallback: 'index.html'
       },
       devOptions: {

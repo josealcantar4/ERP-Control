@@ -14,4 +14,6 @@ export { MarqueeText } from './MarqueeText';
 export { transitionView } from './viewTransition';
 export { QuantityStepper } from './QuantityStepper';
 export { DiscrepancySummaryModal } from './DiscrepancySummaryModal';
+export { FloatingInput } from './FloatingInput';
+export { MarqueeSearchInput } from './MarqueeSearchInput';
 export { playCheckSound, playNotificationSound } from '../modules/transferencias';

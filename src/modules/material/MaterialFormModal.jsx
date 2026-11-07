@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Calendar, User, Package, Check, AlertCircle, PlusCircle, Building2, Tag } from 'lucide-react';
+import { X, Calendar, User, Package, Check, AlertCircle, PlusCircle, Building2, Tag, Minus, Plus } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { FloatingInput } from '../../shared';
 
 export function MaterialFormModal({
   isOpen,
@@ -34,6 +35,7 @@ export function MaterialFormModal({
 
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cantidadRaw, setCantidadRaw] = useState('1');
 
   useEffect(() => {
     if (isOpen) {
@@ -50,6 +52,7 @@ export function MaterialFormModal({
           estado: editingItem.estado || 'activo',
           notas: editingItem.notas || ''
         });
+        setCantidadRaw(String(editingItem.cantidad || 1));
       } else {
         setFormData({
           tipoControl: tipos.length > 0 ? tipos[0].nombre : '',
@@ -63,6 +66,7 @@ export function MaterialFormModal({
           estado: 'activo',
           notas: ''
         });
+        setCantidadRaw('1');
       }
       setErrorMsg('');
       setIsSubmitting(false);
@@ -233,12 +237,12 @@ export function MaterialFormModal({
                   ))}
                 </select>
               ) : (
-                <input
-                  type="text"
+                <FloatingInput
+                  label="A quién se le brinda"
+                  required
                   placeholder="Nombre de la persona"
                   value={formData.personal}
                   onChange={(e) => setFormData({ ...formData, personal: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500"
                 />
               )}
             </div>
@@ -264,15 +268,12 @@ export function MaterialFormModal({
           {/* 3. DESCRIPCIÓN DEL MATERIAL Y CANTIDAD */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-                Herramienta / Material Entregado *
-              </label>
-              <input
-                type="text"
+              <FloatingInput
+                label="Herramienta / Material Entregado"
+                required
                 placeholder="Ej. Engrapadora industrial, Laptop Dell, Cúter..."
                 value={formData.descripcion}
                 onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500"
               />
             </div>
 
@@ -280,14 +281,52 @@ export function MaterialFormModal({
               <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
                 Cantidad *
               </label>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={formData.cantidad}
-                onChange={(e) => setFormData({ ...formData, cantidad: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500 font-mono font-bold"
-              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = Math.max(1, (formData.cantidad || 1) - 1);
+                    setFormData({ ...formData, cantidad: next });
+                    setCantidadRaw(String(next));
+                  }}
+                  disabled={formData.cantidad <= 1}
+                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={cantidadRaw}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setCantidadRaw(raw);
+                    const parsed = parseInt(raw, 10);
+                    if (!isNaN(parsed) && parsed >= 1) {
+                      setFormData({ ...formData, cantidad: parsed });
+                    }
+                  }}
+                  onBlur={() => {
+                    const parsed = parseInt(cantidadRaw, 10);
+                    const valid = !isNaN(parsed) && parsed >= 1 ? parsed : 1;
+                    setFormData({ ...formData, cantidad: valid });
+                    setCantidadRaw(String(valid));
+                  }}
+                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs text-center focus:outline-none focus:bg-white focus:border-blue-500 font-mono font-bold"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = (formData.cantidad || 1) + 1;
+                    setFormData({ ...formData, cantidad: next });
+                    setCantidadRaw(String(next));
+                  }}
+                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -352,7 +391,7 @@ export function MaterialFormModal({
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500"
               >
                 <option value="activo">Activo / En uso por el personal</option>
-                <option value="reemplazado">Reemplazado / Renovation completada</option>
+                <option value="reemplazado">Reemplazado / Renovación Completada</option>
                 <option value="devuelto">Devuelto al almacén / Dado de baja</option>
               </select>
             </div>
@@ -360,15 +399,13 @@ export function MaterialFormModal({
 
           {/* 7. NOTAS Y OBSERVACIONES */}
           <div>
-            <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-              Notas u Observaciones (Opcional)
-            </label>
-            <textarea
-              rows="2"
+            <FloatingInput
+              label="Notas u Observaciones (Opcional)"
+              multiline
+              rows={2}
               placeholder="Número de serie, condición de entrega, accesorios incluidos..."
               value={formData.notas}
               onChange={(e) => setFormData({ ...formData, notas: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500"
             />
           </div>
 

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Tag, Plus, Trash2, AlertCircle, Edit2, Check, RotateCcw } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { ModalDialog } from '../../shared/ModalDialog';
+import { FloatingInput } from '../../shared';
 
 const COLOR_OPTIONS = [
   { id: 'blue', label: 'Azul', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
@@ -32,6 +34,19 @@ export function MaterialTypesModal({
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [dialog, setDialog] = useState({
+    isOpen: false,
+    type: 'confirm',
+    title: '',
+    message: '',
+    variant: 'danger',
+    confirmText: 'Sí, eliminar',
+    cancelText: 'Cancelar',
+    onConfirm: () => {},
+    onCancel: () => {}
+  });
+  const closeDialog = () => setDialog(prev => ({ ...prev, isOpen: false }));
+
   const handleCancelEdit = () => {
     setEditingTipo(null);
     setNombre('');
@@ -56,9 +71,20 @@ export function MaterialTypesModal({
 
   const handleDeleteTipo = (tipo) => {
     if (!tipo) return;
-    if (window.confirm(`¿Estás seguro de que deseas eliminar el tipo de material "${tipo.nombre}"?\nEsta acción no se puede deshacer.`)) {
-      onDeleteTipo(tipo.id);
-    }
+    setDialog({
+      isOpen: true,
+      type: 'confirm',
+      variant: 'danger',
+      title: '¿Eliminar tipo de control?',
+      message: `¿Estás seguro de que deseas eliminar el tipo de material "${tipo.nombre}"?\nEsta acción no se puede deshacer.`,
+      confirmText: 'Sí, eliminar',
+      cancelText: 'Cancelar',
+      onConfirm: () => {
+        closeDialog();
+        onDeleteTipo(tipo.id);
+      },
+      onCancel: closeDialog
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -153,18 +179,19 @@ export function MaterialTypesModal({
               )}
             </div>
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Ej. Papelería, Cómputo, Seguridad..."
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
-              />
+            <div className="flex gap-2 items-center">
+              <div className="flex-1">
+                <FloatingInput
+                  label={editingTipo ? 'Modificar Tipo' : 'Nombre del Tipo'}
+                  placeholder="Ej. Papelería, Cómputo, Seguridad..."
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                />
+              </div>
               <button
                 type="submit"
                 disabled={isSubmitting || !nombre.trim()}
-                className={`px-4 py-2 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                className={`px-4 py-3 text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
                   editingTipo
                     ? 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300'
                     : 'bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300'
@@ -266,5 +293,21 @@ export function MaterialTypesModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
+  return typeof document !== 'undefined' ? createPortal(
+    <>
+      {modalContent}
+      <ModalDialog
+        isOpen={dialog.isOpen}
+        type={dialog.type}
+        title={dialog.title}
+        message={dialog.message}
+        variant={dialog.variant}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        onConfirm={dialog.onConfirm}
+        onCancel={dialog.onCancel}
+      />
+    </>,
+    document.body
+  ) : modalContent;
 }

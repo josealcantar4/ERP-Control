@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ScanBarcode, Send, Trash2, CheckCircle2, ArrowLeft, History, ChevronRight, Plus, Minus,
-  Building2, Layers, Info
+  Building2, Layers, Info, Search, X, Loader2, ChevronDown, Clock
 } from 'lucide-react';
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
@@ -12,7 +12,7 @@ import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { transitionView } from '../../shared';
+import { transitionView, MarqueeSearchInput } from '../../shared';
 
 export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [sedesList, setSedesList] = useState([]);
@@ -39,26 +39,98 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     return localStorage.getItem('erp_solicitar_active_tab') || 'captura';
   });
 
+  const [historialList, setHistorialList] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyLimit, setHistoryLimit] = useState(15);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
+  const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
+  const sentinelRef = useRef(null);
+
   const handleSwitchTab = (newTab) => {
     if (newTab === activeTab) return;
     const direction = newTab === 'historial' ? 'forward' : 'back';
+    if (newTab === 'historial') {
+      setIsHistorialInitialLoading(true);
+      setHistoryLimit(15);
+      setTimeout(() => setIsHistorialInitialLoading(false), 220);
+    }
     transitionView(() => {
       setActiveTab(newTab);
     }, { direction });
   };
-  const [historialList, setHistorialList] = useState([]);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [scannedMedicine, setScannedMedicine] = useState(null);
   const [isBulkWarningOpen, setIsBulkWarningOpen] = useState(false);
   const [bulkWarningItems, setBulkWarningItems] = useState([]);
 
+  // Historial ordenado con borradores primero y luego por fecha más reciente
+  const sortedHistory = useMemo(() => {
+    return [...historialList].sort((a, b) => {
+      if (a.estado === 'borrador' && b.estado !== 'borrador') return -1;
+      if (b.estado === 'borrador' && a.estado !== 'borrador') return 1;
+      const dateA = new Date(a.fecha || 0).getTime();
+      const dateB = new Date(b.fecha || 0).getTime();
+      return dateB - dateA;
+    });
+  }, [historialList]);
+
+  // Filtrado reactivo en historial por folio, sucursal destino, área o producto
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.toLowerCase().trim();
+    if (!q) return sortedHistory;
+    return sortedHistory.filter(sol => {
+      const folio = (sol.folio || formatTransferFolio(sol) || '').toLowerCase();
+      const destSede = (sol.sucursalDestino || '').toLowerCase();
+      const destArea = (sol.areaDestino || '').toLowerCase();
+      const itemsMatch = sol.items?.some(it => 
+        (it.descripcion || '').toLowerCase().includes(q) ||
+        (it.codigo || '').toLowerCase().includes(q)
+      );
+      return folio.includes(q) || destSede.includes(q) || destArea.includes(q) || itemsMatch;
+    });
+  }, [sortedHistory, historySearch]);
+
+  // Carga progresiva (chunk de 15 en 15)
+  const visibleHistory = useMemo(() => {
+    return filteredHistory.slice(0, historyLimit);
+  }, [filteredHistory, historyLimit]);
+
+  const hasMoreHistory = visibleHistory.length < filteredHistory.length;
+
+  const handleLoadMoreHistory = useCallback(() => {
+    if (isLoadingMoreHistory) return;
+    setIsLoadingMoreHistory(true);
+    setTimeout(() => {
+      setHistoryLimit(prev => prev + 15);
+      setIsLoadingMoreHistory(false);
+    }, 300);
+  }, [isLoadingMoreHistory]);
+
+  const handleSearchChange = (val) => {
+    setHistorySearch(val);
+    setHistoryLimit(15);
+  };
+
+  // Carga incremental automática al hacer scroll al fondo
+  useEffect(() => {
+    if (activeTab !== 'historial' || !hasMoreHistory || isLoadingMoreHistory) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        handleLoadMoreHistory();
+      }
+    }, { rootMargin: '150px' });
+
+    const el = sentinelRef.current;
+    if (el) observer.observe(el);
+
+    return () => {
+      if (el) observer.unobserve(el);
+    };
+  }, [activeTab, hasMoreHistory, isLoadingMoreHistory, handleLoadMoreHistory]);
+
   useEffect(() => {
     localStorage.setItem('erp_solicitar_active_tab', activeTab);
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    if (activeTab === 'historial' && onRefresh) {
-      onRefresh();
-    }
   }, [activeTab]);
 
   const [dialog, setDialog] = useState({
@@ -79,9 +151,13 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     async function init() {
       const draft = await transferService.getActiveDraft(currentUser.username);
       if (draft && draft.items && draft.items.length > 0) {
-        setCurrentDraft(draft);
-        if (draft.sucursalDestino) setSelectedDestSede(draft.sucursalDestino);
-        if (draft.areaDestino) setSelectedDestArea(draft.areaDestino);
+        setCurrentDraft(prev => {
+          // Si el usuario ya comenzó a capturar o agregar productos localmente, nunca sobreescribir
+          if (prev.items && prev.items.length > 0) return prev;
+          if (draft.sucursalDestino) setSelectedDestSede(draft.sucursalDestino);
+          if (draft.areaDestino) setSelectedDestArea(draft.areaDestino);
+          return draft;
+        });
       }
     }
     init();
@@ -450,10 +526,14 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
 
   const handleDeleteDraft = (e, sol) => {
     e.stopPropagation();
+    const adminRoles = ['admin', 'administrador'];
+    const currentRoles = Array.isArray(currentUser?.roles) ? currentUser.roles.map(r => String(r).toLowerCase()) : [];
+    const currentUserName = (currentUser?.username || '').toLowerCase().trim();
     const isAdmin =
-      currentUser?.username?.toLowerCase() === 'administrador' ||
-      currentUser?.roles?.includes('admin');
-    const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
+      currentUserName === 'administrador' ||
+      currentRoles.some(r => adminRoles.includes(r));
+    const solOwner = (sol.usuarioSolicitante || '').toLowerCase().trim();
+    const canDelete = isAdmin || solOwner === currentUserName;
 
     if (!canDelete) {
       setDialog({
@@ -479,25 +559,33 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       cancelText: 'Cancelar',
       onConfirm: async () => {
         closeDialog();
+        // 1. Actualización optimista inmediata en la UI de historial
+        setHistorialList(prev => prev.filter(s => s.id !== sol.id));
+
+        // 2. Si el borrador eliminado coincide con el cargado en la captura, resetearlo inmediatamente
+        if (currentDraft?.id === sol.id) {
+          setCurrentDraft({
+            id: 'sol-' + Date.now(),
+            sucursalOrigen: currentUser?.sede || 'Sucursal',
+            areaOrigen: currentUser?.area || '',
+            sucursalDestino: '',
+            areaDestino: '',
+            usuarioSolicitante: currentUser?.username,
+            usuarioDestino: '',
+            estado: 'borrador',
+            fecha: new Date().toISOString(),
+            items: []
+          });
+          setSelectedDestSede('');
+          setSelectedDestArea('');
+        }
+
         try {
           await transferService.deleteDraft(sol.id, currentUser);
-          if (currentDraft?.id === sol.id) {
-            setCurrentDraft({
-              id: 'sol-' + Date.now(),
-              sucursalOrigen: currentUser?.sede || 'Sucursal',
-              areaOrigen: currentUser?.area || '',
-              sucursalDestino: '',
-              areaDestino: '',
-              usuarioSolicitante: currentUser?.username,
-              usuarioDestino: '',
-              estado: 'borrador',
-              fecha: new Date().toISOString(),
-              items: []
-            });
-            setSelectedDestSede('');
-            setSelectedDestArea('');
-          }
         } catch (err) {
+          // Si falló por validación de permisos, restaurar la lista
+          const fallback = transferService.getLocalSolicitudes().filter(s => canUserViewInSolicitar(s, currentUser));
+          setHistorialList(fallback);
           setDialog({
             isOpen: true,
             type: 'alert',
@@ -694,117 +782,191 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
           </div>
         </div>
       ) : (
-        <div key="tab-historial" className="space-y-3 animate-fade-in">
-          {historialList.length === 0 ? (
-            <div className="bg-white rounded-3xl p-8 border border-slate-200/80 text-center space-y-1">
+        <div key="tab-historial" className="space-y-4 animate-fade-in">
+          {/* Buscador de historial con marquesina de texto largo */}
+          <div className="bg-white p-3.5 rounded-3xl border border-slate-200/80 shadow-sm">
+            <MarqueeSearchInput
+              placeholder="Buscar por folio, destino o producto..."
+              value={historySearch}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onClear={() => handleSearchChange('')}
+            />
+          </div>
+
+          {isHistorialInitialLoading ? (
+            <div className="bg-white rounded-3xl p-10 border border-slate-200/80 shadow-sm text-center space-y-3">
+              <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+              <p className="text-xs font-semibold text-slate-700">Cargando transferencias...</p>
+              <p className="text-[11px] text-slate-400">Consultando historial en tiempo real</p>
+            </div>
+          ) : filteredHistory.length === 0 ? (
+            <div className="bg-white rounded-3xl p-8 border border-slate-200/80 text-center space-y-2">
               <History className="w-8 h-8 text-slate-300 mx-auto" />
-              <p className="text-sm font-semibold text-slate-700">No hay transferencias en el historial</p>
-              <p className="text-xs text-slate-400">Tus solicitudes y borradores aparecerán aquí.</p>
+              <h4 className="text-sm font-bold text-slate-700">
+                {historySearch ? 'No se encontraron resultados' : 'No hay transferencias en el historial'}
+              </h4>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                {historySearch
+                  ? `No hay registros que coincidan con "${historySearch}".`
+                  : 'Tus solicitudes y borradores aparecerán aquí.'}
+              </p>
+              {historySearch && (
+                <button
+                  type="button"
+                  onClick={() => handleSearchChange('')}
+                  className="mt-2 text-xs text-blue-600 font-semibold hover:underline cursor-pointer"
+                >
+                  Ver todo el historial
+                </button>
+              )}
             </div>
           ) : (
-            historialList.map((sol) => {
-              const isDraft = sol.estado === 'borrador';
-              const isAdmin =
-                currentUser?.username?.toLowerCase() === 'administrador' ||
-                currentUser?.roles?.includes('admin');
-              const canDeleteDraft = isDraft && (isAdmin || sol.usuarioSolicitante === currentUser?.username);
+            <div className="space-y-2.5">
+              <div className="space-y-2">
+                {visibleHistory.map((sol) => {
+                  const isDraft = sol.estado === 'borrador';
+                  const adminRoles = ['admin', 'administrador'];
+                  const currentRoles = Array.isArray(currentUser?.roles) ? currentUser.roles.map(r => String(r).toLowerCase()) : [];
+                  const currentUserName = (currentUser?.username || '').toLowerCase().trim();
+                  const isAdmin =
+                    currentUserName === 'administrador' ||
+                    currentRoles.some(r => adminRoles.includes(r));
+                  const solOwner = (sol.usuarioSolicitante || '').toLowerCase().trim();
+                  const canDeleteDraft = isDraft && (isAdmin || solOwner === currentUserName);
 
-              return (
-                <div
-                  key={sol.id}
-                  onClick={() => {
-                    if (isDraft) {
-                      // Cargar borrador para continuar capturando
-                      setCurrentDraft(sol);
-                      if (sol.sucursalDestino) setSelectedDestSede(sol.sucursalDestino);
-                      if (sol.areaDestino) setSelectedDestArea(sol.areaDestino);
-                      handleSwitchTab('captura');
-                      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-                    } else {
-                      // Abrir vista detallada para completadas o en tránsito
-                      setDetailSolicitud(sol);
-                    }
-                  }}
-                  className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap min-w-0">
-                      <span className="text-sm font-bold text-slate-900 font-mono text-blue-700 shrink-0">
-                        {sol.folio ? sol.folio : `Ref: ${formatTransferFolio(sol)}`}
-                      </span>
-                      {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
-                        <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full shrink-0">
-                          Transferencia Interna
+                  return (
+                    <div
+                      key={sol.id}
+                      onClick={() => {
+                        if (isDraft) {
+                          // Cargar borrador para continuar capturando
+                          setCurrentDraft(sol);
+                          if (sol.sucursalDestino) setSelectedDestSede(sol.sucursalDestino);
+                          if (sol.areaDestino) setSelectedDestArea(sol.areaDestino);
+                          handleSwitchTab('captura');
+                          window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+                        } else {
+                          // Abrir vista detallada para completadas o en tránsito
+                          setDetailSolicitud(sol);
+                        }
+                      }}
+                      className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-start sm:items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+                          <span className="text-sm font-bold text-slate-900 font-mono text-blue-700 break-all">
+                            {sol.folio ? sol.folio : `Ref: ${formatTransferFolio(sol)}`}
+                          </span>
+                          {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
+                            <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full shrink-0">
+                              Transferencia Interna
+                            </span>
+                          )}
+                          {(sol.sucursalDestino || sol.areaDestino) && (
+                            <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full truncate max-w-full">
+                              ➔ {sol.sucursalDestino || 'Destino'}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap ${
+                              isDraft
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : sol.estado === 'faltantes_despachados'
+                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                : sol.estado === 'cerrada_con_faltantes'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : sol.estado === 'recibida_incompleta'
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : sol.estado === 'completada' || sol.estado === 'recibida'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : sol.estado === 'en_despacho'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
+                          >
+                            {isDraft
+                              ? 'Borrador'
+                              : sol.estado === 'faltantes_despachados'
+                              ? 'Faltantes en camino'
+                              : sol.estado === 'cerrada_con_faltantes'
+                              ? 'Cerrada c/ faltantes'
+                              : sol.estado === 'recibida_incompleta'
+                              ? 'Incompleta'
+                              : sol.estado === 'recibida' && sol.reporteFaltantes?.length > 0
+                              ? 'Recibida c/ Faltantes'
+                              : sol.estado === 'en_despacho'
+                              ? 'En Despacho'
+                              : sol.estado
+                              ? String(sol.estado).replace(/_/g, ' ')
+                              : ''}
+                          </span>
+
+                          {/* Botón de eliminar SOLO disponible para borradores */}
+                          {canDeleteDraft && (
+                            <button
+                              onClick={(e) => handleDeleteDraft(e, sol)}
+                              className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                              title="Eliminar borrador"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span>
+                          {sol.items?.length || 0} productos &bull;{' '}
+                          {new Date(sol.fecha).toLocaleDateString('es-MX')}
                         </span>
-                      )}
-                      {(sol.sucursalDestino || sol.areaDestino) && (
-                        <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full truncate">
-                          ➔ {sol.sucursalDestino || 'Destino'}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}
+                        <span className="text-[11px] font-semibold text-blue-600 group-hover:underline flex items-center gap-1">
+                          {isDraft ? 'Continuar captura' : 'Ver detalle'}
+                          <ChevronRight className="w-3.5 h-3.5" />
                         </span>
-                      )}
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
 
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
-                          isDraft
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : sol.estado === 'faltantes_despachados'
-                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                            : sol.estado === 'cerrada_con_faltantes'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : sol.estado === 'recibida_incompleta'
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : sol.estado === 'completada' || sol.estado === 'recibida'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : sol.estado === 'en_despacho'
-                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
-                        }`}
-                      >
-                        {isDraft
-                          ? 'Borrador'
-                          : sol.estado === 'faltantes_despachados'
-                          ? 'Faltantes en camino'
-                          : sol.estado === 'cerrada_con_faltantes'
-                          ? 'Cerrada c/ faltantes'
-                          : sol.estado === 'recibida_incompleta'
-                          ? 'Incompleta'
-                          : sol.estado === 'recibida' && sol.reporteFaltantes?.length > 0
-                          ? 'Recibida c/ Faltantes'
-                          : sol.estado === 'en_despacho'
-                          ? 'En Despacho'
-                          : sol.estado
-                          ? String(sol.estado).replace(/_/g, ' ')
-                          : ''}
-                      </span>
+              {/* Resumen del conteo al final de la lista */}
+              <div className="pt-2 text-center text-xs text-slate-400">
+                <span>Mostrando {visibleHistory.length} de {filteredHistory.length} transferencias</span>
+              </div>
 
-                      {/* Botón de eliminar SOLO disponible para borradores */}
-                      {canDeleteDraft && (
-                        <button
-                          onClick={(e) => handleDeleteDraft(e, sol)}
-                          className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
-                          title="Eliminar borrador"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>
-                      {sol.items?.length || 0} productos &bull;{' '}
-                      {new Date(sol.fecha).toLocaleDateString('es-MX')}
-                    </span>
-                    <span className="text-[11px] font-semibold text-blue-600 group-hover:underline flex items-center gap-1">
-                      {isDraft ? 'Continuar captura' : 'Ver detalle'}
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
+              {/* Centinela para scroll infinito y/o botón Cargar Más */}
+              {hasMoreHistory && (
+                <div ref={sentinelRef} className="pt-2 pb-2 text-center">
+                  <button
+                    type="button"
+                    disabled={isLoadingMoreHistory}
+                    onClick={handleLoadMoreHistory}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl border border-slate-200/80 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                  >
+                    {isLoadingMoreHistory ? (
+                      <>
+                        <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                        <span>Cargando más transferencias...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                        <span>Cargar más ({filteredHistory.length - visibleHistory.length} restantes)</span>
+                      </>
+                    )}
+                  </button>
                 </div>
-              );
-            })
+              )}
+
+              {!hasMoreHistory && filteredHistory.length > 0 && (
+                <p className="text-center text-[11px] text-slate-400 pt-2 pb-2">
+                  Has llegado al final del historial ({filteredHistory.length} transferencias en total)
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

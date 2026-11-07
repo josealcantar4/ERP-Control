@@ -24,7 +24,7 @@ import { organizationService } from '../usuarios/organizationService';
 import { MaterialFormModal } from './MaterialFormModal';
 import { MaterialTypesModal } from './MaterialTypesModal';
 import { MaterialPersonalModal } from './MaterialPersonalModal';
-import { playCheckSound } from '../../shared';
+import { playCheckSound, MarqueeSearchInput } from '../../shared';
 import { ModalDialog } from '../../shared/ModalDialog';
 
 export function MaterialModule({ currentUser, onBack, onRefresh }) {
@@ -329,26 +329,14 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
       {/* 3. BARRA DE BÚSQUEDA Y FILTROS */}
       <div className="bg-white p-3.5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-2.5 items-center justify-between">
         
-        {/* BUSCADOR */}
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
+        {/* BUSCADOR CON MARQUESINA */}
+        <div className="flex-1 w-full">
+          <MarqueeSearchInput
             placeholder="Buscar por material, persona, área o tipo..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-9 py-2 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
+            onClear={() => setSearchQuery('')}
           />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
-              title="Limpiar búsqueda"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          )}
         </div>
 
         {/* SELECT TIPO DE CONTROL */}

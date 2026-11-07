@@ -23,6 +23,8 @@ export default function App() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isScreenUpdating, setIsScreenUpdating] = useState(false);
+  const isScreenRefreshingRef = useRef(false);
+  const lastScreenRefreshTimeRef = useRef({});
 
   const [syncModal, setSyncModal] = useState({
     isOpen: false,
@@ -89,9 +91,19 @@ export default function App() {
         setMaterialNotifications(prev => prev.filter(n => n.id !== dismissedId));
       }
     };
+    const handleUpdated = () => {
+      if (currentUser) {
+        const latestSolicitudes = transferService.getLocalSolicitudes();
+        setTransferNotifications(transferService.calculateTransferNotifications(latestSolicitudes, currentUser));
+      }
+    };
     window.addEventListener('erp_notifications_dismissed', handleDismissed);
-    return () => window.removeEventListener('erp_notifications_dismissed', handleDismissed);
-  }, []);
+    window.addEventListener('erp_notifications_updated', handleUpdated);
+    return () => {
+      window.removeEventListener('erp_notifications_dismissed', handleDismissed);
+      window.removeEventListener('erp_notifications_updated', handleUpdated);
+    };
+  }, [currentUser]);
 
   const runCatalogAutoSync = useCallback(async (force = false) => {
     if (isCatalogSyncingRef.current) return;
@@ -201,17 +213,21 @@ export default function App() {
     };
   }, [currentUser, runCatalogAutoSync]);
 
-  const performScreenRefresh = useCallback(async (screen) => {
-    if (!screen) {
-      setIsScreenUpdating(false);
-      return;
-    }
-    runCatalogAutoSync();
-    if (screen === 'upload-catalog') {
+  const performScreenRefresh = useCallback(async (screen, force = false) => {
+    if (!screen || screen === 'upload-catalog') {
       setIsScreenUpdating(false);
       return;
     }
 
+    const now = Date.now();
+    const lastTime = lastScreenRefreshTimeRef.current[screen] || 0;
+    // Evitar ráfagas o múltiples llamadas encadenadas (mínimo 4s entre verificaciones automáticas)
+    if (!force && (isScreenRefreshingRef.current || (now - lastTime < 4000))) {
+      return;
+    }
+
+    isScreenRefreshingRef.current = true;
+    lastScreenRefreshTimeRef.current[screen] = now;
     setIsScreenUpdating(true);
     const startTime = Date.now();
 
@@ -249,12 +265,20 @@ export default function App() {
       console.warn('Error durante verificación de nueva información:', err);
     } finally {
       const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, 700 - elapsed);
+      const remaining = Math.max(0, 600 - elapsed);
       setTimeout(() => {
         setIsScreenUpdating(false);
+        isScreenRefreshingRef.current = false;
       }, remaining);
     }
-  }, [runCatalogAutoSync]);
+  }, []);
+
+  const handleRefreshSolicitar = useCallback(() => performScreenRefresh('solicitar', true), [performScreenRefresh]);
+  const handleRefreshDespachar = useCallback(() => performScreenRefresh('despachar', true), [performScreenRefresh]);
+  const handleRefreshRecibir = useCallback(() => performScreenRefresh('recibir', true), [performScreenRefresh]);
+  const handleRefreshMaterial = useCallback(() => performScreenRefresh('material', true), [performScreenRefresh]);
+  const handleRefreshAdmin = useCallback(() => performScreenRefresh('admin', true), [performScreenRefresh]);
+  const handleRefreshDashboard = useCallback(() => performScreenRefresh('dashboard', true), [performScreenRefresh]);
   useEffect(() => {
     if (!currentUser) return;
 
@@ -298,7 +322,6 @@ export default function App() {
   useEffect(() => {
     if (currentUser && currentScreen) {
       localStorage.setItem('currentScreen', currentScreen);
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }
   }, [currentScreen, currentUser]);
 
@@ -496,42 +519,42 @@ export default function App() {
             <DashboardScreen
               currentUser={currentUser}
               onNavigate={navigateTo}
-              onRefresh={() => performScreenRefresh('dashboard')}
+              onRefresh={handleRefreshDashboard}
             />
           )}
           {currentScreen === 'solicitar' && (
             <SolicitarModule
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
-              onRefresh={() => performScreenRefresh('solicitar')}
+              onRefresh={handleRefreshSolicitar}
             />
           )}
           {currentScreen === 'despachar' && (
             <DespacharModule
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
-              onRefresh={() => performScreenRefresh('despachar')}
+              onRefresh={handleRefreshDespachar}
             />
           )}
           {currentScreen === 'recibir' && (
             <RecibirModule
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
-              onRefresh={() => performScreenRefresh('recibir')}
+              onRefresh={handleRefreshRecibir}
             />
           )}
           {currentScreen === 'material' && (
             <MaterialModule
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
-              onRefresh={() => performScreenRefresh('material')}
+              onRefresh={handleRefreshMaterial}
             />
           )}
           {currentScreen === 'admin' && (
             <AdminUsersModule
               currentUser={currentUser}
               onBack={() => navigateTo('dashboard')}
-              onRefresh={() => performScreenRefresh('admin')}
+              onRefresh={handleRefreshAdmin}
             />
           )}
           {currentScreen === 'upload-catalog' && (

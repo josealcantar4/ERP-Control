@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Tag, FileText, Check, AlertCircle, Sparkles } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { FloatingInput } from '../../shared';
 
 export function CleanProductModal({
   isOpen,
@@ -111,44 +112,38 @@ export function CleanProductModal({
           )}
 
           {/* CÓDIGO */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-700">
-              Código / Clave del Producto
-            </label>
-            <div className="relative">
-              <Tag className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                disabled={isEditing || isSubmitting}
-                value={codigo}
-                onChange={(e) => setCodigo(e.target.value)}
-                placeholder="Ej. 7501008493012 o 001"
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-3.5 py-2.5 text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:opacity-60 disabled:bg-slate-100"
-              />
-            </div>
+          <div>
+            <FloatingInput
+              label="Código / Clave del Producto"
+              required
+              disabled={isEditing || isSubmitting}
+              value={codigo}
+              onChange={(e) => setCodigo(e.target.value)}
+              placeholder="Ej. 7501008493012 o 001"
+              icon={Tag}
+              className="font-mono"
+            />
             {isEditing && (
-              <p className="text-[10px] text-slate-400">
+              <p className="text-[10px] text-slate-400 mt-1 pl-1">
                 El código identifica unívocamente al producto y no puede ser alterado.
               </p>
             )}
           </div>
 
           {/* DESCRIPCIÓN */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-700">
-              Descripción Oficial del Producto
-            </label>
-            <div className="relative">
-              <FileText className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-              <textarea
-                rows={3}
-                disabled={isSubmitting}
-                value={descripcion}
-                onChange={(e) => setDescripcion(e.target.value)}
-                placeholder="Ej. PARACETAMOL 500MG TABLETAS C/20"
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-3.5 py-2.5 text-xs uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:opacity-60 resize-none"
-              />
-            </div>
+          <div>
+            <FloatingInput
+              label="Descripción Oficial del Producto"
+              required
+              multiline
+              rows={3}
+              disabled={isSubmitting}
+              value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value.toUpperCase())}
+              placeholder="Ej. PARACETAMOL 500MG TABLETAS C/20"
+              icon={FileText}
+              className="uppercase"
+            />
           </div>
 
           {/* BOTONES */}

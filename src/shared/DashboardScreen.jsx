@@ -19,9 +19,16 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
     const unsubMat = materialService.subscribeMateriales((list) => {
       setMateriales(list);
     });
+
+    const handleNotifUpdate = () => {
+      setSolicitudes(transferService.getLocalSolicitudes() || []);
+    };
+    window.addEventListener('erp_notifications_updated', handleNotifUpdate);
+
     return () => {
       if (unsub) unsub();
       if (unsubMat) unsubMat();
+      window.removeEventListener('erp_notifications_updated', handleNotifUpdate);
     };
   }, []);
 
@@ -29,6 +36,14 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   const entrantesCount = solicitudes.filter(s => canUserReceive(s, currentUser)).length;
   const pendientesDespachoCount = solicitudes.filter(
     s => (s.estado === 'enviada' || s.estado === 'en_despacho') && canUserDispatch(s, currentUser)
+  ).length;
+  const faltantesPendientesCount = solicitudes.filter(
+    s =>
+      canUserDispatch(s, currentUser) &&
+      (s.estado === 'recibida_incompleta' || (s.reporteFaltantes && s.reporteFaltantes.length > 0)) &&
+      !s.resolucionFaltantes &&
+      s.estado !== 'cerrada_con_faltantes' &&
+      s.estado !== 'faltantes_despachados'
   ).length;
 
   return (
@@ -88,11 +103,19 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-5 group-hover:scale-105 transition-transform">
                 <Boxes className="w-7 h-7" />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold uppercase tracking-wider text-emerald-600">Matriz / Bodega</span>
                 {pendientesDespachoCount > 0 && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 animate-fade-in">
                     {pendientesDespachoCount} {pendientesDespachoCount === 1 ? 'pendiente' : 'pendientes'}
+                  </span>
+                )}
+                {faltantesPendientesCount > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-700 border border-red-200/80 animate-fade-in flex items-center gap-1 shadow-2xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></span>
+                    <span>
+                      {faltantesPendientesCount} {faltantesPendientesCount === 1 ? 'faltante por despachar' : 'faltantes por despachar'}
+                    </span>
                   </span>
                 )}
               </div>

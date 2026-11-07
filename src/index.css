@@ -361,31 +361,33 @@ body {
 @keyframes modalTabSlideInRight {
   from {
     opacity: 0;
-    transform: translateX(22px);
+    transform: translate3d(24px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes modalTabSlideInLeft {
   from {
     opacity: 0;
-    transform: translateX(-22px);
+    transform: translate3d(-24px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 .animate-tab-slide-right {
-  animation: modalTabSlideInRight 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: modalTabSlideInRight 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-tab-slide-left {
-  animation: modalTabSlideInLeft 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: modalTabSlideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 [data-transition-direction="forward"]::view-transition-old(app-main-content) {

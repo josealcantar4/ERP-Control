@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -16,7 +16,9 @@ import {
   PackagePlus,
   Minus,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  History,
+  ChevronDown
 } from 'lucide-react';
 import { transferService, formatTransferFolio, canUserDispatch, playCheckSound } from '../transferencias';
 import { catalogService } from '../catalogo/catalogService';
@@ -28,7 +30,7 @@ import { MarqueeText } from '../../shared/MarqueeText';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 import { DespachoDirectoModal } from './DespachoDirectoModal';
-import { transitionView, QuantityStepper } from '../../shared';
+import { transitionView, QuantityStepper, MarqueeSearchInput, FloatingInput } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function DespacharModule({ currentUser, onBack, onRefresh }) {
@@ -43,11 +45,81 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     return (transferService.getLocalSolicitudes() || []).length === 0;
   });
 
+  // Pestañas principales: 'despachar' | 'historial'
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('erp_despachar_active_tab') || 'despachar';
+  });
+
+  // Estados de paginación progresiva y búsqueda en Historial
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyLimit, setHistoryLimit] = useState(15);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
+  const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
+  const sentinelRef = useRef(null);
+
+  const handleSwitchTab = (newTab) => {
+    if (newTab === activeTab) return;
+    const direction = newTab === 'historial' ? 'forward' : 'back';
+    if (newTab === 'historial') {
+      setIsHistorialInitialLoading(true);
+      setHistoryLimit(15);
+      setTimeout(() => setIsHistorialInitialLoading(false), 220);
+    }
+    transitionView(() => {
+      setActiveTab(newTab);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }, { direction });
+  };
+
+  useEffect(() => {
+    localStorage.setItem('erp_despachar_active_tab', activeTab);
+  }, [activeTab]);
+
   // Estado global de carga
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Folio de transferencia capturado por el despachador
   const [dispatchFolioDigits, setDispatchFolioDigits] = useState('');
+  const folioDebounceRef = useRef(null);
+  const justificationDebounceRef = useRef({});
+
+  // Limpieza de debounces pendientes al desmontar
+  useEffect(() => {
+    return () => {
+      if (folioDebounceRef.current) clearTimeout(folioDebounceRef.current);
+      Object.keys(justificationDebounceRef.current).forEach((k) => {
+        clearTimeout(justificationDebounceRef.current[k]);
+      });
+    };
+  }, []);
+
+  // Helper para centrar suavemente campos de texto en pantalla sobre el teclado móvil
+  const handleInputScrollIntoView = (e) => {
+    const el = e.currentTarget || e.target;
+    setTimeout(() => {
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 300);
+  };
+
+  // Helper para vaciar/guardar justificaciones pendientes inmediatamente
+  const flushPendingJustifications = (orderId = selectedSolicitud?.id) => {
+    if (!orderId) return;
+    const pendingIndexes = Object.keys(justificationDebounceRef.current);
+    if (pendingIndexes.length === 0) return;
+
+    pendingIndexes.forEach((idxStr) => {
+      clearTimeout(justificationDebounceRef.current[idxStr]);
+      const idx = Number(idxStr);
+      const it = selectedSolicitud?.items?.[idx];
+      if (it) {
+        const qtyDesp = it.cantidadDespachada !== undefined ? it.cantidadDespachada : it.cantidadSolicitada;
+        transferService.updateItemDespachoQty(orderId, idx, qtyDesp, it.motivoAjusteDespacho, selectedSolicitud.items);
+      }
+    });
+    justificationDebounceRef.current = {};
+  };
 
   // Extra medicine states
   const [isExtraModalOpen, setIsExtraModalOpen] = useState(false);
@@ -59,15 +131,21 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   // Helper para persistir orden seleccionada en sessionStorage y restaurar scroll con View Transitions
   const handleSelectSolicitud = (sol) => {
+    if (!sol && selectedSolicitud?.id) {
+      flushPendingJustifications(selectedSolicitud.id);
+    }
     const direction = sol ? 'forward' : 'back';
+    const latestSol = sol
+      ? (transferService.getLocalSolicitudes().find(s => s.id === sol.id) || sol)
+      : null;
     transitionView(() => {
-      setSelectedSolicitud(sol);
+      setSelectedSolicitud(latestSol);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-      if (sol) {
-        const initialDigits = sol.folio ? String(sol.folio).replace(/^TR/i, '') : '';
+      if (latestSol) {
+        const initialDigits = latestSol.folio ? String(latestSol.folio).replace(/^TR/i, '') : '';
         setDispatchFolioDigits(initialDigits);
-        if (sol.id) {
-          sessionStorage.setItem('erp_despachar_solicitud_id', sol.id);
+        if (latestSol.id) {
+          sessionStorage.setItem('erp_despachar_solicitud_id', latestSol.id);
         }
       } else {
         setDispatchFolioDigits('');
@@ -113,7 +191,19 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     const target = all.find(s => s.id === targetId);
     if (!target) return;
 
-    if (
+    const hasUnresolvedFaltantes = Boolean(
+      target.estado === 'recibida_incompleta' ||
+      (target.reporteFaltantes?.length > 0 && !target.resolucionFaltantes) ||
+      (target.reporteDiscrepancias && !target.reporteDiscrepancias.resuelto && !target.resolucionFaltantes)
+    );
+
+    if (hasUnresolvedFaltantes) {
+      setSelectedFaltanteSolicitud(target);
+      setSelectedSolicitud(null);
+      setDetailSolicitud(null);
+      sessionStorage.removeItem('erp_despachar_solicitud_id');
+      transferService.dismissNotification(`tr-falt-${target.id}`);
+    } else if (
       target.estado === 'recibida' ||
       target.estado === 'completada' ||
       target.estado === 'cerrada_con_faltantes' ||
@@ -125,12 +215,6 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       sessionStorage.removeItem('erp_despachar_solicitud_id');
       transferService.dismissNotification(`tr-falt-${target.id}`);
       transferService.dismissNotification(`tr-falt-entregados-${target.id}`);
-    } else if (target.estado === 'recibida_incompleta') {
-      setSelectedFaltanteSolicitud(target);
-      setSelectedSolicitud(null);
-      setDetailSolicitud(null);
-      sessionStorage.removeItem('erp_despachar_solicitud_id');
-      transferService.dismissNotification(`tr-falt-${target.id}`);
     } else if (target.estado === 'enviada' || target.estado === 'en_despacho') {
       handleSelectSolicitud(target);
       setSelectedFaltanteSolicitud(null);
@@ -180,7 +264,23 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
             sessionStorage.removeItem('erp_despachar_solicitud_id');
             transferService.dismissNotification(`tr-falt-${refreshed.id}`);
           } else if (refreshed.estado === 'enviada' || refreshed.estado === 'en_despacho') {
-            setSelectedSolicitud(refreshed);
+            setSelectedSolicitud(prev => {
+              if (!prev || prev.id !== refreshed.id) return refreshed;
+              return {
+                ...refreshed,
+                folio: prev.folio || refreshed.folio,
+                items: (refreshed.items || []).map((it, idx) => {
+                  const localIt = prev.items?.[idx];
+                  if (!localIt) return it;
+                  return {
+                    ...it,
+                    atendido: localIt.atendido !== undefined ? localIt.atendido : it.atendido,
+                    cantidadDespachada: localIt.cantidadDespachada !== undefined ? localIt.cantidadDespachada : it.cantidadDespachada,
+                    motivoAjusteDespacho: localIt.motivoAjusteDespacho !== undefined ? localIt.motivoAjusteDespacho : it.motivoAjusteDespacho
+                  };
+                })
+              };
+            });
             setDispatchFolioDigits(prev => {
               if (prev) return prev;
               return refreshed.folio ? String(refreshed.folio).replace(/^TR/i, '') : '';
@@ -246,15 +346,83 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
   // Classification of requests
   const readyToDispatch = solicitudes.filter(s => s.estado === 'enviada' || s.estado === 'en_despacho');
-  const reportesIncompletos = solicitudes.filter(s => s.estado === 'recibida_incompleta');
+  const reportesIncompletos = solicitudes.filter(
+    s =>
+      s.estado === 'recibida_incompleta' ||
+      (s.reporteFaltantes && s.reporteFaltantes.length > 0 && !s.resolucionFaltantes && s.estado !== 'cerrada_con_faltantes' && s.estado !== 'faltantes_despachados')
+  );
   const inProgressDrafts = solicitudes.filter(s => s.estado === 'borrador');
   const completedSolicitudes = solicitudes.filter(
     s =>
       s.estado === 'completada' ||
       s.estado === 'recibida' ||
       s.estado === 'faltantes_despachados' ||
-      s.estado === 'cerrada_con_faltantes'
+      s.estado === 'cerrada_con_faltantes' ||
+      s.estado === 'recibida_incompleta'
   );
+
+  // Historial ordenado por fecha más reciente
+  const sortedCompleted = useMemo(() => {
+    return [...completedSolicitudes].sort((a, b) => {
+      const dateA = new Date(a.fechaDespacho || a.fechaRecepcion || a.fecha || 0).getTime();
+      const dateB = new Date(b.fechaDespacho || b.fechaRecepcion || b.fecha || 0).getTime();
+      return dateB - dateA;
+    });
+  }, [completedSolicitudes]);
+
+  // Filtrado reactivo en historial por folio, sucursal, solicitante o producto
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.toLowerCase().trim();
+    if (!q) return sortedCompleted;
+    return sortedCompleted.filter(sol => {
+      const folio = (sol.folio || formatTransferFolio(sol) || '').toLowerCase();
+      const sucursal = (sol.sucursalOrigen || '').toLowerCase();
+      const solicitante = (sol.usuarioSolicitante || '').toLowerCase();
+      const itemsMatch = sol.items?.some(it => 
+        (it.descripcion || '').toLowerCase().includes(q) ||
+        (it.codigo || '').toLowerCase().includes(q)
+      );
+      return folio.includes(q) || sucursal.includes(q) || solicitante.includes(q) || itemsMatch;
+    });
+  }, [sortedCompleted, historySearch]);
+
+  // Carga progresiva (chunk de 15 en 15)
+  const visibleHistory = useMemo(() => {
+    return filteredHistory.slice(0, historyLimit);
+  }, [filteredHistory, historyLimit]);
+
+  const hasMoreHistory = visibleHistory.length < filteredHistory.length;
+
+  const handleLoadMoreHistory = useCallback(() => {
+    if (isLoadingMoreHistory) return;
+    setIsLoadingMoreHistory(true);
+    setTimeout(() => {
+      setHistoryLimit(prev => prev + 15);
+      setIsLoadingMoreHistory(false);
+    }, 300);
+  }, [isLoadingMoreHistory]);
+
+  const handleSearchChange = (val) => {
+    setHistorySearch(val);
+    setHistoryLimit(15);
+  };
+
+  // Carga incremental automática al hacer scroll al fondo
+  useEffect(() => {
+    if (activeTab !== 'historial' || !hasMoreHistory || isLoadingMoreHistory) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        handleLoadMoreHistory();
+      }
+    }, { rootMargin: '150px' });
+
+    const el = sentinelRef.current;
+    if (el) observer.observe(el);
+
+    return () => {
+      if (el) observer.unobserve(el);
+    };
+  }, [activeTab, hasMoreHistory, isLoadingMoreHistory, handleLoadMoreHistory]);
 
   const handleConfirmFaltantesResolution = async (resolutionData) => {
     if (!selectedFaltanteSolicitud) return;
@@ -302,7 +470,26 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     if (willBeChecked) {
       playCheckSound();
     }
-    await transferService.toggleItemAtendido(selectedSolicitud.id, index);
+
+    const updatedItems = (selectedSolicitud.items || []).map((it, idx) => {
+      if (idx === index) {
+        return { ...it, atendido: willBeChecked };
+      }
+      return it;
+    });
+    const newEstado = selectedSolicitud.estado === 'enviada' ? 'en_despacho' : selectedSolicitud.estado;
+    const updatedSol = {
+      ...selectedSolicitud,
+      items: updatedItems,
+      estado: newEstado
+    };
+
+    // Actualización optimista inmediata en React (cero parpadeo ni reseteo)
+    setSelectedSolicitud(updatedSol);
+    setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
+
+    // Persistencia síncrona en caché local + asíncrona en Firebase
+    await transferService.toggleItemAtendido(selectedSolicitud.id, index, willBeChecked, updatedItems);
   };
 
   const resetExtraModal = () => {
@@ -365,6 +552,19 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         );
       }
 
+      const newItem = {
+        codigo: selectedExtraItem.codigo,
+        descripcion: selectedExtraItem.descripcion,
+        cantidadSolicitada: 0,
+        cantidadDespachada: Number(qty || 1),
+        esExtra: true,
+        atendido: true
+      };
+      const updatedItems = [...(selectedSolicitud.items || []), newItem];
+      const updatedSol = { ...selectedSolicitud, items: updatedItems };
+      setSelectedSolicitud(updatedSol);
+      setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
+
       await transferService.addExtraItem(selectedSolicitud.id, {
         codigo: selectedExtraItem.codigo,
         descripcion: selectedExtraItem.descripcion,
@@ -403,6 +603,10 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         closeDialog();
         setIsProcessing(true);
         try {
+          const updatedItems = (selectedSolicitud.items || []).filter((_, i) => i !== index);
+          const updatedSol = { ...selectedSolicitud, items: updatedItems };
+          setSelectedSolicitud(updatedSol);
+          setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
           await transferService.removeExtraItem(selectedSolicitud.id, index);
         } finally {
           setIsProcessing(false);
@@ -422,7 +626,9 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     if (!item || !item.esExtra) return;
     const updatedItems = [...selectedSolicitud.items];
     updatedItems[index] = { ...item, cantidadDespachada: newQty };
-    setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
+    const updatedSol = { ...selectedSolicitud, items: updatedItems };
+    setSelectedSolicitud(updatedSol);
+    setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
     await transferService.updateExtraItemQty(selectedSolicitud.id, index, newQty);
   };
 
@@ -439,12 +645,14 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       ...item,
       cantidadDespachada: validQty
     };
-    setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
-    await transferService.updateItemDespachoQty(selectedSolicitud.id, index, validQty, item.motivoAjusteDespacho);
+    const updatedSol = { ...selectedSolicitud, items: updatedItems };
+    setSelectedSolicitud(updatedSol);
+    setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
+    await transferService.updateItemDespachoQty(selectedSolicitud.id, index, validQty, item.motivoAjusteDespacho, updatedItems);
   };
 
-  // Campo de justificación opcional para faltantes en despacho
-  const handleUpdateItemJustification = async (index, motivo) => {
+  // Campo de justificación opcional para faltantes en despacho (con debounce para teclear con fluidez total sin saltos de vista)
+  const handleUpdateItemJustification = (index, motivo) => {
     if (!selectedSolicitud) return;
     const item = selectedSolicitud.items?.[index];
     if (!item) return;
@@ -454,9 +662,32 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       ...item,
       motivoAjusteDespacho: motivo
     };
-    setSelectedSolicitud(prev => prev ? ({ ...prev, items: updatedItems }) : null);
+    const updatedSol = { ...selectedSolicitud, items: updatedItems };
+    setSelectedSolicitud(updatedSol);
+    setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
+
     const qtyDesp = item.cantidadDespachada !== undefined ? item.cantidadDespachada : item.cantidadSolicitada;
-    await transferService.updateItemDespachoQty(selectedSolicitud.id, index, qtyDesp, motivo);
+    const currentOrderId = selectedSolicitud.id;
+
+    if (justificationDebounceRef.current[index]) {
+      clearTimeout(justificationDebounceRef.current[index]);
+    }
+    justificationDebounceRef.current[index] = setTimeout(() => {
+      delete justificationDebounceRef.current[index];
+      transferService.updateItemDespachoQty(currentOrderId, index, qtyDesp, motivo, updatedItems);
+    }, 450);
+  };
+
+  const handleJustificationBlur = (index) => {
+    if (justificationDebounceRef.current[index]) {
+      clearTimeout(justificationDebounceRef.current[index]);
+      delete justificationDebounceRef.current[index];
+    }
+    if (!selectedSolicitud) return;
+    const item = selectedSolicitud.items?.[index];
+    if (!item) return;
+    const qtyDesp = item.cantidadDespachada !== undefined ? item.cantidadDespachada : item.cantidadSolicitada;
+    transferService.updateItemDespachoQty(selectedSolicitud.id, index, qtyDesp, item.motivoAjusteDespacho, selectedSolicitud.items);
   };
 
   const handleExtraScanDetected = async (barcode, itemObject) => {
@@ -511,6 +742,12 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
+    if (folioDebounceRef.current) {
+      clearTimeout(folioDebounceRef.current);
+      folioDebounceRef.current = null;
+    }
+    flushPendingJustifications(selectedSolicitud.id);
+
     if (!dispatchFolioDigits.trim()) {
       setDialog({
         isOpen: true,
@@ -533,12 +770,18 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       setIsProcessing(true);
       const currentSol = selectedSolicitud;
       try {
-        const itemsFinal = (currentSol.items || []).map(item => ({
-          ...item,
-          cantidadDespachada: item.cantidadDespachada !== undefined
+        const itemsFinal = (currentSol.items || []).map(item => {
+          const despQty = item.cantidadDespachada !== undefined
             ? Number(item.cantidadDespachada)
-            : (item.esExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada ?? 1))
-        }));
+            : (item.esExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada ?? 1));
+          const motivoClean = item.motivoAjusteDespacho ? String(item.motivoAjusteDespacho).trim() : (item.motivo ? String(item.motivo).trim() : '');
+
+          return {
+            ...item,
+            cantidadDespachada: despQty,
+            ...(motivoClean ? { motivoAjusteDespacho: motivoClean, motivo: motivoClean } : {})
+          };
+        });
 
         const ajustesDespacho = itemsFinal
           .filter(i => !i.esExtra && i.cantidadDespachada < Number(i.cantidadSolicitada ?? 1))
@@ -548,7 +791,8 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
             cantidadSolicitada: Number(i.cantidadSolicitada ?? 1),
             cantidadDespachada: Number(i.cantidadDespachada),
             diferencia: Number(i.cantidadSolicitada ?? 1) - Number(i.cantidadDespachada),
-            motivo: i.motivoAjusteDespacho || ''
+            motivo: i.motivoAjusteDespacho || i.motivo || '',
+            motivoAjusteDespacho: i.motivoAjusteDespacho || i.motivo || ''
           }));
 
         await transferService.completeSolicitud(currentSol.id, fullFolio, {
@@ -658,7 +902,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
       )}
 
       {/* Top Header Navigation */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between vt-module-header gap-2">
         <button
           onClick={() => {
             if (selectedSolicitud) {
@@ -667,20 +911,56 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
               onBack();
             }
           }}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all active:scale-95 cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>{selectedSolicitud ? 'Volver a Pedidos' : 'Volver al Inicio'}</span>
         </button>
 
-        <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
-          Despacho: <strong className="text-slate-800">{currentUser?.sede}{currentUser?.area ? ` (${currentUser.area})` : ''}</strong>
-        </span>
+        {selectedSolicitud ? (
+          <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full truncate">
+            Despacho: <strong className="text-slate-800">{currentUser?.sede}{currentUser?.area ? ` (${currentUser.area})` : ''}</strong>
+          </span>
+        ) : (
+          <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium shrink-0">
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('despachar')}
+              className={`px-3 py-1 rounded-full flex items-center gap-1.5 cursor-pointer transition-all duration-200 ${
+                activeTab === 'despachar'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>Despachar</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('historial')}
+              className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all duration-200 ${
+                activeTab === 'historial'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <History className="w-3 h-3" />
+              <span>Historial ({completedSolicitudes.length})</span>
+            </button>
+          </div>
+        )}
       </div>
+
+      {!selectedSolicitud && (
+        <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 -mt-3">
+          <span>Punto de despacho: <strong className="text-slate-700">{currentUser?.sede}{currentUser?.area ? ` (${currentUser.area})` : ''}</strong></span>
+        </div>
+      )}
 
       {!selectedSolicitud ? (
         /* MAIN LIST VIEW */
         <div className="space-y-6 animate-fade-in">
+          {activeTab === 'despachar' ? (
+            <div key="tab-despachar" className="space-y-6 animate-fade-in">
 
           {/* BANNER / BOTÓN DE ACCIÓN: DESPACHO DIRECTO SIN SOLICITUD */}
           <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-blue-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -709,35 +989,77 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
           {/* REPORTE DE FALTANTES */}
           {reportesIncompletos.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 px-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
-                <h3 className="text-sm font-bold text-slate-900">
-                  Atención: Reporte de Faltantes ({reportesIncompletos.length})
-                </h3>
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Atención: Reporte de Faltantes ({reportesIncompletos.length})
+                  </h3>
+                </div>
+                <span className="text-[11px] font-bold text-red-700 bg-red-100 px-2.5 py-0.5 rounded-full border border-red-200">
+                  Pendientes por despachar
+                </span>
               </div>
               <div className="grid grid-cols-1 gap-3">
                 {reportesIncompletos.map((sol) => (
-                  <div key={sol.id} className="bg-red-50 rounded-3xl p-4 border border-red-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-bold text-red-900 font-mono text-sm">
-                        Folio: {sol.folio || formatTransferFolio(sol)}
-                      </span>
-                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 uppercase">
+                  <div key={sol.id} className="bg-red-50/70 rounded-3xl p-5 border border-red-200 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-red-950 font-mono text-sm sm:text-base">
+                          Folio: {sol.folio || formatTransferFolio(sol)}
+                        </span>
+                        <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-red-600 text-white uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                          <AlertTriangle className="w-3 h-3" />
+                          Faltantes pendientes por despachar
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 uppercase">
                         Sucursal: {sol.sucursalOrigen}
                       </span>
                     </div>
-                    <p className="text-xs font-semibold text-red-800 mb-1">Productos reportados como faltantes:</p>
-                    <ul className="text-xs text-red-700 space-y-1 mb-2 bg-white/60 p-2.5 rounded-xl border border-red-100">
-                      {sol.reporteFaltantes?.map((faltante, i) => (
-                        <li key={i} className="flex justify-between items-center">
-                          <span>&bull; {faltante.descripcion}</span>
-                          <strong className="font-mono text-red-800">{faltante.cantidadDespachada} pz</strong>
-                        </li>
-                      ))}
+
+                    <p className="text-xs font-semibold text-red-900">
+                      Productos reportados con faltante / discrepancia:
+                    </p>
+
+                    <ul className="text-xs text-red-900 space-y-1.5 bg-white/80 p-3 rounded-2xl border border-red-200/70 divide-y divide-red-100">
+                      {sol.reporteFaltantes?.map((faltante, i) => {
+                        const cantF = faltante.cantidadFaltante !== undefined && faltante.cantidadFaltante !== null
+                          ? Number(faltante.cantidadFaltante)
+                          : (faltante.diferencia !== undefined ? Math.abs(Number(faltante.diferencia)) : 1);
+                        const obs = faltante.observacion || faltante.motivoRecepcion || faltante.motivo;
+                        return (
+                          <li key={i} className="pt-1.5 first:pt-0 flex flex-col gap-1">
+                            <div className="flex justify-between items-center gap-2">
+                              <span className="font-semibold text-slate-800">&bull; {faltante.descripcion}</span>
+                              <strong className="font-mono text-xs text-red-700 bg-red-50 px-2 py-0.5 rounded-lg border border-red-200 shrink-0">
+                                Falta {cantF} pz{cantF === 1 ? '' : 's'}
+                              </strong>
+                            </div>
+                            {obs && (
+                              <div className="text-[11px] text-red-800 bg-red-50/90 px-2.5 py-1 rounded-xl border border-red-200/60 italic flex items-center gap-1.5">
+                                <FileText className="w-3 h-3 text-red-600 shrink-0" />
+                                <span>Motivo reportado: &ldquo;{obs}&rdquo;</span>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
-                    <div className="mt-3 pt-2.5 border-t border-red-200/70 flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-[11px] text-red-600 italic">
-                        Reporte pendiente de resolución por Bodega.
+
+                    {(sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion) && (
+                      <div className="p-2.5 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 flex items-start gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="block text-[11px]">Nota general de sucursal:</strong>
+                          <p className="italic">&ldquo;{sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion}&rdquo;</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-1 pt-2.5 border-t border-red-200/70 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-[11px] text-red-700 italic">
+                        Reporte pendiente de resolución o re-despacho desde Bodega.
                       </div>
                       <button
                         type="button"
@@ -745,7 +1067,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                           e.stopPropagation();
                           setSelectedFaltanteSolicitud(sol);
                         }}
-                        className="px-3.5 py-1.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
                       >
                         <Truck className="w-3.5 h-3.5" />
                         <span>Atender Faltantes</span>
@@ -937,71 +1259,168 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
             )}
           </div>
 
-          {/* SECTION 3: COMPLETED */}
-          {completedSolicitudes.length > 0 && (
-            <div className="pt-4 border-t border-slate-200/60 space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Transferencias Realizadas ({completedSolicitudes.length})
-                </h4>
-                <span className="text-[11px] text-slate-400">Haz clic para ver el resumen detallado</span>
+            </div>
+          ) : (
+            /* TAB 2: HISTORIAL DE TRANSFERENCIAS CON CARGA PROGRESIVA Y SPINNERS */
+            <div key="tab-historial" className="space-y-4 animate-fade-in">
+              {/* Buscador de historial con marquesina de texto largo */}
+              <div className="bg-white p-3.5 rounded-3xl border border-slate-200/80 shadow-sm">
+                <MarqueeSearchInput
+                  placeholder="Buscar en historial por folio, sucursal, producto o solicitante..."
+                  value={historySearch}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onClear={() => handleSearchChange('')}
+                />
               </div>
-              <div className="space-y-2">
-                {completedSolicitudes.map((sol) => (
-                  <div
-                    key={sol.id}
-                    onClick={() => setDetailSolicitud(sol)}
-                    className="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all text-xs flex items-center justify-between text-slate-500 cursor-pointer group"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </div>
-                      <div className="truncate">
-                        <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm mr-2">
-                          {sol.folio || formatTransferFolio(sol)}
-                        </span>
-                        <span className="text-slate-700 font-semibold mr-1">
-                          {sol.sucursalOrigen}
-                        </span>
-                        <span className="text-slate-400">
-                          &bull; {sol.items?.length || 0} productos
-                        </span>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(sol.sinSolicitud || sol.esDespachoDirecto) && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                          Sin Solicitud
-                        </span>
-                      )}
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        sol.estado === 'faltantes_despachados'
-                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                          : sol.estado === 'cerrada_con_faltantes'
-                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                          : sol.estado === 'recibida_incompleta'
-                          ? 'bg-red-50 text-red-700 border border-red-200'
-                          : sol.estado === 'recibida'
-                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      }`}>
-                        {sol.estado === 'faltantes_despachados'
-                          ? 'Faltantes en Tránsito'
-                          : sol.estado === 'cerrada_con_faltantes'
-                          ? 'Cerrada c/ Faltantes'
-                          : sol.estado === 'recibida_incompleta'
-                          ? 'Incompleta'
-                          : sol.estado === 'recibida'
-                          ? 'Recibida'
-                          : 'Completada'}
-                      </span>
-                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
-                    </div>
+              {/* Lista o loaders */}
+              {isHistorialInitialLoading || isLoadingSolicitudes ? (
+                <div className="bg-white rounded-3xl p-10 border border-slate-200/80 shadow-sm text-center space-y-3">
+                  <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+                  <p className="text-xs font-semibold text-slate-700">Cargando transferencias...</p>
+                  <p className="text-[11px] text-slate-400">Consultando historial en tiempo real</p>
+                </div>
+              ) : filteredHistory.length === 0 ? (
+                <div className="bg-white rounded-3xl p-10 border border-slate-200/80 shadow-sm text-center space-y-2">
+                  <Clock className="w-8 h-8 text-slate-300 mx-auto" />
+                  <h4 className="text-sm font-bold text-slate-700">
+                    {historySearch ? 'No se encontraron resultados' : 'Sin transferencias en el historial'}
+                  </h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    {historySearch
+                      ? `No hay transferencias que coincidan con "${historySearch}".`
+                      : 'Las transferencias completadas o recibidas por las sucursales aparecerán aquí.'}
+                  </p>
+                  {historySearch && (
+                    <button
+                      type="button"
+                      onClick={() => handleSearchChange('')}
+                      className="mt-2 text-xs text-blue-600 font-semibold hover:underline cursor-pointer"
+                    >
+                      Ver todo el historial
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="space-y-2">
+                    {visibleHistory.map((sol) => (
+                      <div
+                        key={sol.id}
+                        onClick={() => setDetailSolicitud(sol)}
+                        className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm hover:border-emerald-300 hover:shadow-md transition-all text-xs flex items-center justify-between gap-3 text-slate-500 cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-slate-900 text-xs sm:text-sm break-all">
+                                {sol.folio || formatTransferFolio(sol)}
+                              </span>
+                              <span className="text-slate-700 font-semibold truncate">
+                                {sol.sucursalOrigen}
+                              </span>
+                              {sol.areaOrigen && (
+                                <span className="text-[10px] text-slate-400">
+                                  ({sol.areaOrigen})
+                                </span>
+                              )}
+                              {(sol.sinSolicitud || sol.esDespachoDirecto) && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                                  Directo
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5 flex-wrap">
+                              <span className="whitespace-nowrap">{sol.items?.length || 0} producto(s)</span>
+                              {sol.fecha && (
+                                <>
+                                  <span className="shrink-0">&bull;</span>
+                                  <span className="font-mono whitespace-nowrap">
+                                    {new Date(sol.fechaDespacho || sol.fecha).toLocaleDateString('es-MX', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric'
+                                    })}
+                                  </span>
+                                </>
+                              )}
+                              {sol.usuarioSolicitante && (
+                                <>
+                                  <span className="shrink-0">&bull;</span>
+                                  <span className="whitespace-nowrap">Pedido por: {sol.usuarioSolicitante}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full whitespace-nowrap ${
+                            (sol.estado === 'recibida_incompleta' || (sol.reporteFaltantes?.length > 0 && !sol.resolucionFaltantes && sol.estado !== 'cerrada_con_faltantes' && sol.estado !== 'faltantes_despachados'))
+                              ? 'bg-red-50 text-red-700 border border-red-200'
+                              : sol.estado === 'faltantes_despachados'
+                              ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                              : sol.estado === 'cerrada_con_faltantes'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : sol.estado === 'recibida'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}>
+                            {(sol.estado === 'recibida_incompleta' || (sol.reporteFaltantes?.length > 0 && !sol.resolucionFaltantes && sol.estado !== 'cerrada_con_faltantes' && sol.estado !== 'faltantes_despachados'))
+                              ? 'Incompleta'
+                              : sol.estado === 'faltantes_despachados'
+                              ? 'Faltantes en Tránsito'
+                              : sol.estado === 'cerrada_con_faltantes'
+                              ? 'Cerrada c/ Faltantes'
+                              : sol.estado === 'recibida'
+                              ? 'Recibida'
+                              : 'Completada'}
+                          </span>
+                          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors shrink-0" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+
+                  {/* Resumen del conteo al final de la lista */}
+                  <div className="pt-2 text-center text-xs text-slate-400">
+                    <span>Mostrando {visibleHistory.length} de {filteredHistory.length} transferencias</span>
+                  </div>
+
+                  {/* Centinela para scroll infinito y/o botón Cargar Más */}
+                  {hasMoreHistory && (
+                    <div ref={sentinelRef} className="pt-2 pb-2 text-center">
+                      <button
+                        type="button"
+                        disabled={isLoadingMoreHistory}
+                        onClick={handleLoadMoreHistory}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl border border-slate-200/80 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                      >
+                        {isLoadingMoreHistory ? (
+                          <>
+                            <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                            <span>Cargando más transferencias...</span>
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-4 h-4 text-slate-400" />
+                            <span>Cargar más ({filteredHistory.length - visibleHistory.length} restantes)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {!hasMoreHistory && filteredHistory.length > 0 && (
+                    <p className="text-center text-[11px] text-slate-400 pt-2 pb-2">
+                      Has llegado al final del historial ({filteredHistory.length} transferencias en total)
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1013,22 +1432,22 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
           {/* Header Card */}
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0 flex-1 space-y-1">
                 <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block">
                   Orden de Despacho & Surtido
                 </span>
-                <h2 className="text-xl font-extrabold text-slate-900 font-mono">
+                <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 font-mono break-all leading-tight">
                   {selectedSolicitud.folio ? `${selectedSolicitud.folio} - ${selectedSolicitud.sucursalOrigen}` : selectedSolicitud.sucursalOrigen}
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Solicitado por: <strong className="text-slate-800">{selectedSolicitud.usuarioSolicitante}</strong> &bull; Ref: <span className="font-mono font-semibold text-slate-700">{formatTransferFolio(selectedSolicitud)}</span>
+                <p className="text-xs text-slate-500">
+                  Solicitado por: <strong className="text-slate-800">{selectedSolicitud.usuarioSolicitante || 'Sucursal'}</strong>
                 </p>
               </div>
 
               {/* Add Extra Item Button */}
               <button
                 onClick={() => setIsExtraModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-2xl border border-blue-200 transition-colors shadow-sm cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-2xl border border-blue-200 transition-colors shadow-sm cursor-pointer shrink-0"
               >
                 <Plus className="w-4 h-4" />
                 <span className="hidden sm:inline">Agregar Extras</span>
@@ -1036,18 +1455,18 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
             </div>
 
             {/* Folio de Transferencia generado por el sistema externo */}
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-1.5">
-              <div className="flex items-center justify-between">
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2">
+              <div className="space-y-0.5">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
                   <span>Folio de Transferencia (del sistema)</span>
                   <span className="text-red-500">*</span>
                 </label>
-                <span className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-400">
                   Ingresa el número generado al transferir
-                </span>
+                </p>
               </div>
               <div className="flex items-stretch shadow-sm rounded-xl overflow-hidden border border-slate-200 focus-within:border-blue-500 max-w-xs bg-white">
-                <div className="bg-slate-100 px-3.5 py-2 text-slate-600 font-bold text-sm border-r border-slate-200 flex items-center justify-center select-none">
+                <div className="bg-slate-100 px-3.5 py-2 text-slate-600 font-bold text-sm border-r border-slate-200 flex items-center justify-center select-none font-mono">
                   TR
                 </div>
                 <input
@@ -1055,14 +1474,21 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                   inputMode="numeric"
                   value={dispatchFolioDigits}
                   placeholder="000123"
+                  maxLength={12}
+                  onFocus={handleInputScrollIntoView}
                   onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, '');
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 12);
                     setDispatchFolioDigits(digits);
                     const fullFolio = digits ? `TR${digits}` : '';
                     setSelectedSolicitud(prev => prev ? ({ ...prev, folio: fullFolio }) : null);
-                    transferService.updateFolio(selectedSolicitud.id, fullFolio);
+                    if (folioDebounceRef.current) clearTimeout(folioDebounceRef.current);
+                    folioDebounceRef.current = setTimeout(() => {
+                      if (selectedSolicitud?.id) {
+                        transferService.updateFolio(selectedSolicitud.id, fullFolio);
+                      }
+                    }, 400);
                   }}
-                  className="w-full bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none"
+                  className="w-full bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none font-mono tracking-wide"
                 />
               </div>
             </div>
@@ -1182,20 +1608,17 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
                   {/* Campo de justificación dinámico: Si el despachador reduce la cantidad de las solicitadas */}
                   {hasFaltante && (
                     <div
-                      className="mt-3 pt-3 border-t border-slate-200 animate-fade-in sm:pl-9"
+                      className="mt-3 pt-3 border-t border-slate-200 sm:pl-9 transition-opacity duration-200"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <label className="flex items-center gap-1.5 text-xs font-bold text-slate-700 mb-1.5">
-                        <FileText className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Motivo del ajuste / faltante</span>
-                        <span className="text-[11px] font-normal text-slate-400">(Opcional):</span>
-                      </label>
-                      <input
-                        type="text"
+                      <FloatingInput
+                        label="Motivo del ajuste / faltante (Opcional)"
                         value={item.motivoAjusteDespacho || ''}
                         onChange={(e) => handleUpdateItemJustification(index, e.target.value)}
-                        placeholder="Ej. Producto dañado en almacén o Falta de stock temporal"
-                        className="w-full text-xs px-3.5 py-2.5 bg-slate-50 hover:bg-white focus:bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 placeholder:text-slate-400 shadow-2xs transition-all font-medium"
+                        onFocus={handleInputScrollIntoView}
+                        onBlur={() => handleJustificationBlur(index)}
+                        placeholder="Ej. Producto dañado en almacén o falta de stock temporal"
+                        icon={FileText}
                       />
                     </div>
                   )}
@@ -1383,10 +1806,9 @@ function ExtraProductModal({
             <span>Escanear código de barras</span>
           </button>
 
-          <form onSubmit={handleExecuteSearch} className="flex gap-2">
+          <form onSubmit={handleExecuteSearch} className="flex gap-2 items-center">
             <div className="flex-1">
-              <AutoScrollInput
-                type="text"
+              <MarqueeSearchInput
                 placeholder="Buscar por nombre o fármaco..."
                 value={extraQuery}
                 onChange={(e) => setExtraQuery(e.target.value)}
@@ -1394,7 +1816,7 @@ function ExtraProductModal({
                 onClear={() => {
                   setExtraQuery('');
                 }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500 shadow-xs"
+                loading={isSearching}
               />
             </div>
             <button

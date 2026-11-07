@@ -17,6 +17,7 @@ import { catalogService } from '../modules/catalogo';
 import { useBodyScrollLock, useModalAnimation } from '../hooks';
 import { AutoScrollInput } from './AutoScrollInput';
 import { MarqueeText } from './MarqueeText';
+import { MarqueeSearchInput } from './MarqueeSearchInput';
 
 const STORAGE_KEY = 'erp_scanner_camera_settings';
 
@@ -915,15 +916,11 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
             )}
           </div>
           <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-100 space-y-2.5 sm:space-y-3 shrink-0">
-            <label className="block text-xs font-semibold text-slate-700 leading-none">
-              Buscar por código o nombre del producto:
-            </label>
-
-            <form onSubmit={handleExecuteSearch} className="flex gap-2">
+            <form onSubmit={handleExecuteSearch} className="flex gap-2 items-center">
               <div className="flex-1">
-                <AutoScrollInput
-                  type="text"
-                  placeholder="Escribe el código o descripción del producto..."
+                <MarqueeSearchInput
+                  label="Buscar por código o nombre del producto"
+                  placeholder="Escribe código o descripción..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsInputFocused(true)}
@@ -934,13 +931,13 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                     setSearchResults([]);
                     setHasSearched(false);
                   }}
-                  className="w-full bg-white border border-slate-200 rounded-xl py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-sans shadow-xs"
+                  loading={isSearching}
                 />
               </div>
               <button
                 type="submit"
                 disabled={isSearching}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-xs font-semibold rounded-xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
               >
                 {isSearching ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

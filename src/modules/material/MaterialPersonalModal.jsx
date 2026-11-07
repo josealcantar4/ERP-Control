@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, UserPlus, Plus, Trash2, AlertCircle, Building2, Briefcase, Edit2, Check, RotateCcw } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { FloatingInput } from '../../shared';
 
 export function MaterialPersonalModal({
   isOpen,
@@ -148,22 +149,20 @@ export function MaterialPersonalModal({
               )}
             </div>
             
-            <input
-              type="text"
+            <FloatingInput
+              label="Nombre Completo"
               placeholder="Nombre completo (ej. Juan Pérez)"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
             />
 
             <div className="grid grid-cols-2 gap-2">
               <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Puesto / Cargo"
+                <FloatingInput
+                  label="Puesto / Cargo"
+                  placeholder="Ej. Farmacéutico, Chofer..."
                   value={puesto}
                   onChange={(e) => setPuesto(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
                 />
               </div>
 

@@ -5,6 +5,7 @@ export {
   playCheckSound,
   unlockAudioEngine,
   dismissNotification,
+  undismissNotification,
   getDismissedNotifications,
   canUserViewInSolicitar,
   canUserDispatch,

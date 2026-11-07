@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ArrowLeft,
   RefreshCw,
@@ -16,13 +16,16 @@ import {
   Edit2,
   Trash2,
   Sparkles,
-  Tag
+  Tag,
+  ChevronDown,
+  Loader2
 } from 'lucide-react';
 import { catalogService } from './catalogService';
 import { CleanProductModal } from './CleanProductModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
+import { MarqueeSearchInput } from '../../shared';
 
 export function CatalogUploadModule({ currentUser, onBack }) {
   const activeUser = currentUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('erp_current_user') || '{}') : {});
@@ -269,6 +272,46 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       return cod.includes(q) || desc.includes(q);
     });
   }, [cleanItems, cleanSearchQuery]);
+
+  // Carga progresiva (15 en 15) como en historial
+  const [cleanItemsLimit, setCleanItemsLimit] = useState(15);
+  const [isLoadingMoreClean, setIsLoadingMoreClean] = useState(false);
+  const cleanSentinelRef = useRef(null);
+
+  const visibleCleanItems = useMemo(() => {
+    return filteredCleanItems.slice(0, cleanItemsLimit);
+  }, [filteredCleanItems, cleanItemsLimit]);
+
+  const hasMoreClean = visibleCleanItems.length < filteredCleanItems.length;
+
+  const handleLoadMoreClean = useCallback(() => {
+    if (isLoadingMoreClean) return;
+    setIsLoadingMoreClean(true);
+    setTimeout(() => {
+      setCleanItemsLimit(prev => prev + 15);
+      setIsLoadingMoreClean(false);
+    }, 250);
+  }, [isLoadingMoreClean]);
+
+  const handleCleanSearchChange = (val) => {
+    setCleanSearchQuery(val);
+    setCleanItemsLimit(15);
+  };
+
+  useEffect(() => {
+    if (!hasMoreClean || isLoadingMoreClean) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        handleLoadMoreClean();
+      }
+    }, { rootMargin: '120px' });
+
+    const el = cleanSentinelRef.current;
+    if (el) observer.observe(el);
+    return () => {
+      if (el) observer.unobserve(el);
+    };
+  }, [hasMoreClean, isLoadingMoreClean, handleLoadMoreClean]);
 
   const formatDate = (isoString) => {
     if (!isoString) return 'Nunca sincronizado';
@@ -543,14 +586,12 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
           {/* Barra de Búsqueda con AutoScroll y Carrusel */}
           <div>
-            <AutoScrollInput
-              type="text"
+            <MarqueeSearchInput
               value={cleanSearchQuery}
-              onChange={(e) => setCleanSearchQuery(e.target.value)}
+              onChange={(e) => handleCleanSearchChange(e.target.value)}
               placeholder="Buscar en el catálogo limpio por código o descripción..."
               icon={Search}
-              onClear={() => setCleanSearchQuery('')}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+              onClear={() => handleCleanSearchChange('')}
             />
           </div>
 
@@ -592,7 +633,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-              {filteredCleanItems.map((item) => (
+              {visibleCleanItems.map((item) => (
                 <div
                   key={item.codigo}
                   className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
@@ -633,6 +674,35 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                   </div>
                 </div>
               ))}
+
+              {/* Resumen del conteo al final de la lista */}
+              <div className="pt-2 text-center text-xs text-slate-400">
+                <span>Mostrando {visibleCleanItems.length} de {filteredCleanItems.length} productos</span>
+              </div>
+
+              {/* Centinela para scroll infinito y/o botón Cargar Más */}
+              {hasMoreClean && (
+                <div ref={cleanSentinelRef} className="pt-1 pb-2 text-center">
+                  <button
+                    type="button"
+                    disabled={isLoadingMoreClean}
+                    onClick={handleLoadMoreClean}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl border border-slate-200/80 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                  >
+                    {isLoadingMoreClean ? (
+                      <>
+                        <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                        <span>Cargando más productos...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                        <span>Cargar más productos</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

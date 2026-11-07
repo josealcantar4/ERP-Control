@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -28,11 +28,28 @@ export function DiscrepancySummaryModal({
 
   const [observaciones, setObservaciones] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localDiscrepancias, setLocalDiscrepancias] = useState(discrepancias);
+
+  // Sincronizar discrepancias con observaciones por producto
+  useEffect(() => {
+    setLocalDiscrepancias(discrepancias);
+  }, [discrepancias, isOpen]);
+
+  // Limpiar observaciones cada vez que se abre el modal o cambia la solicitud
+  useEffect(() => {
+    if (isOpen) {
+      setObservaciones('');
+    }
+  }, [isOpen, solicitud?.id]);
 
   if (!shouldRender || !solicitud) return null;
 
-  const faltantes = discrepancias.filter(d => d.tipo === 'faltante' || d.tipo === 'ausencia_total');
-  const extras = discrepancias.filter(d => d.tipo === 'extra');
+  const handleItemObsChange = (idx, text) => {
+    setLocalDiscrepancias(prev => prev.map((item, i) => (i === idx ? { ...item, observacion: text } : item)));
+  };
+
+  const faltantes = localDiscrepancias.filter(d => d.tipo === 'faltante' || d.tipo === 'ausencia_total');
+  const extras = localDiscrepancias.filter(d => d.tipo === 'extra');
 
   const totalFaltantesPzas = faltantes.reduce((acc, d) => acc + Math.abs(d.diferencia), 0);
   const totalExtrasPzas = extras.reduce((acc, d) => acc + d.diferencia, 0);
@@ -42,10 +59,11 @@ export function DiscrepancySummaryModal({
     try {
       await onConfirm({
         observaciones: observaciones.trim(),
-        discrepancias,
+        discrepancias: localDiscrepancias,
         totalFaltantesPzas,
         totalExtrasPzas
       });
+      setObservaciones('');
       handleClose();
     } finally {
       setIsSubmitting(false);
@@ -98,7 +116,7 @@ export function DiscrepancySummaryModal({
           </div>
         </div>
         <div className="p-4 sm:p-6 overflow-y-auto space-y-3.5 flex-1 divide-y divide-slate-100">
-          {discrepancias.map((disc, idx) => {
+          {localDiscrepancias.map((disc, idx) => {
             const isMissing = disc.tipo === 'faltante';
             const isAbsence = disc.tipo === 'ausencia_total';
             const isExtra = disc.tipo === 'extra';
@@ -106,7 +124,7 @@ export function DiscrepancySummaryModal({
             return (
               <div
                 key={disc.codigo || idx}
-                className={`rounded-2xl p-3.5 border transition-all space-y-2 ${
+                className={`rounded-2xl p-3.5 border transition-all space-y-2.5 ${
                   isAbsence
                     ? 'bg-red-50/80 border-red-200'
                     : isMissing
@@ -138,10 +156,10 @@ export function DiscrepancySummaryModal({
                 <div className="grid grid-cols-3 gap-2 pt-1">
                   <div className="bg-white/90 p-2 rounded-xl border border-slate-200/70 text-center">
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase">
-                      Esperado
+                      Despachado
                     </span>
                     <span className="text-xs sm:text-sm font-mono font-bold text-slate-700">
-                      {disc.cantidadEsperada} pzas
+                      {disc.cantidadDespachada !== undefined ? disc.cantidadDespachada : disc.cantidadEsperada} pzas
                     </span>
                   </div>
 
@@ -176,6 +194,21 @@ export function DiscrepancySummaryModal({
                       {disc.diferencia > 0 ? `+${disc.diferencia}` : disc.diferencia} pz
                     </span>
                   </div>
+                </div>
+
+                {/* Campo de motivo / observación por producto */}
+                <div className="pt-2 border-t border-slate-200/60">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 mb-1">
+                    <FileText className="w-3 h-3 text-slate-500 shrink-0" />
+                    <span>Motivo de este producto:</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={disc.observacion || ''}
+                    onChange={(e) => handleItemObsChange(idx, e.target.value)}
+                    placeholder="Ej. Faltaron piezas físicas en la caja, empaque quebrado, caducado..."
+                    className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white/90 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 placeholder:text-slate-400 font-medium"
+                  />
                 </div>
               </div>
             );

@@ -39,17 +39,50 @@ export function DespacharFaltantesModal({
   const [notas, setNotas] = useState('');
 
   useEffect(() => {
-    if (currentSolicitud && currentSolicitud.reporteFaltantes) {
-      // Inicializar cada ítem faltante: por defecto marcado para despachar con la cantidad reportada
-      const initial = currentSolicitud.reporteFaltantes.map((f, idx) => ({
-        index: idx,
-        codigo: f.codigo || '',
-        descripcion: f.descripcion || '',
-        cantidadFaltanteReportada: Number(f.cantidadDespachada || f.cantidadSolicitada || 1),
-        despachado: true,
-        cantidadDespachada: Number(f.cantidadDespachada || f.cantidadSolicitada || 1),
-        motivoNoDespacho: 'Sin existencia en almacén'
-      }));
+    if (currentSolicitud && (currentSolicitud.reporteFaltantes || currentSolicitud.reporteDiscrepancias?.discrepancias)) {
+      const faltantesList = currentSolicitud.reporteFaltantes && currentSolicitud.reporteFaltantes.length > 0
+        ? currentSolicitud.reporteFaltantes
+        : (currentSolicitud.reporteDiscrepancias?.discrepancias || []).filter(d => d.tipo === 'faltante' || d.tipo === 'ausencia_total');
+
+      const initial = faltantesList.map((f, idx) => {
+        const cantFaltante = Number(
+          f.cantidadFaltante !== undefined && f.cantidadFaltante !== null
+            ? f.cantidadFaltante
+            : (f.diferencia !== undefined ? Math.abs(f.diferencia) : (f.cantidadDespachada || f.cantidadSolicitada || 1))
+        );
+
+        const cantRecibida = Number(
+          f.cantidadRecibida !== undefined && f.cantidadRecibida !== null
+            ? f.cantidadRecibida
+            : 0
+        );
+
+        const cantEsperada = Number(
+          f.cantidadEsperada ?? f.cantidadDespachada ?? f.cantidadSolicitada ?? (cantRecibida + cantFaltante)
+        );
+
+        const ajusteOriginal = currentSolicitud.ajustesDespacho?.find(a =>
+          (a.codigo && f.codigo && String(a.codigo) === String(f.codigo)) ||
+          (a.descripcion && f.descripcion && a.descripcion.toLowerCase() === f.descripcion.toLowerCase())
+        );
+
+        const observacionRecepcion = f.observacion || f.motivoRecepcion || '';
+        const motivoOriginal = f.motivoAjusteDespacho || ajusteOriginal?.motivo || ajusteOriginal?.motivoAjusteDespacho || (!observacionRecepcion ? f.motivo : '') || '';
+
+        return {
+          index: idx,
+          codigo: f.codigo || '',
+          descripcion: f.descripcion || '',
+          cantidadEsperada: cantEsperada,
+          cantidadRecibida: cantRecibida,
+          cantidadFaltanteReportada: cantFaltante,
+          despachado: true,
+          cantidadDespachada: cantFaltante,
+          motivoNoDespacho: 'Sin existencia en almacén',
+          motivoOriginal,
+          observacionRecepcion
+        };
+      });
       setItemsState(initial);
 
       const existingDigits = currentSolicitud.folio ? String(currentSolicitud.folio).replace(/^TR/i, '') : '';
@@ -144,12 +177,16 @@ export function DespacharFaltantesModal({
         return {
           codigo: i.codigo,
           descripcion: i.descripcion,
+          cantidadEsperada: i.cantidadEsperada,
+          cantidadRecibida: i.cantidadRecibida,
           cantidadFaltanteReportada: i.cantidadFaltanteReportada,
           despachado: i.despachado,
           cantidadDespachada: i.despachado ? validQty : 0,
           motivoNoDespacho: !i.despachado ? i.motivoNoDespacho : '',
           motivoParcial: i.despachado && validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : '',
-          motivo: !i.despachado ? i.motivoNoDespacho : (validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : '')
+          motivo: !i.despachado ? i.motivoNoDespacho : (validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : ''),
+          observacionRecepcion: i.observacionRecepcion || '',
+          motivoSucursal: i.observacionRecepcion || ''
         };
       })
     };
@@ -179,10 +216,10 @@ export function DespacharFaltantesModal({
                 Atender Reporte de Faltantes
               </h3>
             </div>
-            <p className="text-xs text-slate-500">
-              Sucursal: <strong className="text-slate-800">{currentSolicitud.sucursalOrigen}</strong> &bull; Folio:{' '}
-              <span className="font-mono font-bold text-blue-700">
-                {currentSolicitud.folio || formatTransferFolio(currentSolicitud)}
+            <p className="text-xs text-slate-500 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+              <span className="whitespace-nowrap">Sucursal: <strong className="text-slate-800">{currentSolicitud.sucursalOrigen}</strong></span>
+              <span className="whitespace-nowrap before:content-['•'] before:mr-2 before:text-slate-300">
+                Folio: <strong className="font-mono text-blue-700">{currentSolicitud.folio || formatTransferFolio(currentSolicitud)}</strong>
               </span>
             </p>
           </div>
@@ -199,6 +236,26 @@ export function DespacharFaltantesModal({
 
         {/* CONTENIDO SCROLLEABLE */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
+          {/* OBSERVACIÓN / MOTIVO REPORTADO POR SUCURSAL */}
+          {(currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion) && (
+            <div className="p-3.5 bg-red-50/90 border border-red-200/90 rounded-2xl text-xs space-y-1">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="font-bold text-red-950 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>Motivo reportado por la sucursal:</span>
+                </span>
+                {currentSolicitud.reporteDiscrepancias?.usuarioReceptor && (
+                  <span className="text-[10px] font-semibold text-red-700 bg-white/80 px-2 py-0.5 rounded-full border border-red-200">
+                    Receptor: {currentSolicitud.reporteDiscrepancias.usuarioReceptor}
+                  </span>
+                )}
+              </div>
+              <p className="italic font-medium text-red-900 text-xs pl-5 leading-snug">
+                &ldquo;{currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion}&rdquo;
+              </p>
+            </div>
+          )}
+
           {/* AVISO EXPLICATIVO */}
           <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
             <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -217,53 +274,84 @@ export function DespacharFaltantesModal({
               {itemsState.map(it => (
                 <div
                   key={it.index}
-                  className={`p-3.5 rounded-2xl border transition-all ${
+                  className={`p-3.5 sm:p-4 rounded-2xl border transition-all space-y-2.5 ${
                     it.despachado
                       ? 'bg-emerald-50/40 border-emerald-200'
                       : 'bg-slate-50 border-slate-200 opacity-90'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                  {/* ENCABEZADO: TÍTULO COMPLETO Y SELECTOR */}
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
                     <div className="min-w-0 flex-1">
-                      <MarqueeText
-                        text={it.descripcion}
-                        className="text-sm font-bold text-slate-900 block"
-                      />
-                      <p className="text-[11px] font-mono text-slate-400">
-                        Código: {it.codigo} &bull; Faltante reportado:{' '}
-                        <strong className="text-red-700">{it.cantidadFaltanteReportada} pz</strong>
-                      </p>
+                      <h4 className="text-sm font-bold text-slate-900 leading-snug break-words">
+                        {it.descripcion}
+                      </h4>
                     </div>
 
                     {/* SELECTOR DESPACHAR / NO DESPACHAR */}
-                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shrink-0 shadow-2xs">
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shrink-0 shadow-2xs self-start">
                       <button
                         type="button"
                         onClick={() => toggleItemDespachado(it.index, true)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                           it.despachado
                             ? 'bg-emerald-600 text-white shadow-2xs'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        <CheckCircle2 className="w-3 h-3" />
+                        <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Despachar</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => toggleItemDespachado(it.index, false)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                           !it.despachado
                             ? 'bg-red-600 text-white shadow-2xs'
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        <XCircle className="w-3 h-3" />
+                        <XCircle className="w-3.5 h-3.5" />
                         <span>No enviar</span>
                       </button>
                     </div>
                   </div>
+
+                  {/* METADATOS: CÓDIGO, RECIBIDAS Y FALTANTE (EN RENGLONES SEPARADOS) */}
+                  <div className="space-y-1 text-[11px] font-mono text-slate-600">
+                    <div>
+                      Código: <strong className="text-slate-800">{it.codigo}</strong>
+                    </div>
+                    <div>
+                      Recibidas: <strong className="text-slate-800">{it.cantidadRecibida} de {it.cantidadEsperada} pz</strong>
+                    </div>
+                    <div>
+                      <span className="text-red-600 font-bold">Faltante: {it.cantidadFaltanteReportada} pz</span>
+                    </div>
+                  </div>
+
+                  {/* Motivo de observación reportado por sucursal */}
+                  {it.observacionRecepcion && (
+                    <div className="p-2.5 bg-rose-50/90 border border-rose-200/80 rounded-xl text-xs flex items-start gap-2 text-rose-950">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1 leading-snug">
+                        <span className="font-bold text-rose-900 mr-1.5">Motivo reporte sucursal:</span>
+                        <span className="italic font-medium text-rose-900 break-words">&ldquo;{it.observacionRecepcion}&rdquo;</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Motivo original si existió en el despacho previo */}
+                  {it.motivoOriginal && (
+                    <div className="p-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl text-xs flex items-start gap-2 text-amber-950">
+                      <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1 leading-snug">
+                        <span className="font-bold text-amber-900 mr-1.5">Ajuste previo despacho:</span>
+                        <span className="italic font-medium text-amber-900 break-words">&ldquo;{it.motivoOriginal}&rdquo;</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* CONTROLES CONDICIONALES SEGÚN SELECCIÓN */}
                   {it.despachado ? (
@@ -357,8 +445,9 @@ export function DespacharFaltantesModal({
                 inputMode="numeric"
                 value={folioEnvioDigits}
                 placeholder="000123"
-                onChange={e => setFolioEnvioDigits(e.target.value.replace(/\D/g, ''))}
-                className="w-full bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none"
+                maxLength={12}
+                onChange={e => setFolioEnvioDigits(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                className="w-full bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none font-mono tracking-wide"
               />
             </div>
             <p className="text-[11px] text-slate-400">

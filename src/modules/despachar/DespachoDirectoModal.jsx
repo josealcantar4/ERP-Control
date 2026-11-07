@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -24,12 +24,14 @@ import {
 } from 'lucide-react';
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
+import { CleanProductModal } from '../catalogo/CleanProductModal';
 import { transferService, canUserDispatch } from '../transferencias';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
+import { FloatingInput, MarqueeSearchInput } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function DespachoDirectoModal({
@@ -45,9 +47,18 @@ export function DespachoDirectoModal({
 
   // Pestañas del modal: 'captura' | 'historial'
   const [activeTab, setActiveTab] = useState('captura');
+  const [tabDirection, setTabDirection] = useState('initial'); // 'initial' | 'forward' | 'back'
 
   const handleSwitchTab = (newTab) => {
+    if (newTab === activeTab) return;
+    const direction = newTab === 'historial' ? 'forward' : 'back';
+    setTabDirection(direction);
     setActiveTab(newTab);
+  };
+
+  const getTabAnimationClass = (tabName) => {
+    if (tabDirection === 'initial') return 'animate-fade-in';
+    return tabName === 'historial' ? 'animate-tab-slide-right' : 'animate-tab-slide-left';
   };
 
   // ID del borrador actual si se está continuando uno existente
@@ -81,10 +92,54 @@ export function DespachoDirectoModal({
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [pendingItem, setPendingItem] = useState(null);
 
+  // Notificación de código no encontrado en catálogo (sin alerts)
+  const [scanError, setScanError] = useState(null); // { code: string }
+  const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
+  const [unregisteredCode, setUnregisteredCode] = useState('');
+  const scanErrorTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (scanErrorTimerRef.current) clearTimeout(scanErrorTimerRef.current);
+    };
+  }, []);
+
   // Estados de validación y carga
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savingStatus, setSavingStatus] = useState('');
+
+  // Control de scroll y viewport visual cuando el teclado móvil está activo
+  const [viewportHeight, setViewportHeight] = useState(() => 
+    typeof window !== 'undefined' && window.visualViewport ? window.visualViewport.height : null
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const updateHeight = () => {
+      setViewportHeight(window.visualViewport.height);
+    };
+    window.visualViewport.addEventListener('resize', updateHeight);
+    window.visualViewport.addEventListener('scroll', updateHeight);
+    return () => {
+      window.visualViewport.removeEventListener('resize', updateHeight);
+      window.visualViewport.removeEventListener('scroll', updateHeight);
+    };
+  }, []);
+
+  const handleInputFocus = (e) => {
+    const el = e.target;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+      setTimeout(() => {
+        if (el && el.scrollIntoView) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 300);
+    }
+  };
+
+  const isFormLoadingRef = useRef(false);
+  const autoSaveTimerRef = useRef(null);
 
   // Estado de diálogo modal de confirmación y alerta
   const [dialog, setDialog] = useState({
@@ -132,8 +187,9 @@ export function DespachoDirectoModal({
   // Sedes disponibles para despachar:
   // - Sedes distintas a la actual.
   // - O la misma sede actual SI tiene 2 o más áreas operativas (para transferencias internas entre áreas).
+  // NOTA: No se filtra por s.esDestino ya que esa restricción aplica únicamente a la realización de pedidos (solicitar),
+  // no al envío directo de mercancía desde Bodega/Matriz.
   const availableDirectSedes = sedesList.filter(s => {
-    if (s.esDestino === false) return false;
     const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
     if (!isOwnSede) return true;
     const areas = Array.isArray(s.areas) ? s.areas : [];
@@ -162,6 +218,7 @@ export function DespachoDirectoModal({
 
   // Limpiar campos al abrir nuevo despacho
   const handleResetForm = () => {
+    isFormLoadingRef.current = true;
     setCurrentDraftId(null);
     setSelectedSede('');
     setSelectedArea('');
@@ -171,6 +228,8 @@ export function DespachoDirectoModal({
     setSearchQuery('');
     setSearchResults([]);
     setErrorMsg('');
+    setScanError(null);
+    setUnregisteredCode('');
     setIsSubmitting(false);
     setSavingStatus('');
   };
@@ -179,6 +238,7 @@ export function DespachoDirectoModal({
     if (isOpen) {
       handleResetForm();
       setActiveTab('captura');
+      setTabDirection('initial');
     }
   }, [isOpen]);
 
@@ -206,10 +266,9 @@ export function DespachoDirectoModal({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  if (!shouldRender) return null;
-
   // Cargar un borrador existente del historial para continuar capturando
   const handleLoadDraft = (draft) => {
+    isFormLoadingRef.current = true;
     setCurrentDraftId(draft.id);
     setSelectedSede(draft.sucursalReceptora || draft.sucursalOrigen || '');
     setSelectedArea(draft.areaReceptora || draft.areaDestino || draft.areaOrigen || '');
@@ -234,6 +293,8 @@ export function DespachoDirectoModal({
       }))
     );
 
+    setSavingStatus('saved');
+    setTabDirection('back');
     handleSwitchTab('captura');
     setErrorMsg('');
   };
@@ -268,23 +329,33 @@ export function DespachoDirectoModal({
     });
   };
 
-  // Guardar como borrador para continuar después
-  const handleSaveDraft = async () => {
-    if (packedItems.length === 0) {
-      setErrorMsg('Agrega al menos un producto antes de guardar como borrador.');
+  // Autoguardado dinámico continuo de borrador (estilo Solicitar Pedido)
+  const performAutoSave = useCallback(async () => {
+    // Si no hay productos en la caja, eliminar borrador activo si existía
+    if (!packedItems || packedItems.length === 0) {
+      if (currentDraftId) {
+        try {
+          await transferService.deleteEmptyDraft(currentDraftId);
+          setCurrentDraftId(null);
+        } catch (e) {
+          console.error('Error eliminando borrador vacío:', e);
+        }
+      }
+      setSavingStatus('');
       return;
     }
 
-    const fullFolio = folioDigits.trim() ? `TR${folioDigits.trim()}` : '';
-    const observacionBase = 'Pedido despachado sin haber sido solicitado';
-    const observacionFinal = notasAdicionales.trim()
-      ? `${observacionBase}: ${notasAdicionales.trim()}`
-      : observacionBase;
-
     try {
-      setIsSubmitting(true);
       setSavingStatus('saving');
-      await catalogService.saveBatchToCleanCatalog(packedItems);
+      const fullFolio = folioDigits.trim() ? `TR${folioDigits.trim()}` : '';
+      const observacionBase = 'Pedido despachado sin haber sido solicitado';
+      const observacionFinal = notasAdicionales.trim()
+        ? `${observacionBase}: ${notasAdicionales.trim()}`
+        : observacionBase;
+
+      // Respaldo de productos en catálogo limpio en segundo plano
+      catalogService.saveBatchToCleanCatalog(packedItems);
+
       const saved = await transferService.saveDirectDispatchDraft({
         id: currentDraftId,
         folio: fullFolio,
@@ -303,45 +374,122 @@ export function DespachoDirectoModal({
         items: packedItems
       });
 
-      if (saved) {
+      if (saved && !currentDraftId) {
         setCurrentDraftId(saved.id);
       }
       setSavingStatus('saved');
-      setTimeout(() => setSavingStatus(''), 2500);
     } catch (err) {
-      console.error('Error guardando borrador:', err);
-      setErrorMsg('No se pudo guardar el borrador.');
-    } finally {
-      setIsSubmitting(false);
+      console.error('Error en autoguardado de borrador directo:', err);
+      setSavingStatus('saved');
     }
-  };
+  }, [packedItems, selectedSede, selectedArea, folioDigits, notasAdicionales, currentDraftId, currentUser]);
+
+  // Efecto de autoguardado reactivo con debounce al alterar cualquier dato
+  useEffect(() => {
+    if (!isOpen) return;
+    if (isFormLoadingRef.current) {
+      isFormLoadingRef.current = false;
+      return;
+    }
+
+    if (packedItems.length === 0 && !currentDraftId) {
+      setSavingStatus('');
+      return;
+    }
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      performAutoSave();
+    }, 450);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [packedItems, selectedSede, selectedArea, folioDigits, notasAdicionales, isOpen, performAutoSave, currentDraftId]);
 
   // Selección de producto desde resultados de búsqueda
   const handleSelectProduct = (item) => {
     setPendingItem(item);
     setSearchQuery('');
     setSearchResults([]);
+    setScanError(null);
     setIsQuantityOpen(true);
   };
 
-  // Detección de código de barras desde cámara
-  const handleBarcodeDetected = async (code) => {
+  // Detección de código de barras desde cámara o escáner
+  const handleBarcodeDetected = async (code, itemObject) => {
     setIsScannerOpen(false);
+    const cleanCode = String(code || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
+    if (!cleanCode) return;
+
     try {
-      let item = await catalogService.findByBarcode(code);
+      let item = itemObject;
       if (!item) {
-        const customDesc = window.prompt(
-          `El código "${code}" no está en el catálogo.\nEscribe el nombre del producto:`,
-          ''
-        );
-        if (!customDesc?.trim()) return;
-        item = { codigo: code, descripcion: customDesc.trim().toUpperCase() };
-        await catalogService.saveToCleanCatalog(code, customDesc.trim().toUpperCase());
+        item = await catalogService.findByBarcode(cleanCode);
       }
-      setPendingItem(item);
-      setIsQuantityOpen(true);
+
+      if (item) {
+        setScanError(null);
+        handleSelectProduct(item);
+      } else {
+        // CÓDIGO NO REGISTRADO: CERO ALERTS O PROMPTS
+        setScanError({ code: cleanCode });
+        if (scanErrorTimerRef.current) clearTimeout(scanErrorTimerRef.current);
+        scanErrorTimerRef.current = setTimeout(() => {
+          setScanError(null);
+        }, 6000);
+      }
     } catch (err) {
       console.error('Error procesando escaneo de código:', err);
+    }
+  };
+
+  // Búsqueda directa o pistola lectora al presionar Enter
+  const handleSearchKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const q = searchQuery.trim();
+      if (!q) return;
+
+      setIsSearching(true);
+      try {
+        const exact = await catalogService.findByBarcode(q);
+        if (exact) {
+          handleSelectProduct(exact);
+          return;
+        }
+
+        if (searchResults && searchResults.length === 1) {
+          handleSelectProduct(searchResults[0]);
+          return;
+        }
+
+        if (!searchResults || searchResults.length === 0) {
+          setScanError({ code: q });
+          if (scanErrorTimerRef.current) clearTimeout(scanErrorTimerRef.current);
+          scanErrorTimerRef.current = setTimeout(() => {
+            setScanError(null);
+          }, 6000);
+        }
+      } catch (err) {
+        console.error('Error buscando producto:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }
+  };
+
+  // Registro de producto nuevo no encontrado (desde modal limpio, sin alerts)
+  const handleSaveUnregisteredProduct = async (code, desc) => {
+    try {
+      await catalogService.saveToCleanCatalog(code, desc);
+      const newItem = { codigo: code, descripcion: desc };
+      setScanError(null);
+      setIsCleanModalOpen(false);
+      setPendingItem(newItem);
+      setIsQuantityOpen(true);
+    } catch (err) {
+      console.error('Error registrando producto nuevo:', err);
     }
   };
 
@@ -496,15 +644,30 @@ export function DespachoDirectoModal({
 
   const totalUnits = packedItems.reduce((acc, it) => acc + (it.cantidad || 0), 0);
 
+  if (!shouldRender) return null;
+
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, !isSubmitting)}
-      className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 overflow-hidden ${backdropClass}`}
     >
       <div
         ref={cardRef}
-        style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
+        style={{
+          ...cardStyle,
+          height: viewportHeight
+            ? `${Math.min(
+                viewportHeight - 16,
+                typeof window !== 'undefined' && window.innerWidth < 640
+                  ? (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.92
+                  : 650
+              )}px`
+            : undefined,
+          maxHeight: viewportHeight
+            ? `${Math.min(viewportHeight - 16, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.92)}px`
+            : undefined
+        }}
+        className={`bg-white rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 h-[calc(100dvh-1rem)] sm:h-[650px] max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto transition-[height,max-height] duration-300 ease-out ${cardClass}`}
       >
         
         {/* ENCABEZADO CON PESTAÑAS */}
@@ -534,410 +697,454 @@ export function DespachoDirectoModal({
             </button>
           </div>
 
-          {/* SELECTOR DE PESTAÑAS (CAPTURA / HISTORIAL) */}
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => handleSwitchTab('captura')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'captura'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
-              }`}
-            >
-              <PackagePlus className="w-3.5 h-3.5" />
-              <span>Capturar Despacho</span>
-              {packedItems.length > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  activeTab === 'captura' ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-700'
-                }`}>
-                  {packedItems.length}
-                </span>
-              )}
-            </button>
+          {/* SELECTOR DE PESTAÑAS EN CÁPSULA CENTRADA (ESTILO CAPTURA / HISTORIAL) */}
+          <div className="flex justify-center pt-0.5">
+            <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium w-fit">
+              <button
+                type="button"
+                onClick={() => handleSwitchTab('captura')}
+                className={`px-3.5 py-1 rounded-full cursor-pointer transition-all duration-200 active:scale-95 flex items-center gap-1.5 ${
+                  activeTab === 'captura'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <PackagePlus className="w-3.5 h-3.5" />
+                <span>Capturar Despacho</span>
+                {packedItems.length > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    activeTab === 'captura' ? 'bg-blue-100 text-blue-800' : 'bg-slate-300/80 text-slate-700'
+                  }`}>
+                    {packedItems.length}
+                  </span>
+                )}
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleSwitchTab('historial')}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'historial'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
-              }`}
-            >
-              <History className="w-3.5 h-3.5" />
-              <span>Borradores en Captura</span>
-              {directDrafts.length > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  activeTab === 'historial' ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-800'
-                }`}>
-                  {directDrafts.length}
-                </span>
-              )}
-            </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchTab('historial')}
+                className={`px-3.5 py-1 rounded-full flex items-center gap-1.5 cursor-pointer transition-all duration-200 active:scale-95 ${
+                  activeTab === 'historial'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Borradores en Captura</span>
+                {directDrafts.length > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    activeTab === 'historial' ? 'bg-amber-100 text-amber-800' : 'bg-slate-300/80 text-slate-700'
+                  }`}>
+                    {directDrafts.length}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* CONTENEDOR DESLIZABLE CONTINUO (CERO DESBORDAMIENTO, CERO SALTOS BRUSCOS) */}
-        <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
-          <div
-            className="flex w-[200%] flex-1 min-h-0 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-            style={{ transform: activeTab === 'captura' ? 'translateX(0%)' : 'translateX(-50%)' }}
+        {/* CUERPO DEL MODAL CON SCROLL UNIFICADO (DESDE DESTINO HASTA OBSERVACIÓN OFICIAL) */}
+        {activeTab === 'captura' ? (
+          <div 
+            key="captura"
+            onFocusCapture={handleInputFocus}
+            className={`flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y ${getTabAnimationClass('captura')}`}
+            style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
           >
-            {/* PANEL 1: CAPTURA DE DESPACHO (50% de 200% = 100% de la ventana) */}
-            <div className="w-1/2 h-full overflow-y-auto p-5 sm:p-6 space-y-4 overscroll-contain">
-              {errorMsg && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl flex items-center gap-2 text-xs">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
+            {errorMsg && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl flex items-center gap-2 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
 
-              {savingStatus === 'saved' && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl flex items-center gap-2 text-xs">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>Borrador guardado exitosamente. Puedes continuar en cualquier momento desde la pestaña "Borradores en Captura".</span>
-                </div>
-              )}
+            {/* METADATOS: SUCURSAL DESTINO, ÁREA DESTINO (CONDICIONAL) Y FOLIO TR */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              
+              {/* Sede Destino */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Sede de Destino *</span>
+                </label>
+                <select
+                  value={selectedSede}
+                  onChange={(e) => {
+                    setSelectedSede(e.target.value);
+                    setSelectedArea('');
+                  }}
+                  disabled={isSubmitting}
+                  className={`w-full bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
+                    !selectedSede ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <option value="">-- Selecciona una sede de destino --</option>
+                  {availableDirectSedes.map(s => (
+                    <option key={s.id || s.nombre} value={s.nombre} className="text-slate-800">
+                      {s.nombre} {s.nombre === currentUser?.sede ? '(Transferencia interna)' : (s.tipo ? `(${s.tipo})` : '')}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              {/* METADATOS: SUCURSAL DESTINO, ÁREA DESTINO (CONDICIONAL) Y FOLIO TR */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                
-                {/* Sede Destino */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Sede de Destino *</span>
-                  </label>
+              {/* Área de Destino (Condicional según las áreas configuradas en la sede) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Área de Destino {targetDirectHasAreas ? '*' : ''}</span>
+                </label>
+                {targetDirectHasAreas ? (
                   <select
-                    value={selectedSede}
-                    onChange={(e) => {
-                      setSelectedSede(e.target.value);
-                      setSelectedArea('');
-                    }}
+                    value={selectedArea}
+                    onChange={(e) => setSelectedArea(e.target.value)}
                     disabled={isSubmitting}
                     className={`w-full bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
-                      !selectedSede ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-slate-200'
+                      !selectedArea ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-slate-200'
                     }`}
                   >
-                    <option value="">-- Selecciona una sede de destino --</option>
-                    {availableDirectSedes.map(s => (
-                      <option key={s.id || s.nombre} value={s.nombre} className="text-slate-800">
-                        {s.nombre} {s.nombre === currentUser?.sede ? '(Transferencia interna)' : (s.tipo ? `(${s.tipo})` : '')}
+                    <option value="">-- Selecciona un área de destino --</option>
+                    {availableDirectAreas.map((ar, idx) => (
+                      <option key={idx} value={ar} className="text-slate-800">
+                        {ar}
                       </option>
                     ))}
                   </select>
-                </div>
-
-                {/* Área de Destino (Condicional según las áreas configuradas en la sede) */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Área de Destino {targetDirectHasAreas ? '*' : ''}</span>
-                  </label>
-                  {targetDirectHasAreas ? (
-                    <select
-                      value={selectedArea}
-                      onChange={(e) => setSelectedArea(e.target.value)}
-                      disabled={isSubmitting}
-                      className={`w-full bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
-                        !selectedArea ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-slate-200'
-                      }`}
-                    >
-                      <option value="">-- Selecciona un área de destino --</option>
-                      {availableDirectAreas.map((ar, idx) => (
-                        <option key={idx} value={ar} className="text-slate-800">
-                          {ar}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-500 text-xs flex items-center gap-1.5">
-                      <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>{selectedSede ? 'Esta sede opera de forma directa' : 'Selecciona primero una sede'}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Folio de Transferencia TR */}
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Folio Transferencia (TR) *</span>
-                  </label>
-                  <div className="relative flex items-center">
-                    <span className="absolute left-3.5 font-mono font-bold text-xs text-blue-600 select-none">
-                      TR
-                    </span>
-                    <input
-                      type="text"
-                      value={folioDigits}
-                      onChange={(e) => setFolioDigits(e.target.value.replace(/[^0-9a-zA-Z_-]/g, ''))}
-                      disabled={isSubmitting}
-                      placeholder="12345"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-3.5 py-2.5 text-xs font-mono font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    />
+                ) : (
+                  <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-500 text-xs flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span>{selectedSede ? 'Esta sede opera de forma directa' : 'Selecciona primero una sede'}</span>
                   </div>
-                </div>
-
+                )}
               </div>
 
-              {/* NOTAS ADICIONALES (OPCIONAL) */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Notas o Comentarios Adicionales (Opcional)</span>
-                </label>
-                <AutoScrollInput
-                  type="text"
-                  value={notasAdicionales}
-                  onChange={(e) => setNotasAdicionales(e.target.value)}
+              {/* Folio de Transferencia TR */}
+              <div className="sm:col-span-2">
+                <FloatingInput
+                  label="Folio Transferencia (TR)"
+                  required
+                  value={folioDigits}
+                  onChange={(e) => setFolioDigits(e.target.value.replace(/[^0-9a-zA-Z_-]/g, ''))}
                   disabled={isSubmitting}
-                  placeholder="Ej. Envío de apoyo por alta demanda, sustitución de lote..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  placeholder="12345"
+                  icon={Tag}
+                  className="font-mono font-bold"
                 />
               </div>
 
-              {/* CAPTURA DE PRODUCTOS */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-slate-800">
-                    Productos a Empacar en la Caja ({packedItems.length})
+            </div>
+
+            {/* NOTAS ADICIONALES (OPCIONAL) */}
+            <div>
+              <FloatingInput
+                label="Notas o Comentarios Adicionales (Opcional)"
+                value={notasAdicionales}
+                onChange={(e) => setNotasAdicionales(e.target.value)}
+                disabled={isSubmitting}
+                placeholder="Ej. Envío de apoyo por alta demanda, sustitución de lote..."
+                icon={FileText}
+              />
+            </div>
+
+            {/* CAPTURA DE PRODUCTOS */}
+            <div className="space-y-3 pt-2 border-t border-slate-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 leading-tight">
+                    Productos a empacar en la caja
                   </label>
-                  <span className="text-[11px] font-mono text-slate-500">
+                  <span className="text-[11px] font-mono text-slate-500 block mt-0.5">
                     {totalUnits} unidades totales
                   </span>
                 </div>
 
-                {/* Barra de Búsqueda + Botón Escanear */}
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <AutoScrollInput
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Buscar producto por código o descripción..."
-                      icon={Search}
-                      onClear={() => setSearchQuery('')}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    />
-                    {isSearching && (
-                      <Loader2 className="w-4 h-4 absolute right-12 top-1/2 -translate-y-1/2 text-blue-600 animate-spin pointer-events-none" />
-                    )}
-                  </div>
+                <div className="flex flex-col items-end shrink-0 text-right min-h-[32px] justify-center">
+                  {savingStatus === 'saving' ? (
+                    <span className="text-blue-600 text-[11px] font-semibold animate-pulse flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Guardando...</span>
+                    </span>
+                  ) : savingStatus === 'saved' && packedItems.length > 0 ? (
+                    <span className="text-emerald-600 text-[11px] font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Guardado</span>
+                    </span>
+                  ) : null}
 
-                  <button
-                    type="button"
-                    onClick={() => setIsScannerOpen(true)}
-                    className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-2xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-                  >
-                    <ScanBarcode className="w-4 h-4" />
-                    <span className="hidden sm:inline">Escanear</span>
-                  </button>
+                  {packedItems.length > 0 && (
+                    <span className="text-[11px] font-mono text-slate-500 font-medium block mt-0.5">
+                      {packedItems.length} {packedItems.length === 1 ? 'Producto' : 'Productos'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Barra de Búsqueda + Botón Escanear */}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <MarqueeSearchInput
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      if (scanError) setScanError(null);
+                    }}
+                    onKeyDown={handleSearchKeyDown}
+                    placeholder="Buscar producto por código o descripción..."
+                    icon={Search}
+                    onClear={() => {
+                      setSearchQuery('');
+                      setScanError(null);
+                    }}
+                    loading={isSearching}
+                  />
                 </div>
 
-                {/* Resultados flotantes de búsqueda */}
-                {searchResults.length > 0 && (
-                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-2xl shadow-lg">
-                    {searchResults.map((item) => (
-                      <button
-                        key={item.codigo}
-                        type="button"
-                        onClick={() => handleSelectProduct(item)}
-                        className="w-full p-2.5 text-left hover:bg-blue-50/70 transition-colors flex items-center justify-between gap-3 text-xs cursor-pointer"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <MarqueeText
-                            text={item.descripcion}
-                            className="font-bold text-slate-800 text-xs block"
-                          />
-                          <p className="font-mono text-[10px] text-slate-400">EAN: {item.codigo}</p>
-                        </div>
-                        <span className="text-[11px] font-bold text-blue-600 shrink-0">
-                          + Agregar
-                        </span>
-                      </button>
-                    ))}
+                <button
+                  type="button"
+                  onClick={() => setIsScannerOpen(true)}
+                  className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-2xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <ScanBarcode className="w-4 h-4" />
+                  <span className="hidden sm:inline">Escanear</span>
+                </button>
+              </div>
+
+              {/* Notificación inline si el código no se encuentra en el catálogo (Cero alerts intrusivos) */}
+              {scanError && (
+                <div className="p-3 bg-amber-50 border border-amber-200/90 text-amber-900 rounded-2xl flex items-center justify-between gap-3 text-xs animate-fade-in shadow-sm">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span className="truncate">
+                      El código <strong className="font-mono text-amber-950 font-bold">&quot;{scanError.code}&quot;</strong> no está en el catálogo.
+                    </span>
                   </div>
-                )}
-
-                {/* LISTA DE PRODUCTOS EMPACADOS */}
-                {packedItems.length === 0 ? (
-                  <div className="p-6 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200 space-y-1 text-slate-400">
-                    <Truck className="w-7 h-7 mx-auto text-slate-300" />
-                    <p className="text-xs font-semibold text-slate-600">Caja vacía</p>
-                    <p className="text-[11px] text-slate-400">
-                      Usa el buscador o el escáner para agregar medicamentos a esta caja.
-                    </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUnregisteredCode(scanError.code);
+                        setIsCleanModalOpen(true);
+                      }}
+                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[11px] font-bold transition-colors cursor-pointer shadow-sm"
+                    >
+                      Registrar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScanError(null)}
+                      className="w-6 h-6 rounded-lg hover:bg-amber-200/60 text-amber-700 flex items-center justify-center transition-colors cursor-pointer"
+                      title="Cerrar aviso"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                ) : (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {packedItems.map((it) => (
-                      <div
-                        key={it.codigo}
-                        className="p-3 bg-slate-50/90 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <MarqueeText
-                            text={it.descripcion}
-                            className="text-xs font-bold text-slate-800 block"
-                          />
-                          <p className="text-[10px] font-mono text-slate-400">
-                            EAN: {it.codigo}
-                          </p>
-                        </div>
+                </div>
+              )}
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          {/* Controles de Cantidad con botones - y + */}
-                          <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-2xs">
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateQty(it.codigo, -1)}
-                              className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                              title="Disminuir piezas"
-                            >
-                              <Minus className="w-3 h-3" />
-                            </button>
-                            <span className="font-mono font-bold text-xs px-2 text-slate-800 min-w-8 text-center select-none">
-                              {it.cantidad}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateQty(it.codigo, 1)}
-                              className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                              title="Aumentar piezas"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
-                          </div>
-
-                          {/* Botón Borrar */}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem(it.codigo)}
-                            className="w-7 h-7 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
-                            title="Quitar de la caja"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+              {/* Resultados flotantes de búsqueda */}
+              {searchResults.length > 0 && (
+                <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-2xl shadow-lg">
+                  {searchResults.map((item) => (
+                    <button
+                      key={item.codigo}
+                      type="button"
+                      onClick={() => handleSelectProduct(item)}
+                      className="w-full p-2.5 text-left hover:bg-blue-50/70 transition-colors flex items-center justify-between gap-3 text-xs cursor-pointer"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <MarqueeText
+                          text={item.descripcion}
+                          className="font-bold text-slate-800 text-xs block"
+                        />
+                        <p className="font-mono text-[10px] text-slate-400">EAN: {item.codigo}</p>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <span className="text-[11px] font-bold text-blue-600 shrink-0">
+                        + Agregar
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              </div>
-
-              {/* LEYENDA DISCRETA DE OBSERVACIÓN OFICIAL - AL FINAL ANTES DE LOS BOTONES */}
-              <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
-                <span>
-                  Observación oficial registrada:{' '}
-                  <strong className="text-slate-700 font-semibold font-mono">
-                    &ldquo;Pedido despachado sin haber sido solicitado&rdquo;
-                  </strong>
-                </span>
-              </div>
-            </div>
-
-            {/* PANEL 2: HISTORIAL (BORRADORES EN CAPTURA) */}
-            <div className="w-1/2 h-full overflow-y-auto p-5 sm:p-6 space-y-3 overscroll-contain">
-              <div className="flex items-center justify-between pb-1">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Despachos en Captura ({directDrafts.length})
-                </h4>
-                <span className="text-[11px] text-slate-400">
-                  Toca uno para continuar agregando productos
-                </span>
-              </div>
-
-              {directDrafts.length === 0 ? (
-                <div className="p-10 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
-                  <Clock className="w-8 h-8 mx-auto text-slate-300" />
-                  <p className="text-xs font-semibold text-slate-600">No hay borradores en captura</p>
+              {/* LISTA DE PRODUCTOS EMPACADOS (Flujo natural sin scroll anidado) */}
+              {packedItems.length === 0 ? (
+                <div className="p-6 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200 space-y-1 text-slate-400">
+                  <Truck className="w-7 h-7 mx-auto text-slate-300" />
+                  <p className="text-xs font-semibold text-slate-600">Caja vacía</p>
                   <p className="text-[11px] text-slate-400">
-                    Cuando comiences a armar una caja directa puedes guardarla como borrador para continuar después.
+                    Usa el buscador o el escáner para agregar medicamentos a esta caja.
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2.5">
-                  {directDrafts.map((draft) => {
-                    const itemsCount = draft.items?.length || 0;
-                    const units = (draft.items || []).reduce(
-                      (acc, it) => acc + Number(it.cantidadDespachada || it.cantidad || 0),
-                      0
-                    );
-                    const isCurrent = draft.id === currentDraftId;
-
-                    return (
-                      <div
-                        key={draft.id}
-                        onClick={() => handleLoadDraft(draft)}
-                        className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 group ${
-                          isCurrent
-                            ? 'bg-blue-50/70 border-blue-300 shadow-sm'
-                            : 'bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-slate-900 text-xs sm:text-sm">
-                              {draft.sucursalOrigen || 'Sin sucursal asignada'}
-                              {draft.areaDestino ? ` (${draft.areaDestino})` : ''}
-                            </span>
-                            {Boolean(draft.esTransferenciaInterna) && (
-                              <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
-                                Transferencia Interna
-                              </span>
-                            )}
-                            <span className="font-mono text-xs font-semibold text-blue-600">
-                              {draft.folio || 'Sin folio TR'}
-                            </span>
-                            {isCurrent && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700">
-                                Actualmente en edición
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-3 text-xs text-slate-500">
-                            <span>{itemsCount} productos ({units} pzas)</span>
-                            <span className="text-slate-300">&bull;</span>
-                            <span className="text-[11px] font-mono text-slate-400">
-                              {new Date(draft.fecha).toLocaleTimeString('es-MX', {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleLoadDraft(draft)}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                          >
-                            <span>Continuar</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteDraft(e, draft.id)}
-                            className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
-                            title="Eliminar borrador"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                <div className="space-y-2">
+                  {packedItems.map((it) => (
+                    <div
+                      key={it.codigo}
+                      className="p-3 bg-slate-50/90 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-3"
+                    >
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <MarqueeText
+                          text={it.descripcion}
+                          className="text-xs font-bold text-slate-800 block"
+                        />
+                        <p className="text-[10px] font-mono text-slate-400">
+                          EAN: {it.codigo}
+                        </p>
                       </div>
-                    );
-                  })}
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Controles de Cantidad con botones - y + */}
+                        <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQty(it.codigo, -1)}
+                            className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                            title="Disminuir piezas"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <span className="font-mono font-bold text-xs px-2 text-slate-800 min-w-8 text-center select-none">
+                            {it.cantidad}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQty(it.codigo, 1)}
+                            className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                            title="Aumentar piezas"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {/* Botón Borrar */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(it.codigo)}
+                          className="w-7 h-7 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                          title="Quitar de la caja"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
+
+            </div>
+
+            {/* LEYENDA DISCRETA DE OBSERVACIÓN OFICIAL - AL FINAL DEL CONTENIDO CON SCROLL */}
+            <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500">
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+              <span>
+                Observación oficial registrada:{' '}
+                <strong className="text-slate-700 font-semibold font-mono">
+                  &ldquo;Pedido despachado sin haber sido solicitado&rdquo;
+                </strong>
+              </span>
             </div>
           </div>
-        </div>
+        ) : (
+          /* PANEL 2: HISTORIAL (BORRADORES EN CAPTURA) */
+          <div 
+            key="historial"
+            className={`flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-3 overscroll-contain touch-pan-y ${getTabAnimationClass('historial')}`}
+            style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+          >
+            <div className="flex items-center justify-between pb-1">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Despachos en Captura ({directDrafts.length})
+              </h4>
+              <span className="text-[11px] text-slate-400">
+                Toca uno para continuar agregando productos
+              </span>
+            </div>
+
+            {directDrafts.length === 0 ? (
+              <div className="p-10 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <Clock className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="text-xs font-semibold text-slate-600">No hay borradores en captura</p>
+                <p className="text-[11px] text-slate-400">
+                  Cuando comiences a armar una caja directa puedes guardarla como borrador para continuar después.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {directDrafts.map((draft) => {
+                  const itemsCount = draft.items?.length || 0;
+                  const units = (draft.items || []).reduce(
+                    (acc, it) => acc + Number(it.cantidadDespachada || it.cantidad || 0),
+                    0
+                  );
+                  const isCurrent = draft.id === currentDraftId;
+
+                  return (
+                    <div
+                      key={draft.id}
+                      onClick={() => handleLoadDraft(draft)}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 group ${
+                        isCurrent
+                          ? 'bg-blue-50/70 border-blue-300 shadow-sm'
+                          : 'bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-900 text-xs sm:text-sm">
+                            {draft.sucursalOrigen || 'Sin sucursal asignada'}
+                            {draft.areaDestino ? ` (${draft.areaDestino})` : ''}
+                          </span>
+                          {Boolean(draft.esTransferenciaInterna) && (
+                            <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                              Transferencia Interna
+                            </span>
+                          )}
+                          <span className="font-mono text-xs font-semibold text-blue-600">
+                            {draft.folio || 'Sin folio TR'}
+                          </span>
+                          {isCurrent && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700">
+                              Actualmente en edición
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-slate-500">
+                          <span>{itemsCount} productos ({units} pzas)</span>
+                          <span className="text-slate-300">&bull;</span>
+                          <span className="text-[11px] font-mono text-slate-400">
+                            {new Date(draft.fecha).toLocaleTimeString('es-MX', {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleLoadDraft(draft)}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Continuar</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteDraft(e, draft.id)}
+                          className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer"
+                          title="Eliminar borrador"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* PIE DE ACCIONES */}
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 shrink-0">
@@ -951,18 +1158,20 @@ export function DespachoDirectoModal({
           </button>
 
           {activeTab === 'captura' ? (
-            <div className="flex items-center gap-2">
-              {packedItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleSaveDraft}
-                  disabled={isSubmitting}
-                  className="px-4 py-2.5 bg-white border border-slate-200/80 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-2xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Guardar Borrador</span>
-                </button>
-              )}
+            <div key="footer-captura" className="flex items-center gap-3 animate-fade-in">
+              <div className="text-[11px] text-slate-500">
+                {savingStatus === 'saving' ? (
+                  <span className="text-blue-600 font-semibold animate-pulse flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Guardando...</span>
+                  </span>
+                ) : savingStatus === 'saved' && packedItems.length > 0 ? (
+                  <span className="text-emerald-600 font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Borrador guardado</span>
+                  </span>
+                ) : null}
+              </div>
 
               <button
                 type="button"
@@ -984,17 +1193,19 @@ export function DespachoDirectoModal({
               </button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                handleResetForm();
-                handleSwitchTab('captura');
-              }}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-2xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Nuevo Despacho</span>
-            </button>
+            <div key="footer-historial" className="animate-fade-in">
+              <button
+                type="button"
+                onClick={() => {
+                  handleResetForm();
+                  handleSwitchTab('captura');
+                }}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs rounded-2xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Nuevo Despacho</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -1027,6 +1238,14 @@ export function DespachoDirectoModal({
         onConfirm={dialog.onConfirm}
         onCancel={dialog.onCancel}
         onClose={closeDialog}
+      />
+
+      {/* MODAL PARA REGISTRAR PRODUCTO NO ENCONTRADO EN CATÁLOGO (SIN ALERTS) */}
+      <CleanProductModal
+        isOpen={isCleanModalOpen}
+        item={unregisteredCode ? { codigo: unregisteredCode, descripcion: '' } : null}
+        onClose={() => setIsCleanModalOpen(false)}
+        onSave={handleSaveUnregisteredProduct}
       />
 
     </div>

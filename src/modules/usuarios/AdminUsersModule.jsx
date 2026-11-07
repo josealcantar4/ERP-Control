@@ -26,10 +26,13 @@ import {
 import { userService } from './userService';
 import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
-import { transitionView } from '../../shared';
+import { transitionView, FloatingInput, MarqueeSearchInput } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
+  const isRootAdmin = currentUser?.username?.toLowerCase() === 'administrador';
+  const hasAdminAccess = isRootAdmin || currentUser?.roles?.includes('admin');
+
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem('erp_admin_active_tab') || 'usuarios';
   });
@@ -263,6 +266,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleDeleteUser = (user) => {
+    if (!isRootAdmin) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Acción no permitida',
+        message: 'Solo el Administrador principal tiene permisos para eliminar usuarios.',
+        variant: 'danger',
+        onConfirm: closeDialog
+      });
+      return;
+    }
     if (user.username.toLowerCase() === 'administrador') {
       setDialog({ isOpen: true, type: 'alert', title: 'Acción no permitida', message: 'El Administrador principal no se puede eliminar.', variant: 'danger', onConfirm: closeDialog });
       return;
@@ -383,6 +397,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleDeleteSede = (sede) => {
+    if (!isRootAdmin) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Acción no permitida',
+        message: 'Solo el Administrador principal tiene permisos para eliminar sedes.',
+        variant: 'danger',
+        onConfirm: closeDialog
+      });
+      return;
+    }
     const assignedUsers = usersList.filter(
       u => (u.sede || '').toLowerCase() === (sede.nombre || '').toLowerCase()
     );
@@ -475,6 +500,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleDeleteArea = (area) => {
+    if (!isRootAdmin) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        title: 'Acción no permitida',
+        message: 'Solo el Administrador principal tiene permisos para eliminar áreas.',
+        variant: 'danger',
+        onConfirm: closeDialog
+      });
+      return;
+    }
     const assignedUsers = usersList.filter(
       u => (u.area || '').toLowerCase() === (area.nombre || '').toLowerCase()
     );
@@ -516,8 +552,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       onCancel: closeDialog
     });
   };
-
-  const hasAdminAccess = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
 
   if (!hasAdminAccess) {
     return (
@@ -587,25 +621,13 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       {activeTab === 'usuarios' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
+            <div className="flex-1">
+              <MarqueeSearchInput
                 placeholder="Buscar por nombre, usuario o sede..."
                 value={searchUser}
                 onChange={(e) => setSearchUser(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                onClear={() => setSearchUser('')}
               />
-              {searchUser && (
-                <button
-                  type="button"
-                  onClick={() => setSearchUser('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
-                  title="Limpiar búsqueda"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
             </div>
             <button onClick={handleOpenCreateUser} className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer shrink-0">
               <Plus className="w-4 h-4" />
@@ -661,7 +683,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       <button onClick={() => handleOpenEditUser(user)} className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer" title="Modificar">
                         <Edit2 className="w-3.5 h-3.5" /><span className="hidden sm:inline">Modificar</span>
                       </button>
-                      {!isAdmin && (
+                      {isRootAdmin && !isAdmin && (
                         <button onClick={() => handleDeleteUser(user)} className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -721,9 +743,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       <button onClick={() => handleOpenEditSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => handleDeleteSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {isRootAdmin && (
+                        <button onClick={() => handleDeleteSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -798,9 +822,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                   <button onClick={() => handleOpenEditArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
-                  <button onClick={() => handleDeleteArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {isRootAdmin && (
+                    <button onClick={() => handleDeleteArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -940,24 +966,22 @@ function AdminUserModal({
                 <span>{formError}</span>
               </div>
             )}
+          <FloatingInput
+            label="Nombre Completo"
+            required
+            placeholder="Ej. Juan Pérez"
+            value={userForm.nombre}
+            onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })}
+          />
+
           <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre Completo *</label>
-            <input type="text" required placeholder="Ej. Juan Pérez" value={userForm.nombre} onChange={(e) => setUserForm({ ...userForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
-          </div>
-          <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Username *</label>
-            <input
-              type="text"
+            <FloatingInput
+              label="Username"
               required
               disabled={Boolean(editingUser && editingUser.username?.toLowerCase() === 'administrador')}
               placeholder="Ej. juan.patente"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-              className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500 ${
-                editingUser && editingUser.username?.toLowerCase() === 'administrador'
-                  ? 'opacity-60 cursor-not-allowed bg-slate-100'
-                  : ''
-              }`}
             />
             {editingUser && editingUser.username?.toLowerCase() === 'administrador' && (
               <span className="text-[10px] text-slate-400 mt-1 block">
@@ -966,49 +990,45 @@ function AdminUserModal({
             )}
           </div>
           
-          <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">{editingUser ? 'Modificar Contraseña' : 'Contraseña *'}</label>
-            <div className="relative">
-              <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                placeholder="Mínimo 3 caracteres"
-                value={userForm.password}
-                onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
-              />
+          <FloatingInput
+            label={editingUser ? 'Modificar Contraseña' : 'Contraseña'}
+            required
+            type={showPassword ? 'text' : 'password'}
+            placeholder="Mínimo 3 caracteres"
+            value={userForm.password}
+            onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+            icon={Key}
+            className="font-mono"
+            endAdornment={
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
-            </div>
-          </div>
+            }
+          />
 
-          <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Confirmar Contraseña *</label>
-            <div className="relative">
-              <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type={showConfirmPassword ? 'text' : 'password'}
-                required
-                placeholder="Repite la contraseña"
-                value={userForm.confirmPassword}
-                onChange={(e) => setUserForm({ ...userForm, confirmPassword: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-10 py-2.5 text-slate-900 font-mono focus:outline-none focus:border-blue-500"
-              />
+          <FloatingInput
+            label="Confirmar Contraseña"
+            required
+            type={showConfirmPassword ? 'text' : 'password'}
+            placeholder="Repite la contraseña"
+            value={userForm.confirmPassword}
+            onChange={(e) => setUserForm({ ...userForm, confirmPassword: e.target.value })}
+            icon={Key}
+            className="font-mono"
+            endAdornment={
               <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
-            </div>
-          </div>
+            }
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -1258,10 +1278,13 @@ function AdminSedeModal({
         </div>
         <form onSubmit={handleSaveSede} className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
-          <div>
-            <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre de la Sede *</label>
-            <input type="text" required placeholder="Ej. Sucursal San Jorge o Matriz Centro" value={sedeForm.nombre} onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500" />
-          </div>
+          <FloatingInput
+            label="Nombre de la Sede"
+            required
+            placeholder="Ej. Sucursal San Jorge o Matriz Centro"
+            value={sedeForm.nombre}
+            onChange={(e) => setSedeForm({ ...sedeForm, nombre: e.target.value })}
+          />
           <div>
             <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo *</label>
             <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
@@ -1431,17 +1454,13 @@ function AdminAreaModal({
         </div>
         <form onSubmit={handleSaveArea} className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Nombre del Área *</label>
-              <input
-                type="text"
-                required
-                placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
-                value={areaForm.nombre}
-                onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500"
-              />
-            </div>
+            <FloatingInput
+              label="Nombre del Área"
+              required
+              placeholder="Ej. Farmacia, Almacén Patente o Dirección General"
+              value={areaForm.nombre}
+              onChange={(e) => setAreaForm({ ...areaForm, nombre: e.target.value })}
+            />
 
             <div 
               onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}

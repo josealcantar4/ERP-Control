@@ -1,3 +1,7 @@
+/**
+ * Punto central de exportación de componentes reutilizables, modales y utilidades de la interfaz compartida.
+ */
+
 export { AppleNavbar } from './AppleNavbar';
 export { DashboardScreen } from './DashboardScreen';
 export { ModalDialog } from './ModalDialog';
@@ -16,4 +20,9 @@ export { QuantityStepper } from './QuantityStepper';
 export { DiscrepancySummaryModal } from './DiscrepancySummaryModal';
 export { FloatingInput } from './FloatingInput';
 export { MarqueeSearchInput } from './MarqueeSearchInput';
-export { playCheckSound, playNotificationSound } from '../modules/transferencias';
+export { AppSidebar } from './AppSidebar';
+export { AboutModal } from './AboutModal';
+export { themeService } from './themeService';
+export { soundSettingsService } from './soundSettingsService';
+export { userPreferencesService } from './userPreferencesService';
+export { playCheckSound, playNotificationSound, playOrderSuccessSound, playSuccessSound } from '../modules/transferencias';

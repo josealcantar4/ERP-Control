@@ -1,3 +1,7 @@
+/**
+ * Control de incremento y decremento de cantidades numéricas con validación de rangos.
+ */
+
 import React from 'react';
 import { Minus, Plus, Trash2 } from 'lucide-react';
 

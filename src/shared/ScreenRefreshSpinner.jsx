@@ -1,3 +1,7 @@
+/**
+ * Indicador visual de carga y refresco de pantalla durante la actualización de datos locales.
+ */
+
 import React from 'react';
 import { createPortal } from 'react-dom';
 

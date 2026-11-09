@@ -1,10 +1,14 @@
+/**
+ * Componente genérico para diálogos modales de alerta, éxito y confirmación de acciones críticas.
+ */
+
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, HelpCircle, X, Info } from 'lucide-react';
 import { useModalAnimation } from '../hooks';
 import { AutoScrollInput } from './AutoScrollInput';
 import { FloatingInput } from './FloatingInput';
-
+import { playSuccessSound } from '../modules/transferencias';
 
 export function ModalDialog({
   isOpen,
@@ -44,6 +48,12 @@ export function ModalDialog({
       }
     }
   });
+
+  React.useEffect(() => {
+    if (isOpen && variant === 'success') {
+      playSuccessSound();
+    }
+  }, [isOpen, variant]);
 
   if (!shouldRender) return null;
 

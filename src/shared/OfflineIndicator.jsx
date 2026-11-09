@@ -1,3 +1,7 @@
+/**
+ * Indicador visual que alerta al usuario cuando el dispositivo no tiene conexión a internet y opera en modo offline.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { WifiOff, Wifi, X } from 'lucide-react';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';

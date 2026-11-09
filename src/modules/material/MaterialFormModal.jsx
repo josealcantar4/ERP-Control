@@ -1,8 +1,12 @@
+/**
+ * Modal con formulario para registrar una nueva entrega o préstamo de material con especificación de responsable y vigencia.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Calendar, User, Package, Check, AlertCircle, PlusCircle, Building2, Tag, Minus, Plus } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
-import { FloatingInput } from '../../shared';
+import { FloatingInput, playSuccessSound } from '../../shared';
 
 export function MaterialFormModal({
   isOpen,
@@ -73,7 +77,6 @@ export function MaterialFormModal({
     }
   }, [isOpen, editingItem, tipos, personalList, areasList]);
 
-  // Si cambia la persona seleccionada, auto-asignar su área si la tiene guardada
   const handlePersonalChange = (selectedPersonName) => {
     const found = personalList.find(p => p.nombre === selectedPersonName);
     setFormData(prev => ({
@@ -119,6 +122,7 @@ export function MaterialFormModal({
     try {
       setIsSubmitting(true);
       await onSave(formData);
+      playSuccessSound();
       onClose();
     } catch (err) {
       setErrorMsg(err.message || 'Error al guardar la entrega de material.');
@@ -137,20 +141,19 @@ export function MaterialFormModal({
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
+        className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
       >
         
-        {/* ENCABEZADO */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 rounded-2xl bg-amber-50 dark:bg-transparent text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-sm dark:border dark:border-amber-500/30">
               <Package className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 leading-tight">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 leading-tight">
                 {editingItem ? 'Editar Entrega de Material' : 'Registrar Material Brindado'}
               </h3>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Control de herramientas, papelería y equipo asignado al personal
               </p>
             </div>
@@ -158,14 +161,15 @@ export function MaterialFormModal({
           <button
             type="button"
             onClick={handleClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* CONTENIDO SCROLLEABLE */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs font-sans">
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col overflow-hidden text-xs font-sans">
+          
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4 overscroll-contain">
           
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200/80 rounded-2xl text-red-700 flex items-start gap-2.5 animate-fade-in">
@@ -174,7 +178,6 @@ export function MaterialFormModal({
             </div>
           )}
 
-          {/* 1. TIPO DE CONTROL */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="font-semibold text-slate-700 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
@@ -204,7 +207,6 @@ export function MaterialFormModal({
             </select>
           </div>
 
-          {/* 2. PERSONAL RECEPTOR Y ÁREA */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -219,7 +221,7 @@ export function MaterialFormModal({
                     className="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
                   >
                     <PlusCircle className="w-3 h-3" />
-                    <span>+ Persona</span>
+                    <span>Persona</span>
                   </button>
                 )}
               </div>
@@ -265,7 +267,6 @@ export function MaterialFormModal({
             </div>
           </div>
 
-          {/* 3. DESCRIPCIÓN DEL MATERIAL Y CANTIDAD */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
               <FloatingInput
@@ -278,7 +279,7 @@ export function MaterialFormModal({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] mb-1">
                 Cantidad *
               </label>
               <div className="flex items-center gap-1.5">
@@ -290,17 +291,17 @@ export function MaterialFormModal({
                     setCantidadRaw(String(next));
                   }}
                   disabled={formData.cantidad <= 1}
-                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-colors cursor-pointer shrink-0 border border-transparent dark:border-slate-700"
                 >
                   <Minus className="w-3.5 h-3.5" />
                 </button>
                 <input
-                  type="number"
-                  min="1"
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={cantidadRaw}
                   onChange={(e) => {
-                    const raw = e.target.value;
+                    const raw = e.target.value.replace(/[^0-9]/g, '');
                     setCantidadRaw(raw);
                     const parsed = parseInt(raw, 10);
                     if (!isNaN(parsed) && parsed >= 1) {
@@ -313,7 +314,7 @@ export function MaterialFormModal({
                     setFormData({ ...formData, cantidad: valid });
                     setCantidadRaw(String(valid));
                   }}
-                  className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs text-center focus:outline-none focus:bg-white focus:border-blue-500 font-mono font-bold"
+                  className="flex-1 min-w-0 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3.5 py-2.5 text-slate-900 dark:text-slate-100 text-sm text-center focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-500 font-mono font-bold"
                 />
                 <button
                   type="button"
@@ -322,7 +323,7 @@ export function MaterialFormModal({
                     setFormData({ ...formData, cantidad: next });
                     setCantidadRaw(String(next));
                   }}
-                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-colors cursor-pointer shrink-0 border border-transparent dark:border-slate-700"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
@@ -330,9 +331,8 @@ export function MaterialFormModal({
             </div>
           </div>
 
-          {/* 4. FECHA DE ENTREGA */}
           <div>
-            <label className="font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1 flex items-center gap-1.5">
+            <label className="font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] mb-1 flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-slate-500" />
               Fecha de Entrega *
             </label>
@@ -340,32 +340,31 @@ export function MaterialFormModal({
               type="date"
               value={formData.fechaEntrega}
               onChange={(e) => setFormData({ ...formData, fechaEntrega: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500 font-mono"
+              className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3.5 py-2.5 text-slate-900 dark:text-slate-100 text-xs focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-500 font-mono"
             />
           </div>
 
-          {/* 5. FECHA DE REEMPLAZO OPCIONAL CON CHECKBOX */}
-          <div className="bg-amber-50/70 border border-amber-200/70 rounded-2xl p-3.5 space-y-3 transition-all">
+          <div className="bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-3.5 space-y-3 transition-all">
             <label className="flex items-start gap-3 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={formData.requiereReemplazo}
                 onChange={(e) => setFormData({ ...formData, requiereReemplazo: e.target.checked })}
-                className="mt-0.5 w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 cursor-pointer"
+                className="mt-0.5 w-4 h-4 text-blue-600 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 cursor-pointer"
               />
               <div>
-                <span className="font-bold text-amber-950 block text-xs">
+                <span className="font-bold text-slate-800 dark:text-white block text-xs">
                   Programar fecha de reemplazo o revisión periódica
                 </span>
-                <span className="text-[11px] text-amber-700 block leading-tight mt-0.5">
+                <span className="text-[11px] text-slate-500 dark:text-slate-300 block leading-tight mt-0.5">
                   El sistema generará alertas y notificaciones automáticas cuando se acerque o venza la fecha.
                 </span>
               </div>
             </label>
 
             {formData.requiereReemplazo && (
-              <div className="pt-2 border-t border-amber-200/60 animate-fade-in space-y-1">
-                <label className="block font-semibold text-amber-900 uppercase tracking-wider text-[10px]">
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700 animate-fade-in space-y-1">
+                <label className="block font-semibold text-slate-700 dark:text-slate-200 uppercase tracking-wider text-[10px]">
                   Fecha Programada de Reemplazo / Devolución *
                 </label>
                 <input
@@ -373,22 +372,21 @@ export function MaterialFormModal({
                   required={formData.requiereReemplazo}
                   value={formData.fechaReemplazo}
                   onChange={(e) => setFormData({ ...formData, fechaReemplazo: e.target.value })}
-                  className="w-full bg-white border border-amber-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono"
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
                 />
               </div>
             )}
           </div>
 
-          {/* 6. ESTADO (EN MODO EDICIÓN) */}
           {editingItem && (
             <div>
-              <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px] mb-1">
                 Estado del Material
               </label>
               <select
                 value={formData.estado}
                 onChange={(e) => setFormData({ ...formData, estado: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 text-xs focus:outline-none focus:bg-white focus:border-blue-500"
+                className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3.5 py-2.5 text-slate-900 dark:text-slate-100 text-xs focus:outline-none focus:bg-white dark:focus:bg-slate-800 focus:border-blue-500"
               >
                 <option value="activo">Activo / En uso por el personal</option>
                 <option value="reemplazado">Reemplazado / Renovación Completada</option>
@@ -397,7 +395,6 @@ export function MaterialFormModal({
             </div>
           )}
 
-          {/* 7. NOTAS Y OBSERVACIONES */}
           <div>
             <FloatingInput
               label="Notas u Observaciones (Opcional)"
@@ -409,13 +406,14 @@ export function MaterialFormModal({
             />
           </div>
 
-          {/* BOTONES DE ACCIÓN */}
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
+          </div>
+
+          <div className="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/90 flex items-center justify-end gap-2.5 shrink-0">
             <button
               type="button"
               onClick={handleClose}
               disabled={isSubmitting}
-              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-2xl cursor-pointer transition-colors"
+              className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold rounded-2xl cursor-pointer transition-colors"
             >
               Cancelar
             </button>

@@ -1,3 +1,7 @@
+/**
+ * Modal para procesar y despachar pedidos pendientes de faltantes reportados previamente por las sucursales.
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -103,7 +107,6 @@ export function DespacharFaltantesModal({
   };
 
   const updateItemCantidad = (idx, rawVal) => {
-    // Si el usuario borra el valor con retroceso, permitimos que quede vacío en el input para que pueda teclear libremente
     if (rawVal === '') {
       setItemsState(prev =>
         prev.map(it => (it.index === idx ? { ...it, cantidadDespachada: '' } : it))
@@ -202,22 +205,21 @@ export function DespacharFaltantesModal({
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
+        className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-xl shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
       >
 
-        {/* HEADER */}
-        <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between gap-3 bg-slate-50/70 shrink-0">
+        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-start justify-between gap-3 bg-slate-50/80 dark:bg-slate-900 shrink-0">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <span className="w-8 h-8 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-4 h-4" />
               </span>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
                 Atender Reporte de Faltantes
               </h3>
             </div>
-            <p className="text-xs text-slate-500 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-              <span className="whitespace-nowrap">Sucursal: <strong className="text-slate-800">{currentSolicitud.sucursalOrigen}</strong></span>
+            <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+              <span className="whitespace-nowrap">Sucursal: <strong className="text-slate-800 dark:text-slate-200">{currentSolicitud.sucursalOrigen}</strong></span>
               <span className="whitespace-nowrap before:content-['•'] before:mr-2 before:text-slate-300">
                 Folio: <strong className="font-mono text-blue-700">{currentSolicitud.folio || formatTransferFolio(currentSolicitud)}</strong>
               </span>
@@ -228,19 +230,17 @@ export function DespacharFaltantesModal({
             type="button"
             onClick={handleClose}
             disabled={isProcessing}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* CONTENIDO SCROLLEABLE */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
-          {/* OBSERVACIÓN / MOTIVO REPORTADO POR SUCURSAL */}
           {(currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion) && (
-            <div className="p-3.5 bg-red-50/90 border border-red-200/90 rounded-2xl text-xs space-y-1">
+            <div className="p-3.5 bg-red-50/90 dark:bg-transparent border border-red-200/90 dark:border-slate-800 rounded-2xl text-xs space-y-1">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="font-bold text-red-950 flex items-center gap-1.5">
+                <span className="font-bold text-red-950 dark:text-red-400 flex items-center gap-1.5">
                   <FileText className="w-4 h-4 text-red-600 shrink-0" />
                   <span>Motivo reportado por la sucursal:</span>
                 </span>
@@ -250,21 +250,19 @@ export function DespacharFaltantesModal({
                   </span>
                 )}
               </div>
-              <p className="italic font-medium text-red-900 text-xs pl-5 leading-snug">
+              <p className="italic font-medium text-red-900 dark:text-red-300 text-xs pl-5 leading-snug">
                 &ldquo;{currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion}&rdquo;
               </p>
             </div>
           )}
 
-          {/* AVISO EXPLICATIVO */}
-          <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+          <div className="p-3.5 bg-amber-50/80 dark:bg-transparent border border-amber-200/80 dark:border-slate-800 rounded-2xl text-xs text-amber-900 dark:text-amber-400 flex items-start gap-2.5">
             <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div className="leading-relaxed">
               <strong>Gestión de faltantes:</strong> Indica qué productos se enviarán a la sucursal para cubrir el reporte y cuáles no se pudieron surtir. El historial conservará el registro del faltante original y su resolución.
             </div>
           </div>
 
-          {/* LISTA DE ÍTEMS FALTANTES */}
           <div className="space-y-2.5">
             <label className="text-xs font-bold text-slate-700 block uppercase tracking-wider">
               Productos Reportados como Faltantes ({itemsState.length})
@@ -276,11 +274,10 @@ export function DespacharFaltantesModal({
                   key={it.index}
                   className={`p-3.5 sm:p-4 rounded-2xl border transition-all space-y-2.5 ${
                     it.despachado
-                      ? 'bg-emerald-50/40 border-emerald-200'
-                      : 'bg-slate-50 border-slate-200 opacity-90'
+                      ? 'bg-emerald-50/40 dark:bg-transparent border-emerald-200 dark:border-emerald-500/30'
+                      : 'bg-slate-50 dark:bg-transparent border-slate-200 dark:border-slate-700 opacity-90'
                   }`}
                 >
-                  {/* ENCABEZADO: TÍTULO COMPLETO Y SELECTOR */}
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
                     <div className="min-w-0 flex-1">
                       <h4 className="text-sm font-bold text-slate-900 leading-snug break-words">
@@ -288,7 +285,6 @@ export function DespacharFaltantesModal({
                       </h4>
                     </div>
 
-                    {/* SELECTOR DESPACHAR / NO DESPACHAR */}
                     <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shrink-0 shadow-2xs self-start">
                       <button
                         type="button"
@@ -318,7 +314,6 @@ export function DespacharFaltantesModal({
                     </div>
                   </div>
 
-                  {/* METADATOS: CÓDIGO, RECIBIDAS Y FALTANTE (EN RENGLONES SEPARADOS) */}
                   <div className="space-y-1 text-[11px] font-mono text-slate-600">
                     <div>
                       Código: <strong className="text-slate-800">{it.codigo}</strong>
@@ -331,9 +326,8 @@ export function DespacharFaltantesModal({
                     </div>
                   </div>
 
-                  {/* Motivo de observación reportado por sucursal */}
                   {it.observacionRecepcion && (
-                    <div className="p-2.5 bg-rose-50/90 border border-rose-200/80 rounded-xl text-xs flex items-start gap-2 text-rose-950">
+                    <div className="p-2.5 bg-rose-50/90 dark:bg-transparent border border-rose-200/80 dark:border-slate-800 rounded-xl text-xs flex items-start gap-2 text-rose-950 dark:text-rose-400">
                       <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1 leading-snug">
                         <span className="font-bold text-rose-900 mr-1.5">Motivo reporte sucursal:</span>
@@ -342,9 +336,8 @@ export function DespacharFaltantesModal({
                     </div>
                   )}
 
-                  {/* Motivo original si existió en el despacho previo */}
                   {it.motivoOriginal && (
-                    <div className="p-2.5 bg-amber-50/90 border border-amber-200/80 rounded-xl text-xs flex items-start gap-2 text-amber-950">
+                    <div className="p-2.5 bg-amber-50/90 dark:bg-transparent border border-amber-200/80 dark:border-slate-800 rounded-xl text-xs flex items-start gap-2 text-amber-950 dark:text-amber-400">
                       <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1 leading-snug">
                         <span className="font-bold text-amber-900 mr-1.5">Ajuste previo despacho:</span>
@@ -353,12 +346,10 @@ export function DespacharFaltantesModal({
                     </div>
                   )}
 
-                  {/* CONTROLES CONDICIONALES SEGÚN SELECCIÓN */}
                   {it.despachado ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-100 text-xs">
                       <span className="text-emerald-900 font-semibold">Cantidad a enviar:</span>
                       <div className="flex items-center gap-2">
-                        {/* Control stepper con [ - ] input [ + ] */}
                         <div className="inline-flex items-center bg-white border border-emerald-300 rounded-xl shadow-2xs overflow-hidden">
                           <button
                             type="button"
@@ -395,7 +386,6 @@ export function DespacharFaltantesModal({
                         </span>
                       </div>
 
-                      {/* Campo de justificación opcional si envía menos de lo que faltaba */}
                       {(parseInt(it.cantidadDespachada, 10) || 1) < it.cantidadFaltanteReportada && (
                         <div className="w-full mt-2.5 pt-2 border-t border-emerald-100 flex flex-col sm:flex-row sm:items-center gap-1.5 animate-fade-in">
                           <label className="text-[11px] font-bold text-emerald-900 shrink-0 flex items-center gap-1">
@@ -431,7 +421,6 @@ export function DespacharFaltantesModal({
             </div>
           </div>
 
-          {/* FOLIO DE ENVÍO DE FALTANTES */}
           <div className="space-y-1.5 pt-1">
             <label className="text-xs font-bold text-slate-700 block">
               Folio de Transferencia / Envío de Faltantes
@@ -455,7 +444,6 @@ export function DespacharFaltantesModal({
             </p>
           </div>
 
-          {/* NOTAS / OBSERVACIONES */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 block">
               Observaciones para la Sucursal (opcional)
@@ -465,18 +453,17 @@ export function DespacharFaltantesModal({
               value={notas}
               onChange={e => setNotas(e.target.value)}
               placeholder="Ej. Se envían 2 piezas en paquete complementario sellado..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:bg-white dark:focus:bg-slate-900 focus:border-blue-500 transition-colors placeholder:text-slate-400"
             />
           </div>
         </div>
 
-        {/* FOOTER */}
-        <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between gap-3 shrink-0">
+        <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
             onClick={handleClose}
             disabled={isProcessing}
-            className="px-4 py-2.5 rounded-2xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+            className="px-4 py-2.5 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
           >
             Cancelar
           </button>

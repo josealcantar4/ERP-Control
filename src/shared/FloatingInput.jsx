@@ -1,3 +1,7 @@
+/**
+ * Campo de entrada de texto con etiqueta flotante animada y soporte para tema claro y oscuro.
+ */
+
 import React, { useState, useRef, useEffect, forwardRef } from 'react';
 
 export const FloatingInput = forwardRef(function FloatingInput(
@@ -139,7 +143,6 @@ export const FloatingInput = forwardRef(function FloatingInput(
           />
         )}
 
-        {/* Medidor invisible para calcular longitud natural del label/placeholder */}
         {!multiline && (
           <span
             ref={textMeasureRef}
@@ -150,7 +153,6 @@ export const FloatingInput = forwardRef(function FloatingInput(
           </span>
         )}
 
-        {/* Floating Label (flota arriba con borde semi-grueso al enfocar, regresa abajo si está vacío) */}
         {label && (
           <label
             htmlFor={inputId}

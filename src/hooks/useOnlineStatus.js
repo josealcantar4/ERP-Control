@@ -1,9 +1,9 @@
+/**
+ * Hook para detectar el estado de conectividad a internet en tiempo real y escuchar eventos online/offline.
+ */
+
 import { useState, useEffect } from 'react';
 
-/**
- * Custom hook to monitor online/offline network connectivity status.
- * Essential for PWAs operating in environments like pharmacies with intermittent connection.
- */
 export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true

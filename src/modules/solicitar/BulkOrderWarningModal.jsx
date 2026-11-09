@@ -1,3 +1,7 @@
+/**
+ * Modal de advertencia y confirmación cuando una solicitud de pedido supera umbrales volumétricos o de cantidad recomendados.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -74,7 +78,6 @@ export function BulkOrderWarningModal({
         style={cardStyle}
         className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
       >
-        {/* ENCABEZADO */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50/70 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-sm border border-amber-200">
@@ -90,7 +93,6 @@ export function BulkOrderWarningModal({
             </div>
           </div>
 
-          {/* TEMPORIZADOR EN VIVO */}
           <div className="shrink-0">
             {countdown > 0 ? (
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/90 text-amber-800 text-xs font-bold border border-amber-300">
@@ -106,9 +108,7 @@ export function BulkOrderWarningModal({
           </div>
         </div>
 
-        {/* CONTENIDO SCROLLABLE */}
         <div className="p-5 space-y-4 overflow-y-auto overscroll-contain text-xs text-slate-600 flex-1">
-          {/* AVISO DESCRIPTIVO */}
           <div className="p-3.5 bg-amber-50/80 border border-amber-200/90 rounded-2xl space-y-1.5">
             <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
               <Building2 className="w-4 h-4 text-amber-700 shrink-0" />
@@ -119,7 +119,6 @@ export function BulkOrderWarningModal({
             </p>
           </div>
 
-          {/* LISTA DE PRODUCTOS CON > 4 PIEZAS */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider px-1">
               <span>Productos con más de 4 piezas ({bulkItems.length})</span>
@@ -151,7 +150,6 @@ export function BulkOrderWarningModal({
             </div>
           </div>
 
-          {/* CHECKBOX DE ACUERDO */}
           <div className="pt-1">
             <label
               className={`flex items-start gap-3 p-3.5 rounded-2xl border transition-all select-none ${
@@ -189,7 +187,6 @@ export function BulkOrderWarningModal({
           </div>
         </div>
 
-        {/* PIE DE BOTONES */}
         <div className="px-5 py-3.5 border-t border-slate-100 flex items-center gap-2.5 bg-slate-50/80 shrink-0">
           <button
             type="button"

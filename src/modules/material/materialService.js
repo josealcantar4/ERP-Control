@@ -1,3 +1,7 @@
+/**
+ * Servicio de persistencia en Firestore y cálculo de notificaciones para entregas, vencimientos y reposiciones de material.
+ */
+
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
   collection,
@@ -44,9 +48,6 @@ function generateId(prefix = 'mat') {
 }
 
 export const materialService = {
-  // ==========================================
-  // 1. MATERIAL BRINDADO / ENTREGAS
-  // ==========================================
   getLocalMateriales() {
     return getLocalData(LOCAL_MATERIAL_KEY, []);
   },
@@ -103,7 +104,7 @@ export const materialService = {
       fechaEntrega: payload.fechaEntrega,
       requiereReemplazo: Boolean(payload.requiereReemplazo),
       fechaReemplazo: payload.requiereReemplazo ? payload.fechaReemplazo : null,
-      estado: payload.estado || 'activo', // 'activo' | 'reemplazado' | 'devuelto'
+      estado: payload.estado || 'activo',
       notas: payload.notas?.trim() || '',
       createdAt: new Date().toISOString(),
       createdBy: currentUser?.username || 'sistema',
@@ -183,9 +184,6 @@ export const materialService = {
     saveLocalData(LOCAL_MATERIAL_KEY, updated, 'erp_material_changed');
   },
 
-  // ==========================================
-  // 2. TIPOS DE CONTROL (Papelería, Cómputo, etc.)
-  // ==========================================
   getLocalTipos() {
     return getLocalData(LOCAL_TIPOS_KEY, DEFAULT_TIPOS);
   },
@@ -203,7 +201,6 @@ export const materialService = {
             let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             if (list.length === 0) {
               list = DEFAULT_TIPOS;
-              // Auto-sembrar en Firestore para sincronización permanente en la nube
               DEFAULT_TIPOS.forEach(t => {
                 setDoc(doc(db, 'material_tipos', t.id), {
                   ...t,
@@ -289,7 +286,6 @@ export const materialService = {
     const updated = current.map(t => (t.id === id ? updatedTipo : t)).sort((a, b) => a.nombre.localeCompare(b.nombre));
     saveLocalData(LOCAL_TIPOS_KEY, updated, 'erp_material_tipos_changed');
 
-    // Sincronizar registros de material existentes si cambió el nombre
     if (existing.nombre !== cleanNombre) {
       const materiales = this.getLocalMateriales();
       const affected = materiales.filter(m => m.tipoControl === existing.nombre);
@@ -311,9 +307,6 @@ export const materialService = {
     saveLocalData(LOCAL_TIPOS_KEY, updated.length > 0 ? updated : DEFAULT_TIPOS, 'erp_material_tipos_changed');
   },
 
-  // ==========================================
-  // 3. PERSONAL / DESTINATARIOS DE MATERIAL
-  // ==========================================
   getLocalPersonal() {
     return getLocalData(LOCAL_PERSONAL_KEY, []);
   },
@@ -395,7 +388,6 @@ export const materialService = {
     const updated = current.map(p => (p.id === id ? updatedPerson : p)).sort((a, b) => a.nombre.localeCompare(b.nombre));
     saveLocalData(LOCAL_PERSONAL_KEY, updated, 'erp_material_personal_changed');
 
-    // Sincronizar registros de material existentes si cambió el nombre o el área
     if (existing.nombre !== cleanNombre || existing.area !== updatedPerson.area) {
       const materiales = this.getLocalMateriales();
       const affected = materiales.filter(m => m.personal === existing.nombre);
@@ -420,9 +412,6 @@ export const materialService = {
     saveLocalData(LOCAL_PERSONAL_KEY, current.filter(p => p.id !== id), 'erp_material_personal_changed');
   },
 
-  // ==========================================
-  // 4. GENERADOR Y CALCULADOR DE NOTIFICACIONES
-  // ==========================================
   calculateNotifications(materiales = null) {
     const list = materiales || this.getLocalMateriales();
     const today = new Date();
@@ -435,7 +424,6 @@ export const materialService = {
         return;
       }
 
-      // Parsear fecha de reemplazo (YYYY-MM-DD)
       const [year, month, day] = item.fechaReemplazo.split('-').map(Number);
       if (!year || !month || !day) return;
 
@@ -446,7 +434,6 @@ export const materialService = {
       const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
       if (diffDays < 0) {
-        // Vencido
         notifications.push({
           id: `notif-overdue-${item.id}`,
           materialId: item.id,
@@ -459,7 +446,6 @@ export const materialService = {
           fechaReemplazo: item.fechaReemplazo
         });
       } else if (diffDays <= 7) {
-        // Próximo a vencer en los próximos 7 días
         notifications.push({
           id: `notif-soon-${item.id}`,
           materialId: item.id,
@@ -474,7 +460,6 @@ export const materialService = {
       }
     });
 
-    // Ordenar: primero las más urgentes (vencidas con más días de retraso, luego próximas)
     notifications.sort((a, b) => a.diffDays - b.diffDays);
     return notifications;
   },

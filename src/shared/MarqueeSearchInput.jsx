@@ -1,3 +1,7 @@
+/**
+ * Barra de búsqueda con soporte de texto marquesina para visualización de textos largos sin recorte.
+ */
+
 import React, { useRef, useState, useEffect } from 'react';
 import { Search, X, Loader2 } from 'lucide-react';
 
@@ -15,6 +19,7 @@ export function MarqueeSearchInput({
   disabled = false,
   autoFocus = false,
   loading = false,
+  inputRef,
   ...props
 }) {
   const containerRef = useRef(null);
@@ -33,7 +38,6 @@ export function MarqueeSearchInput({
 
     const checkOverflow = () => {
       if (containerRef.current && textMeasureRef.current) {
-        // Espacio horizontal libre dentro del input restando icono y botón de limpiar (solo si hay valor)
         const iconPadding = Icon ? 38 : 16;
         const clearPadding = onClear && value ? 36 : 16;
         const availableWidth = containerRef.current.clientWidth - iconPadding - clearPadding;
@@ -65,7 +69,6 @@ export function MarqueeSearchInput({
       document.fonts.ready.then(checkOverflow).catch(() => {});
     }
 
-    // Verificaciones diferidas para asegurar layout tras View Transitions y animaciones
     const t1 = setTimeout(checkOverflow, 80);
     const t2 = setTimeout(checkOverflow, 320);
 
@@ -80,7 +83,6 @@ export function MarqueeSearchInput({
     };
   }, [textToDisplay, Icon, onClear, value]);
 
-  // Duración suave proporcional a la distancia del overflow
   const duration = Math.max(3.8, Math.round(distance / 22) + 2);
   const showMarquee = !hasValue && !isFocused && textToDisplay && isOverflowing && distance > 0;
   const animKey = Math.round(distance);
@@ -94,6 +96,7 @@ export function MarqueeSearchInput({
       )}
 
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={onChange}
@@ -120,7 +123,6 @@ export function MarqueeSearchInput({
         {...props}
       />
 
-      {/* Etiqueta Flotante cuando se proporciona prop 'label' */}
       {label && isFloating && (
         <label
           className={`absolute left-3.5 top-0 -translate-y-1/2 bg-white px-1.5 text-[10px] font-bold rounded-md z-10 pointer-events-none select-none transition-all duration-200 ${
@@ -131,7 +133,6 @@ export function MarqueeSearchInput({
         </label>
       )}
 
-      {/* Medidor invisible para calcular longitud natural del texto */}
       <span
         ref={textMeasureRef}
         aria-hidden="true"
@@ -140,7 +141,6 @@ export function MarqueeSearchInput({
         {textToDisplay}
       </span>
 
-      {/* Texto animado tipo Marquesina (cuando no cabe en pantalla y no está enfocado) */}
       {showMarquee ? (
         <div
           className={`absolute top-1/2 -translate-y-1/2 pointer-events-none overflow-hidden select-none z-10 ${
@@ -188,6 +188,7 @@ export function MarqueeSearchInput({
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={onClear}
           className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer z-10"
           title="Limpiar campo"

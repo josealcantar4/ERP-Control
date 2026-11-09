@@ -1,3 +1,7 @@
+/**
+ * Componente para sugerir y facilitar la instalación de la aplicación como Progressive Web App (PWA).
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Download } from 'lucide-react';
 import { ModalDialog } from './ModalDialog';

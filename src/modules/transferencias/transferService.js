@@ -1,8 +1,13 @@
+/**
+ * Servicio central de transferencias que gestiona creación, actualización de estados, discrepancias, alertas y sincronización con Firestore.
+ */
+
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
   collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs
 } from 'firebase/firestore';
 import { catalogService } from '../catalogo/catalogService';
+import { soundSettingsService } from '../../shared/soundSettingsService';
 
 const LOCAL_STORAGE_KEY = 'erp_control_solicitudes';
 const DELETED_SOLICITUDES_STORAGE_KEY = 'erp_deleted_solicitudes_ids';
@@ -48,7 +53,6 @@ let cachedSolicitudesList = null;
 let cachedActiveUser = null;
 const knownDocStates = new Map();
 
-// Jerarquía de avance de estados de una transferencia
 const STATUS_WEIGHT = {
   'borrador': 1,
   'enviada': 2,
@@ -60,8 +64,6 @@ const STATUS_WEIGHT = {
   'cerrada_con_faltantes': 8
 };
 
-// Sanitizador estricto para Firebase Firestore
-// Convierte a JSON plano eliminando valores undefined para evitar errores de SDK
 function cleanForFirestore(data) {
   if (data === undefined || data === null) return null;
   return JSON.parse(JSON.stringify(data, (key, value) => {
@@ -79,7 +81,6 @@ function getLocalSolicitudes() {
     try {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
-        // Excluir automáticamente cualquier borrador sin productos ("borrador basura") y los eliminados
         const clean = list.filter(s => !deletedIds.has(s.id) && !(s.estado === 'borrador' && (!s.items || s.items.length === 0)));
         cachedSolicitudesList = clean;
         return clean;
@@ -94,7 +95,6 @@ function getLocalSolicitudes() {
 
 function saveLocalSolicitudes(list) {
   const deletedIds = getDeletedSolicitudesIds();
-  // Asegurar que nunca se persistan en el almacenamiento local borradores vacíos ni eliminados
   const cleanList = (list || []).filter(s => !deletedIds.has(s.id) && !(s.estado === 'borrador' && (!s.items || s.items.length === 0)));
   cachedSolicitudesList = cleanList;
   localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cleanList));
@@ -108,17 +108,15 @@ function saveLocalSolicitudes(list) {
   });
 }
 
-// ============================================================================
-// MOTOR DE AUDIO Y NOTIFICACIONES MULTIPLATAFORMA (DESKTOP + MÓVIL PWA)
-// Resuelve las restricciones de Autoplay en iOS WebKit y Android Chrome mediante
-// Web Audio API buffer precargado + desbloqueo síncrono por gesto del usuario.
-// ============================================================================
 let sharedAudioCtx = null;
 let notificationAudioBuffer = null;
 let html5NotificationAudio = null;
 let checkAudioBuffer = null;
 let html5CheckAudio = null;
+let orderSuccessAudioBuffer = null;
+let html5OrderSuccessAudio = null;
 let isAudioEngineUnlocked = false;
+let lastSuccessSoundTime = 0;
 
 function getSharedAudioContext() {
   if (!sharedAudioCtx && typeof window !== 'undefined') {
@@ -146,7 +144,14 @@ function getHtml5CheckAudio() {
   return html5CheckAudio;
 }
 
-// Cargar y decodificar el MP3 de notificación en memoria de forma asíncrona
+function getHtml5OrderSuccessAudio() {
+  if (!html5OrderSuccessAudio && typeof Audio !== 'undefined') {
+    html5OrderSuccessAudio = new Audio('/order-success.mp3');
+    html5OrderSuccessAudio.preload = 'auto';
+  }
+  return html5OrderSuccessAudio;
+}
+
 async function preloadNotificationBuffer() {
   if (notificationAudioBuffer) return notificationAudioBuffer;
   try {
@@ -158,12 +163,10 @@ async function preloadNotificationBuffer() {
     notificationAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
     return notificationAudioBuffer;
   } catch (_err) {
-    // Si decodeAudioData falla inicialmente porque ctx está suspendido, se reintentará con el primer gesto
     return null;
   }
 }
 
-// Cargar y decodificar el MP3 de marcado/check en memoria RAM
 async function preloadCheckBuffer() {
   if (checkAudioBuffer) return checkAudioBuffer;
   try {
@@ -179,7 +182,21 @@ async function preloadCheckBuffer() {
   }
 }
 
-// Desbloqueo universal de audio para navegadores móviles (iOS Safari / Android Chrome)
+async function preloadOrderSuccessBuffer() {
+  if (orderSuccessAudioBuffer) return orderSuccessAudioBuffer;
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return null;
+    const response = await fetch('/order-success.mp3');
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    orderSuccessAudioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return orderSuccessAudioBuffer;
+  } catch (_err) {
+    return null;
+  }
+}
+
 export function unlockAudioEngine() {
   if (isAudioEngineUnlocked) return;
 
@@ -190,8 +207,6 @@ export function unlockAudioEngine() {
         ctx.resume().catch(() => {});
       }
 
-      // Micro-reproducción silenciosa de Web Audio para desbloquear el subsistema en iOS y Android
-      // 1 muestra vacía a 22050Hz = 0.00004s de silencio absoluto (sin reproducir ningún archivo ni sonido audible)
       const silentBuf = ctx.createBuffer(1, 1, 22050);
       const src = ctx.createBufferSource();
       src.buffer = silentBuf;
@@ -200,23 +215,23 @@ export function unlockAudioEngine() {
     }
   } catch (_e) {}
 
-  // Si los buffers no se habían cargado, precargarlos en memoria RAM de forma silenciosa
   if (!notificationAudioBuffer) {
     preloadNotificationBuffer();
   }
   if (!checkAudioBuffer) {
     preloadCheckBuffer();
   }
+  if (!orderSuccessAudioBuffer) {
+    preloadOrderSuccessBuffer();
+  }
 
   isAudioEngineUnlocked = true;
 }
 
-// Escuchar el PRIMER gesto habitual en móviles y desktop para autorizar el AudioContext
 if (typeof window !== 'undefined') {
   const gestureEvents = ['touchstart', 'pointerdown', 'click', 'keydown'];
   const handleUserGesture = () => {
     unlockAudioEngine();
-    // Remover los listeners inmediatamente después del primer gesto para que no se ejecute en cada toque
     gestureEvents.forEach((evt) => {
       window.removeEventListener(evt, handleUserGesture);
     });
@@ -226,7 +241,6 @@ if (typeof window !== 'undefined') {
     window.addEventListener(evt, handleUserGesture, { passive: true });
   });
 
-  // Cuando la app vuelve a primer plano tras estar minimizada o con pantalla bloqueada
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       const ctx = getSharedAudioContext();
@@ -236,7 +250,6 @@ if (typeof window !== 'undefined') {
     }
   });
 
-  // Iniciar precarga de red al montar el script
   setTimeout(() => {
     preloadNotificationBuffer();
     preloadCheckBuffer();
@@ -265,15 +278,12 @@ function playCheckChime() {
   } catch (_e) {}
 }
 
-/**
- * Reproduce el sonido de confirmación al marcar/seleccionar un elemento en listas
- * (despacho, surtido, recepción física de caja, etc.).
- * Implementado con Web Audio API buffer decodificado en RAM (0ms de latencia, polifónico).
- */
 export function playCheckSound() {
+  if (!soundSettingsService.canPlayCheck()) {
+    return;
+  }
   let playedSuccessfully = false;
 
-  // 1. Web Audio API con buffer en RAM (latencia 0ms, polifónico, sin cortes)
   try {
     const ctx = getSharedAudioContext();
     if (ctx) {
@@ -308,7 +318,6 @@ export function playCheckSound() {
     console.warn('[Audio] Error al reproducir buffer check:', err);
   }
 
-  // 2. Elemento HTML5 Audio como refuerzo/fallback
   if (!playedSuccessfully) {
     try {
       const audio = getHtml5CheckAudio();
@@ -327,11 +336,76 @@ export function playCheckSound() {
     }
   }
 
-  // 3. Fallback sintetizado si ambos fallan
   if (!playedSuccessfully) {
     playCheckChime();
   }
 }
+
+export function playOrderSuccessSound() {
+  if (!soundSettingsService.canPlaySuccess()) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastSuccessSoundTime < 600) {
+    return;
+  }
+  lastSuccessSoundTime = now;
+
+  let playedSuccessfully = false;
+
+  try {
+    const ctx = getSharedAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      if (orderSuccessAudioBuffer) {
+        const src = ctx.createBufferSource();
+        src.buffer = orderSuccessAudioBuffer;
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        src.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        src.start(0);
+        playedSuccessfully = true;
+      } else {
+        preloadOrderSuccessBuffer().then((buf) => {
+          if (buf) {
+            const currentCtx = getSharedAudioContext();
+            if (currentCtx) {
+              const s = currentCtx.createBufferSource();
+              s.buffer = buf;
+              const g = currentCtx.createGain();
+              g.gain.setValueAtTime(1.0, currentCtx.currentTime);
+              s.connect(g);
+              g.connect(currentCtx.destination);
+              s.start(0);
+            }
+          }
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[Audio] Error al reproducir buffer order-success:', err);
+  }
+
+  if (!playedSuccessfully) {
+    try {
+      const audio = getHtml5OrderSuccessAudio();
+      if (audio) {
+        audio.currentTime = 0;
+        const p = audio.play();
+        if (p && p.catch) {
+          p.catch(() => {});
+        }
+        playedSuccessfully = true;
+      }
+    } catch (_e) {}
+  }
+}
+
+export const playSuccessSound = playOrderSuccessSound;
 
 function playNotificationChime() {
   try {
@@ -369,7 +443,6 @@ function playNotificationChime() {
 export function playNotificationSound() {
   let playedSuccessfully = false;
 
-  // 1. Web Audio API con buffer decodificado en RAM (0 latencia, desbloqueado en móvil)
   try {
     const ctx = getSharedAudioContext();
     if (ctx) {
@@ -401,7 +474,6 @@ export function playNotificationSound() {
     console.warn('[Audio] Error al reproducir buffer Web Audio:', err);
   }
 
-  // 2. Elemento HTML5 Audio (refuerzo o fallback si Web Audio buffer aún no estaba cargado)
   if (!playedSuccessfully) {
     try {
       const audio = getHtml5Audio();
@@ -420,7 +492,6 @@ export function playNotificationSound() {
     }
   }
 
-  // 3. Fallback sintetizador de chimes en caso extremo
   if (!playedSuccessfully) {
     playNotificationChime();
   }
@@ -435,8 +506,6 @@ function showNotification(title, body) {
   }
 
   if ('Notification' in window && Notification.permission === 'granted') {
-    // En navegadores móviles (Android Chrome), 'new Notification()' lanza Illegal Constructor.
-    // Se debe invocar a través del ServiceWorkerRegistration activo.
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.ready
         .then(reg => {
@@ -464,10 +533,6 @@ function showNotification(title, body) {
   }
 }
 
-// ============================================================================
-// GESTOR SINGLETON DE NOTIFICACIONES Y SUSCRIPCIÓN EN TIEMPO REAL
-// Previene repetición de notificaciones al cambiar de módulo o recargar.
-// ============================================================================
 const NOTIFIED_STORAGE_KEY = 'erp_notified_event_keys';
 const DISMISSED_NOTIFS_STORAGE_KEY = 'erp_dismissed_notifications';
 
@@ -484,7 +549,7 @@ export function dismissNotification(notifId) {
   try {
     const set = getDismissedNotifications();
     set.add(notifId);
-    const arr = Array.from(set).slice(-500); // Mantener un máximo de 500 llaves recientes
+    const arr = Array.from(set).slice(-500);
     localStorage.setItem(DISMISSED_NOTIFS_STORAGE_KEY, JSON.stringify(arr));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('erp_notifications_dismissed', { detail: { notifId } }));
@@ -519,7 +584,7 @@ function markEventAsNotified(key) {
   try {
     const keys = getNotifiedEventKeys();
     keys.add(key);
-    const arr = Array.from(keys).slice(-400); // Mantener un máximo de 400 llaves recientes
+    const arr = Array.from(keys).slice(-400);
     localStorage.setItem(NOTIFIED_STORAGE_KEY, JSON.stringify(arr));
   } catch (_) {}
 }
@@ -528,9 +593,6 @@ function hasEventBeenNotified(key) {
   return getNotifiedEventKeys().has(key);
 }
 
-// ============================================================================
-// REGLAS UNIFICADAS DE PRIVACIDAD, FILTRADO Y PARTICIPANTES (SEDES Y ÁREAS)
-// ============================================================================
 export function isAreaExcludedFromTransfers(areaName) {
   if (!areaName) return false;
   try {
@@ -562,14 +624,12 @@ export function getTransferParticipants(transfer) {
   const isDirect = Boolean(transfer.esDespachoDirecto || transfer.sinSolicitud);
 
   if (isDirect) {
-    // En despacho directo: la sede y área receptora representan el destino físico de la entrega.
     const recipientSede = (transfer.sucursalReceptora || transfer.sucursalOrigen || '').trim();
     const recipientArea = (transfer.areaReceptora !== undefined && transfer.areaReceptora !== null
       ? transfer.areaReceptora
       : (transfer.areaOrigen || '')).trim();
     const recipientUser = (transfer.usuarioDestino || '').trim();
 
-    // La sede y área despachadora representan el origen que surtió los productos.
     const dispatchSede = (transfer.sucursalDespachadora || transfer.sucursalDestino || '').trim();
     const dispatchArea = (transfer.areaDespachadora !== undefined && transfer.areaDespachadora !== null
       ? transfer.areaDespachadora
@@ -586,9 +646,6 @@ export function getTransferParticipants(transfer) {
       isDirect: true
     };
   } else {
-    // En transferencia estándar (por solicitud previa):
-    // Origen = quien solicitó y ahora recibirá la caja.
-    // Destino = quien despachó el pedido.
     const recipientSede = (transfer.sucursalOrigen || '').trim();
     const recipientArea = (transfer.areaOrigen || '').trim();
     const recipientUser = (transfer.usuarioSolicitante || '').trim();
@@ -614,15 +671,12 @@ export function canUserViewInSolicitar(transfer, currentUser) {
   const username = (currentUser.username || '').toLowerCase().trim();
   const isRootAdmin = username === 'administrador';
 
-  // 1. Usuarios excluidos o en áreas administrativas no ven solicitudes operativas
   if (currentUser.excluirDestinatario) return false;
   if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) return false;
 
-  // 2. Requiere rol de solicitar
   const uRoles = currentUser.roles || [];
   if (!uRoles.includes('solicitar') && !isRootAdmin) return false;
 
-  // Despachos directos no se listan en el historial de solicitudes enviadas (se reciben en Recibir)
   if (transfer.esDespachoDirecto || transfer.sinSolicitud) return false;
 
   if (transfer.usuarioSolicitante && transfer.usuarioSolicitante.toLowerCase() === username) {
@@ -658,12 +712,10 @@ export function canUserDispatch(transfer, currentUser) {
   const username = (currentUser.username || '').toLowerCase().trim();
   const isRootAdmin = username === 'administrador';
 
-  // 1. Si el área del usuario está excluida de transferencias, jamás despacha
   if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) {
     return false;
   }
 
-  // 2. Debe contar con rol operativo de 'despachar' (el rol 'admin' es solo para cuentas/sedes)
   const uRoles = currentUser.roles || [];
   if (!uRoles.includes('despachar') && !isRootAdmin) return false;
 
@@ -713,12 +765,10 @@ export function canUserReceive(transfer, currentUser) {
     return false;
   }
 
-  // 1. Si el usuario está excluido como destinatario, JAMÁS recibe pedidos ni alertas de recepción
   if (currentUser.excluirDestinatario) {
     return false;
   }
 
-  // 2. Si el área del usuario está marcada como excluida de transferencias (ej. administrativa), tampoco recibe
   if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) {
     return false;
   }
@@ -727,7 +777,6 @@ export function canUserReceive(transfer, currentUser) {
   const isRootAdmin = username === 'administrador';
   const uRoles = currentUser.roles || [];
 
-  // 3. Debe contar con rol operativo de 'solicitar' o 'recibir' (el rol 'admin' es solo para cuentas/sedes)
   const hasReceiveRole = uRoles.includes('solicitar') || uRoles.includes('recibir');
   if (!hasReceiveRole && !isRootAdmin) {
     return false;
@@ -740,20 +789,16 @@ export function canUserReceive(transfer, currentUser) {
   const rSede = recipientSede.toLowerCase();
   const rArea = recipientArea.toLowerCase();
 
-  // 4. Si el pedido fue dirigido a un usuario específico y es el actual
   if (recipientUser && recipientUser.toLowerCase() === username) {
     return true;
   }
 
-  // 5. Coincidencia de Sede Receptora
   if (!userSede || rSede !== userSede) {
     if (isRootAdmin && !userSede) return true;
     return false;
   }
 
-  // 6. Coincidencia de Sub-Área Receptora
   if (rArea) {
-    // Si la transferencia va a un área específica (ej. "Farmacia"):
     if (!userArea) {
       if (isRootAdmin) return true;
       return false;
@@ -761,8 +806,6 @@ export function canUserReceive(transfer, currentUser) {
     return rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea);
   }
 
-  // 7. Si la transferencia no tiene sub-área específica (va a toda la sucursal general / punto directo):
-  // Cualquier usuario con rol en esa sucursal (no excluido) puede recibirla.
   return true;
 }
 
@@ -785,19 +828,16 @@ function ensureGlobalSolicitudesSubscription() {
     globalSolicitudesUnsub = onSnapshot(
       q,
       (snap) => {
-        // 1. Carga inicial: pre-sembrar todos los estados de órdenes existentes como ya conocidos
         if (isInitialSolicitudesLoad) {
           snap.docs.forEach(d => {
             const data = d.data();
             if (data && data.estado) {
               knownDocStates.set(d.id, data.estado);
-              // Pre-sembrar para que NUNCA suene o notifique pedidos que ya existían previamente
               markEventAsNotified(`solicitud_${d.id}_${data.estado}`);
             }
           });
           isInitialSolicitudesLoad = false;
         } else {
-          // 2. Evaluador de eventos en vivo posteriores a la carga inicial
           const activeUser = getActiveUserForNotifications();
           const uName = (activeUser.username || '').toLowerCase();
 
@@ -810,21 +850,19 @@ function ensureGlobalSolicitudesSubscription() {
               const prevStatus = knownDocStates.get(docId);
               knownDocStates.set(docId, data.estado);
 
-              // Si es modificación pero el estado no cambió, ignorar para evitar duplicados
               if (change.type === 'modified' && prevStatus === data.estado) {
                 return;
               }
 
               const notifKey = `solicitud_${docId}_${data.estado}`;
               if (hasEventBeenNotified(notifKey)) {
-                return; // Ya se alertó este evento previamente en este dispositivo
+                return;
               }
 
               const folioTxt = data.folio || 'Sin Folio';
               const solUser = (data.usuarioSolicitante || '').toLowerCase();
               const { recipientSede, recipientArea, dispatchSede, dispatchArea, isDirect } = getTransferParticipants(data);
 
-              // 1. Si entra una solicitud nueva, alertar a los despachadores de la sede/área destino
               if (data.estado === 'enviada' || data.estado === 'en_despacho') {
                 const isForMe = canUserDispatch(data, activeUser) && solUser !== uName;
 
@@ -838,7 +876,6 @@ function ensureGlobalSolicitudesSubscription() {
                 }
               }
 
-              // 2. Si se despacha la caja, alertar al solicitante / área origen
               if (data.estado === 'completada') {
                 const isForMe = canUserReceive(data, activeUser) && (data.usuarioDespacho || '').toLowerCase() !== uName;
 
@@ -854,7 +891,6 @@ function ensureGlobalSolicitudesSubscription() {
                 }
               }
 
-              // 3. Si hay faltantes, alertar al área que despachó
               if (data.estado === 'recibida_incompleta') {
                 const isForMe = canUserDispatch(data, activeUser);
 
@@ -867,7 +903,6 @@ function ensureGlobalSolicitudesSubscription() {
                 }
               }
 
-              // 4. Si se re-despachan los faltantes, alertar al solicitante / área origen
               if (data.estado === 'faltantes_despachados') {
                 const isForMe = canUserReceive(data, activeUser);
 
@@ -877,7 +912,6 @@ function ensureGlobalSolicitudesSubscription() {
                 }
               }
 
-              // 5. Si Sucursal confirma recepción final con faltantes resueltos o cerrada con faltantes, alertar a despachador
               if ((data.estado === 'recibida' || data.estado === 'cerrada_con_faltantes') && (data.reporteFaltantes?.length > 0 || data.resolucionFaltantes)) {
                 const isForMe = canUserDispatch(data, activeUser);
 
@@ -903,7 +937,6 @@ function ensureGlobalSolicitudesSubscription() {
         const emptyDraftIds = [];
 
         for (const item of rawItems) {
-          // Si el ID está en la lista de eliminados, ignorarlo y forzar borrado silencioso en Firebase si aún existe
           if (deletedIds.has(item.id)) {
             if (isFirebaseConfigured) {
               deleteDoc(doc(db, 'solicitudes', item.id)).catch(() => {});
@@ -922,11 +955,9 @@ function ensureGlobalSolicitudesSubscription() {
           transferService.purgeEmptyDrafts(emptyDraftIds);
         }
 
-        // Obtener estado actual en memoria / localStorage para no perder órdenes locales más avanzadas
         const localList = getLocalSolicitudes();
         const localMap = new Map((localList || []).map(s => [s.id, s]));
 
-        // 1. Integrar elementos remotos y resolver conflictos a favor del estado más avanzado
         remoteMap.forEach((remoteItem, id) => {
           if (deletedIds.has(id)) return;
           const localItem = localMap.get(id);
@@ -938,8 +969,6 @@ function ensureGlobalSolicitudesSubscription() {
           const localWeight = STATUS_WEIGHT[localItem.estado] || 0;
           const remoteWeight = STATUS_WEIGHT[remoteItem.estado] || 0;
 
-          // Si el estado local está más avanzado (ej. el despachador acaba de enviar y Firebase aún tenía enviada),
-          // prevalece el local y se empuja a Firebase para garantizar la sincronización permanente
           if (localWeight > remoteWeight) {
             const merged = { ...remoteItem, ...localItem };
             validItems.push(merged);
@@ -948,12 +977,10 @@ function ensureGlobalSolicitudesSubscription() {
                 .catch(err => console.warn('[Firebase Auto-Sync] Error sincronizando estado avanzado local a Firestore:', err));
             }
           } else if (localWeight === remoteWeight) {
-            // Mismo estado: preservar progreso de recepción o despacho local si es más reciente
             const localRecTime = new Date(localItem?.recepcionProgreso?.updatedAt || 0).getTime();
             const remoteRecTime = new Date(remoteItem?.recepcionProgreso?.updatedAt || 0).getTime();
             const keepLocalRecepcion = Boolean(localItem?.recepcionProgreso) && localRecTime >= remoteRecTime;
 
-            // Mergear items preservando atendido / recibido / cantidadRecibida si el local está marcado
             const mergedItems = (remoteItem.items || localItem.items || []).map((rItem, idx) => {
               const lItem = localItem.items?.[idx];
               if (!lItem) return rItem;
@@ -978,11 +1005,9 @@ function ensureGlobalSolicitudesSubscription() {
           }
         });
 
-        // 2. Si hay órdenes locales que aún no existen en Firebase (creadas offline o antes del snapshot)
         localMap.forEach((localItem, id) => {
           if (deletedIds.has(id)) return;
           if (!remoteMap.has(id)) {
-            // NUNCA resucitar borradores eliminados: solo sincronizar órdenes operativas enviadas offline
             if (localItem.estado !== 'borrador') {
               validItems.push(localItem);
               if (isFirebaseConfigured) {
@@ -996,7 +1021,6 @@ function ensureGlobalSolicitudesSubscription() {
         cachedSolicitudesList = validItems;
         saveLocalSolicitudes(validItems);
 
-        // Distribuir datos a todos los escuchadores activos
         activeSolicitudesCallbacks.forEach(cb => {
           try {
             cb(validItems);
@@ -1025,7 +1049,6 @@ export const transferService = {
     return cachedSolicitudesList || getLocalSolicitudes();
   },
 
-  // Resetear suscripción (usado en logout para reiniciar de forma limpia)
   resetSolicitudesSubscription() {
     if (globalSolicitudesUnsub) {
       try {
@@ -1040,7 +1063,6 @@ export const transferService = {
     knownDocStates.clear();
   },
 
-  // Elimina de forma silenciosa un borrador vacío de Firebase y almacenamiento local
   async deleteEmptyDraft(solicitudId) {
     if (!solicitudId) return;
     markSolicitudAsDeleted(solicitudId);
@@ -1050,15 +1072,11 @@ export const transferService = {
     saveLocalSolicitudes(filtered);
 
     if (isFirebaseConfigured) {
-      try {
-        await deleteDoc(doc(db, 'solicitudes', solicitudId));
-      } catch (err) {
-        console.warn('Error eliminando borrador vacío en Firebase:', err);
-      }
+      deleteDoc(doc(db, 'solicitudes', solicitudId))
+        .catch(err => console.warn('Error eliminando borrador vacío en Firebase (offline):', err));
     }
   },
 
-  // Purgar múltiples borradores vacíos detectados
   async purgeEmptyDrafts(ids) {
     if (!ids || ids.length === 0) return;
     ids.forEach(id => markSolicitudAsDeleted(id));
@@ -1068,18 +1086,14 @@ export const transferService = {
     cachedSolicitudesList = filtered;
     saveLocalSolicitudes(filtered);
 
-    for (const id of ids) {
-      if (isFirebaseConfigured) {
-        try {
-          await deleteDoc(doc(db, 'solicitudes', id));
-        } catch (e) {
-          console.warn('Error purgando borrador basura de Firebase:', id, e);
-        }
-      }
+    if (isFirebaseConfigured) {
+      ids.forEach(id => {
+        deleteDoc(doc(db, 'solicitudes', id))
+          .catch(e => console.warn('Error purgando borrador basura de Firebase (offline):', id, e));
+      });
     }
   },
 
-  // Forzar verificación y obtención de solicitudes actualizadas desde Firebase
   async refreshSolicitudes() {
     if (isFirebaseConfigured) {
       try {
@@ -1157,7 +1171,6 @@ export const transferService = {
         localMap.forEach((localItem, id) => {
           if (deletedIds.has(id)) return;
           if (!remoteMap.has(id)) {
-            // NUNCA resucitar borradores eliminados
             if (localItem.estado !== 'borrador') {
               validItems.push(localItem);
               setDoc(doc(db, 'solicitudes', id), cleanForFirestore(localItem), { merge: true })
@@ -1181,7 +1194,6 @@ export const transferService = {
       cachedActiveUser = userParam;
     }
 
-    // 1. Entregar inmediatamente los datos actuales en caché o memoria local
     const initial = cachedSolicitudesList || getLocalSolicitudes();
     if (initial && initial.length >= 0) {
       try {
@@ -1189,13 +1201,10 @@ export const transferService = {
       } catch (_) {}
     }
 
-    // 2. Registrar este callback en el conjunto de escuchadores activos del singleton
     activeSolicitudesCallbacks.add(onUpdate);
 
-    // 3. Asegurar que la única suscripción central a Firebase esté activa
     ensureGlobalSolicitudesSubscription();
 
-    // 4. Retornar función de desuscripción limpia
     return () => {
       activeSolicitudesCallbacks.delete(onUpdate);
     };
@@ -1207,8 +1216,6 @@ export const transferService = {
   },
 
   async saveDraft(solicitud) {
-    // REGLA CRÍTICA: No guardar si no tiene al menos un producto agregado
-    // Si está vacío, se elimina de inmediato para no generar borradores basura
     if (!solicitud || !solicitud.items || solicitud.items.length === 0) {
       if (solicitud && solicitud.id) {
         await this.deleteEmptyDraft(solicitud.id);
@@ -1235,18 +1242,59 @@ export const transferService = {
       items: solicitud.items || []
     };
 
-    // Auto-registrar productos en el Catálogo Limpio de Firestore
+    const list = getLocalSolicitudes();
+    const idx = list.findIndex(s => s.id === docData.id);
+    let updated;
+    if (idx >= 0) {
+      updated = [...list];
+      updated[idx] = docData;
+    } else {
+      updated = [docData, ...list];
+    }
+    saveLocalSolicitudes(updated);
+    cachedSolicitudesList = updated;
+
     if (Array.isArray(docData.items) && docData.items.length > 0) {
-      catalogService.saveBatchToCleanCatalog(docData.items);
+      catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
     }
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true });
-      } catch (err) {
-        console.warn('Error guardando borrador en Firebase:', err);
-      }
+      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
+        .catch(err => console.warn('Borrador guardado localmente (offline):', err));
     }
+
+    return docData;
+  },
+
+  async sendSolicitud(solicitud) {
+    if (!solicitud || !solicitud.items || solicitud.items.length === 0) return null;
+
+    const solicitudId = solicitud.id || ('sol-' + Date.now());
+    const now = new Date().toISOString();
+
+    if (solicitudId) {
+      unmarkSolicitudAsDeleted(solicitudId);
+    }
+
+    const docData = {
+      ...solicitud,
+      id: solicitudId,
+      folio: solicitud.folio || '',
+      sucursalOrigen: solicitud.sucursalOrigen || '',
+      areaOrigen: solicitud.areaOrigen || '',
+      sucursalDestino: solicitud.sucursalDestino || '',
+      areaDestino: solicitud.areaDestino || '',
+      usuarioSolicitante: solicitud.usuarioSolicitante || '',
+      usuarioDestino: solicitud.usuarioDestino || '',
+      esTransferenciaInterna: Boolean(
+        solicitud.esTransferenciaInterna ||
+        (solicitud.sucursalOrigen && solicitud.sucursalDestino && solicitud.sucursalOrigen.toLowerCase() === solicitud.sucursalDestino.toLowerCase())
+      ),
+      estado: 'enviada',
+      fecha: solicitud.fecha || now,
+      fechaEnvio: now,
+      items: solicitud.items || []
+    };
 
     const list = getLocalSolicitudes();
     const idx = list.findIndex(s => s.id === docData.id);
@@ -1258,6 +1306,30 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
+    cachedSolicitudesList = updated;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updated); } catch (_) {}
+    });
+
+    undismissNotification(`tr-env-${solicitudId}`);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('erp_notifications_updated'));
+    }
+
+    if (Array.isArray(docData.items) && docData.items.length > 0) {
+      catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
+    }
+
+    playOrderSuccessSound();
+
+    if (isFirebaseConfigured) {
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(docData), { merge: true })
+        .catch(err => {
+          console.warn('[Offline Mode] Solicitud guardada localmente, se sincronizará con Firebase al reconectar:', err);
+        });
+    }
+
     return docData;
   },
 
@@ -1268,14 +1340,19 @@ export const transferService = {
     const updateData = { estado: 'enviada', fechaEnvio: new Date().toISOString() };
     const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
 
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
+    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
+    saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
 
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.error('[Firebase Sync Error] Error al enviar solicitud en Firestore:', err);
-      }
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('[Firebase Sync Error] Envío encolado localmente:', err));
     }
     return true;
   },
@@ -1299,18 +1376,18 @@ export const transferService = {
       return s;
     });
 
-    // 1. Guardar de inmediato en almacenamiento local / caché reactivo
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
 
-    // 2. Persistir directamente en Firebase
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
     if (isFirebaseConfigured && currentItems) {
-      try {
-        const target = updatedList.find(s => s.id === solicitudId);
-        const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando item atendido en Firebase:', err);
-      }
+      const target = updatedList.find(s => s.id === solicitudId);
+      const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Item atendido guardado localmente (offline):', err));
     }
     return true;
   },
@@ -1324,9 +1401,11 @@ export const transferService = {
       if (s.id === solicitudId) {
         const items = fullItems ? [...fullItems] : [...(s.items || [])];
         if (!fullItems && items[itemIndex]) {
+          const shouldAtendido = Number(cantidadDespachada) > 0 ? true : items[itemIndex].atendido;
           items[itemIndex] = {
             ...items[itemIndex],
             cantidadDespachada,
+            atendido: shouldAtendido,
             ...(motivoAjuste !== undefined ? { motivoAjusteDespacho: motivoAjuste } : {})
           };
         }
@@ -1337,18 +1416,18 @@ export const transferService = {
       return s;
     });
 
-    // 1. Inmediato en caché local
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
 
-    // 2. Persistir directamente en Firebase
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
     if (isFirebaseConfigured && currentItems) {
-      try {
-        const target = updatedList.find(s => s.id === solicitudId);
-        const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando cantidad de despacho en Firebase:', err);
-      }
+      const target = updatedList.find(s => s.id === solicitudId);
+      const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Cantidad de despacho guardada localmente (offline):', err));
     }
     return true;
   },
@@ -1364,9 +1443,8 @@ export const transferService = {
       atendido: true
     };
 
-    // Auto-registrar producto extra en el Catálogo Limpio
     if (extraItem?.codigo && extraItem?.descripcion) {
-      catalogService.saveToCleanCatalog(extraItem.codigo, extraItem.descripcion);
+      catalogService.saveToCleanCatalog(extraItem.codigo, extraItem.descripcion).catch(() => {});
     }
 
     const list = getLocalSolicitudes();
@@ -1379,13 +1457,15 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
 
     if (isFirebaseConfigured && target) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true });
-      } catch (err) {
-        console.warn('Error agregando producto extra en Firebase:', err);
-      }
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
+        .catch(err => console.warn('Producto extra guardado localmente (offline):', err));
     }
     return true;
   },
@@ -1406,13 +1486,15 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
 
     if (isFirebaseConfigured && target) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true });
-      } catch (err) {
-        console.warn('Error quitando producto extra en Firebase:', err);
-      }
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
+        .catch(err => console.warn('Producto extra eliminado localmente (offline):', err));
     }
     return true;
   },
@@ -1438,13 +1520,15 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
 
     if (isFirebaseConfigured && target) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando cantidad extra en Firebase:', err);
-      }
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
+        .catch(err => console.warn('Cantidad extra guardada localmente (offline):', err));
     }
     return true;
   },
@@ -1478,24 +1562,29 @@ export const transferService = {
       }
     }
 
-    // 1. Guardar de inmediato en almacenamiento local para respuesta instantánea en UI
     const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
     saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
 
-    // 2. Persistencia en Firebase Firestore con setDoc y merge: true (crea o actualiza de forma segura)
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
+
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-        console.log(`[Firebase Sync] Solicitud ${solicitudId} completada y sincronizada exitosamente en Firestore.`);
-      } catch (err) {
-        console.error('[Firebase Sync Error] Error completando solicitud en Firestore:', err);
-      }
+      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .then(() => {
+          console.log(`[Firebase Sync] Solicitud ${solicitudId} completada y sincronizada exitosamente en Firestore.`);
+        })
+        .catch(err => {
+          console.warn('[Firebase Sync Offline] Despacho guardado localmente, pendiente de sincronizar en Firestore:', err);
+        });
     }
     return true;
   },
 
-  // Despacho directo de productos sin haber recibido una solicitud previa
   async createDirectDispatch(dispatchData) {
     if (dispatchData.id) {
       unmarkSolicitudAsDeleted(dispatchData.id);
@@ -1534,20 +1623,6 @@ export const transferService = {
       }))
     };
 
-    // Auto-registrar productos de despacho directo en el Catálogo Limpio
-    if (Array.isArray(docData.items) && docData.items.length > 0) {
-      catalogService.saveBatchToCleanCatalog(docData.items);
-    }
-
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true });
-        console.log(`[Firebase Sync] Despacho directo ${docData.id} guardado en Firestore.`);
-      } catch (err) {
-        console.warn('Error guardando despacho directo en Firebase:', err);
-      }
-    }
-
     const list = getLocalSolicitudes();
     const idx = list.findIndex(s => s.id === docData.id);
     let updated;
@@ -1558,10 +1633,31 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
+    cachedSolicitudesList = updated;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updated); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
+
+    if (Array.isArray(docData.items) && docData.items.length > 0) {
+      catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
+    }
+
+    if (isFirebaseConfigured) {
+      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
+        .then(() => {
+          console.log(`[Firebase Sync] Despacho directo ${docData.id} guardado en Firestore.`);
+        })
+        .catch(err => {
+          console.warn('Despacho directo guardado localmente (offline):', err);
+        });
+    }
+
     return docData;
   },
 
-  // Guardar borrador en captura de un despacho directo
   async saveDirectDispatchDraft(draft) {
     if (!draft || !draft.items || draft.items.length === 0) {
       if (draft && draft.id) {
@@ -1607,17 +1703,8 @@ export const transferService = {
       }))
     };
 
-    // Auto-registrar productos del borrador en el Catálogo Limpio
     if (Array.isArray(docData.items) && docData.items.length > 0) {
       catalogService.saveBatchToCleanCatalog(docData.items);
-    }
-
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true });
-      } catch (err) {
-        console.warn('Error guardando borrador de despacho directo en Firebase:', err);
-      }
     }
 
     const list = getLocalSolicitudes();
@@ -1630,6 +1717,12 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
+
+    if (isFirebaseConfigured) {
+      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
+        .catch(err => console.warn('Error guardando borrador de despacho directo en Firebase (offline):', err));
+    }
+
     return docData;
   },
 
@@ -1637,24 +1730,18 @@ export const transferService = {
     if (!solicitudId) return;
     const updateData = { folio: folio || '' };
     
-    // 1. Inmediato en almacenamiento local
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
     saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
 
-    // 2. Persistir en Firebase
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando folio en Firebase:', err);
-      }
+      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Error actualizando folio en Firebase (offline):', err));
     }
     return true;
   },
 
-  // Guardar en tiempo real el progreso de revisión/recepción en caja física
   async updateReceivingProgress(solicitudId, progressData = {}) {
     if (!solicitudId) return false;
     const list = getLocalSolicitudes();
@@ -1699,18 +1786,13 @@ export const transferService = {
     cachedSolicitudesList = updatedList;
     saveLocalSolicitudes(updatedList);
 
-    // Persistir directamente en Firebase Firestore
     if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(updatedOrder), { merge: true });
-      } catch (err) {
-        console.warn('Error sincronizando progreso de recepción en Firebase:', err);
-      }
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(updatedOrder), { merge: true })
+        .catch(err => console.warn('Error sincronizando progreso de recepción en Firebase (offline):', err));
     }
     return true;
   },
 
-  // Finalizar recepción en sucursal
   async receiveSolicitud(solicitudId, faltantes = [], itemsActualizados = null) {
     if (!solicitudId) return false;
     const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
@@ -1732,7 +1814,15 @@ export const transferService = {
       fechaRecepcion: new Date().toISOString(),
       ...(finalItems ? { items: finalItems } : {})
     };
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
+    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
+    saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
 
     if (faltantes.length > 0) {
       undismissNotification(`tr-falt-${solicitudId}`);
@@ -1742,17 +1832,13 @@ export const transferService = {
     }
 
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error actualizando recepción en Firebase:', err);
-      }
+      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Recepción guardada localmente (offline):', err));
     }
     return true;
   },
 
-  // Finalizar recepción con reporte detallado de discrepancias (faltantes, ausencias y extras)
   async receiveWithDiscrepancies(solicitudId, discrepancyPayload = {}) {
     if (!solicitudId) return false;
     const {
@@ -1817,26 +1903,29 @@ export const transferService = {
 
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
 
-    // Des-descartar cualquier notificación previa de faltantes para que reaparezca inmediatamente en despachador
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
+
     undismissNotification(`tr-falt-${solicitudId}`);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('erp_notifications_updated'));
     }
 
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error guardando discrepancias de recepción en Firebase:', err);
-      }
+      const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Discrepancias guardadas localmente (offline):', err));
     }
     return true;
   },
 
-  // Atender y despachar reporte de faltantes desde Bodega/Matriz
   async resolveReporteFaltantes(solicitudId, resolutionData) {
     if (!solicitudId) return false;
     const hasDispatchedItems = resolutionData?.itemsResolucion?.some(
@@ -1868,24 +1957,27 @@ export const transferService = {
     }
 
     const list = getLocalSolicitudes();
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
 
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = currentSol ? { ...currentSol, ...updatePayload } : { id: solicitudId, ...updatePayload };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error guardando resolución de faltantes en Firebase:', err);
-      }
+      const fullPayload = currentSol ? { ...currentSol, ...updatePayload } : { id: solicitudId, ...updatePayload };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Resolución de faltantes guardada localmente (offline):', err));
     }
 
-    // Descartar de inmediato la notificación de faltantes/discrepancias
     dismissNotification(`tr-falt-${solicitudId}`);
 
     return true;
   },
 
-  // Finalizar recepción del re-despacho de faltantes en sucursal (o re-reportar faltantes a Bodega)
   async receiveFaltantes(solicitudId, receptionData = {}) {
     if (!solicitudId) return false;
     const itemsAunFaltantes = receptionData.itemsAunFaltantes || [];
@@ -1897,7 +1989,6 @@ export const transferService = {
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
 
-    // Actualizar items de la solicitud acumulando las piezas recibidas en este reenvío
     const updatedItems = (existing?.items || []).map(it => {
       const recItem = receptionData.itemsRecibidos?.find(r => r.codigo && it.codigo && String(r.codigo) === String(it.codigo));
       const aunFaltItem = itemsAunFaltantes.find(af => af.codigo && it.codigo && String(af.codigo) === String(it.codigo));
@@ -1921,7 +2012,6 @@ export const transferService = {
     };
 
     if (reReportToBodega) {
-      // Re-reportar faltantes a Bodega:
       const resolucionesPrevias = Array.isArray(existing?.resolucionesPrevias)
         ? [...existing.resolucionesPrevias]
         : [];
@@ -1957,7 +2047,6 @@ export const transferService = {
       };
       updatePayload.reReenvioRequerido = true;
 
-      // Quitar descarte para que la notificación de faltante reaparezca en Bodega
       undismissNotification(`tr-falt-${solicitudId}`);
       dismissNotification(`tr-falt-env-${solicitudId}`);
     } else {
@@ -1975,25 +2064,27 @@ export const transferService = {
 
     dismissNotification(`tr-comp-${solicitudId}`);
 
-    saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s));
+    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    saveLocalSolicitudes(updatedList);
+    cachedSolicitudesList = updatedList;
+
+    activeSolicitudesCallbacks.forEach(cb => {
+      try { cb(updatedList); } catch (_) {}
+    });
+
+    playOrderSuccessSound();
 
     if (isFirebaseConfigured) {
-      try {
-        const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Error guardando recepción de faltantes en Firebase:', err);
-      }
+      const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
+      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
+        .catch(err => console.warn('Recepción de faltantes guardada localmente (offline):', err));
     }
 
-    // Disparar actualización inmediata del centro de notificaciones
     window.dispatchEvent(new Event('erp_notifications_updated'));
 
     return true;
   },
 
-  // ELIMINAR BORRADOR: Permitido ÚNICAMENTE para su creador original o Administrador.
-  // ESTRICTAMENTE PROHIBIDO para solicitudes completadas o en cualquier otro estado.
   async deleteDraft(solicitudId, currentUser) {
     if (!solicitudId) throw new Error('ID de solicitud requerido.');
 
@@ -2013,7 +2104,6 @@ export const transferService = {
     }
 
     if (solicitud) {
-      // Regla crítica: Las transferencias completadas o en tránsito no se pueden eliminar jamás
       if (solicitud.estado && solicitud.estado !== 'borrador') {
         throw new Error('Está estrictamente prohibido eliminar transferencias que no sean borradores.');
       }
@@ -2032,22 +2122,16 @@ export const transferService = {
       }
     }
 
-    // 1. Marcar inmediatamente como tombstone para evitar cualquier resurrección
     markSolicitudAsDeleted(solicitudId);
 
-    // 2. Limpieza inmediata local y en caché en memoria
     const currentList = getLocalSolicitudes();
     const updatedList = currentList.filter(s => s.id !== solicitudId);
     cachedSolicitudesList = updatedList;
     saveLocalSolicitudes(updatedList);
 
-    // 3. Eliminación definitiva en Firebase Firestore
     if (isFirebaseConfigured) {
-      try {
-        await deleteDoc(doc(db, 'solicitudes', solicitudId));
-      } catch (err) {
-        console.warn('Error eliminando borrador en Firebase:', err);
-      }
+      deleteDoc(doc(db, 'solicitudes', solicitudId))
+        .catch(err => console.warn('Error eliminando borrador en Firebase (offline):', err));
     }
 
     return true;
@@ -2067,7 +2151,6 @@ export const transferService = {
       const { recipientSede, recipientArea, dispatchSede, dispatchArea, isDirect } = getTransferParticipants(s);
       const solUser = (s.usuarioSolicitante || '').toLowerCase().trim();
 
-      // 1. NOTIFICACIÓN: Solicitud recibida pendiente de atender (para Despachadores de la sede/área destino)
       if (s.estado === 'enviada' || s.estado === 'en_despacho') {
         const isForMe = canUserDispatch(s, currentUser) && solUser !== username;
 
@@ -2096,7 +2179,6 @@ export const transferService = {
         }
       }
 
-      // 2. NOTIFICACIÓN: Pedido despachado en camino (para Sucursal / Farmacia / Área origen que recibe)
       if (s.estado === 'completada') {
         const isForMyBranch = canUserReceive(s, currentUser) && (s.usuarioDespacho || '').toLowerCase() !== username;
 
@@ -2123,8 +2205,6 @@ export const transferService = {
         }
       }
 
-      // 3. NOTIFICACIÓN: Inconsistencias, faltantes o discrepancias reportadas (para Despachador de la sede que surtió)
-      // Se muestra ÚNICAMENTE si está verdaderamente pendiente de atención (no si ya fue atendido o re-despachado)
       const hasUnresolvedDiscrepancy = Boolean(
         s.estado === 'recibida_incompleta' ||
         (s.reporteFaltantes && s.reporteFaltantes.length > 0 && !s.resolucionFaltantes) ||
@@ -2175,7 +2255,6 @@ export const transferService = {
         }
       }
 
-      // 4. NOTIFICACIÓN: Faltantes re-despachados en camino (para Sucursal / Área origen)
       if (s.estado === 'faltantes_despachados') {
         const isForMyBranch = canUserReceive(s, currentUser);
 
@@ -2196,7 +2275,6 @@ export const transferService = {
         }
       }
 
-      // 5. NOTIFICACIÓN: Confirmación de recepción de faltantes entregados (para Despachador)
       if ((s.estado === 'recibida' || s.estado === 'cerrada_con_faltantes') && (s.reporteFaltantes?.length > 0 || s.resolucionFaltantes)) {
         const isForMe = canUserDispatch(s, currentUser);
 
@@ -2232,6 +2310,21 @@ export const transferService = {
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   },
 
+  async syncOfflineOrders() {
+    if (!isFirebaseConfigured) return;
+    try {
+      const localList = getLocalSolicitudes();
+      const deletedIds = getDeletedSolicitudesIds();
+      const operationalOrders = localList.filter(s => s && s.id && s.estado !== 'borrador' && !deletedIds.has(s.id));
+      for (const order of operationalOrders) {
+        setDoc(doc(db, 'solicitudes', order.id), cleanForFirestore(order), { merge: true })
+          .catch(err => console.warn('[Sync Offline] Error sincronizando orden pendiente:', order.id, err));
+      }
+    } catch (err) {
+      console.warn('[Sync Offline] Error en syncOfflineOrders:', err);
+    }
+  },
+
   canUserViewInSolicitar,
   canUserDispatch,
   canUserReceive,
@@ -2239,15 +2332,21 @@ export const transferService = {
 
   playNotificationSound,
   playCheckSound,
+  playOrderSuccessSound,
+  playSuccessSound,
   unlockAudioEngine,
   dismissNotification,
   undismissNotification,
   getDismissedNotifications
 };
 
-/**
- * Retorna el folio oficial si existe; si no, retorna la referencia basada en fecha y hora.
- */
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[ERP Control] Conexión recuperada. Sincronizando órdenes locales...');
+    transferService.syncOfflineOrders();
+  });
+}
+
 export function formatTransferFolio(solicitud) {
   if (!solicitud) return '';
   if (solicitud.folio && typeof solicitud.folio === 'string' && solicitud.folio.trim()) {

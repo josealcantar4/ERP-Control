@@ -1,3 +1,7 @@
+/**
+ * Componente delimitador de errores para capturar fallos de renderizado en React y evitar caídas totales de la interfaz.
+ */
+
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 

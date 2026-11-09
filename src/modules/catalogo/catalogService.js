@@ -1,3 +1,7 @@
+/**
+ * Servicio para la descarga, indexación por lotes en IndexedDB, caché en memoria y búsqueda rápida del catálogo central de productos.
+ */
+
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import * as XLSX from 'xlsx';
@@ -9,15 +13,15 @@ const STORE_CLEAN = 'catalogo_limpio_local';
 
 const DEFAULT_FILE_ID = '1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom';
 const STORAGE_KEY_FILE_ID = 'erp_catalog_file_id';
-const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id'; // Clave para evitar bucles de descarga
+const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id';
 const STORAGE_KEY_LAST_SYNC = 'erp_catalog_last_sync_date';
 const STORAGE_KEY_TOTAL_RECORDS = 'erp_catalog_total_records';
-const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size'; // Tamaño exacto en bytes en Drive
-const STORAGE_KEY_LAST_MODIFIED = 'erp_catalog_last_modified'; // Fecha de modificación de la versión en Drive
-const STORAGE_KEY_LAST_UPLOAD_ID = 'erp_catalog_last_upload_id'; // Upload ID único de Drive
-const STORAGE_KEY_LAST_FINGERPRINT = 'erp_catalog_last_fingerprint'; // Huella binaria ZIP determinista
-const STORAGE_KEY_EXCEL_ROWS = 'erp_catalog_excel_rows'; // Total de filas con datos en el Excel
-const STORAGE_KEY_DUPLICATES = 'erp_catalog_duplicates_count'; // Códigos duplicados detectados en el Excel
+const STORAGE_KEY_LAST_SIZE = 'erp_catalog_last_size';
+const STORAGE_KEY_LAST_MODIFIED = 'erp_catalog_last_modified';
+const STORAGE_KEY_LAST_UPLOAD_ID = 'erp_catalog_last_upload_id';
+const STORAGE_KEY_LAST_FINGERPRINT = 'erp_catalog_last_fingerprint';
+const STORAGE_KEY_EXCEL_ROWS = 'erp_catalog_excel_rows';
+const STORAGE_KEY_DUPLICATES = 'erp_catalog_duplicates_count';
 const STORAGE_KEY_CODE_VERSION = 'erp_catalog_code_version';
 const CURRENT_CODE_VERSION = 'v5_cors_safe_fingerprint';
 
@@ -31,7 +35,6 @@ function bytesToHex(arr) {
   return hex;
 }
 
-// Extrae con precisión de segundo la fecha de última edición del Excel a partir de los bytes 10-13 (MS-DOS timestamp del ZIP)
 function parseZipDateTime(bytes) {
   if (!bytes || bytes.length < 14) return null;
   if (bytes[0] !== 0x50 || bytes[1] !== 0x4B || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
@@ -55,7 +58,6 @@ function parseZipDateTime(bytes) {
   return new Date(year, month - 1, day, hours, minutes, seconds);
 }
 
-// Normalización exacta de códigos: preserva ceros a la izquierda (ej. "01", "001", "1" son distintos)
 function normalizeBarcode(raw) {
   if (raw === undefined || raw === null) return '';
   return String(raw).trim().replace(/\s+/g, '').replace(/\//g, '-');
@@ -202,7 +204,6 @@ export const catalogService = {
       return `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`;
     }
 
-    // Endpoint oficial principal con soporte CORS completo garantizado en todos los navegadores
     return `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
   },
 
@@ -229,7 +230,6 @@ export const catalogService = {
         .filter(it => it && it.codigo);
       cleanCount = firestoreItems.length;
 
-      // Mantener STORE_CLEAN en IndexedDB como reflejo exacto de Firestore
       const database = await openDB();
       await new Promise((resolve, reject) => {
         const tx = database.transaction(STORE_CLEAN, 'readwrite');
@@ -283,7 +283,6 @@ export const catalogService = {
     }
   },
 
-  // 1. VERIFICACIÓN ROBUSTA: DETECTA AUTOMÁTICAMENTE NUEVAS VERSIONES EN EL SERVIDOR CENTRAL
   async checkServerCatalogVersion() {
     try {
       const localCount = await getLocalCount(STORE_BASE);
@@ -330,7 +329,6 @@ export const catalogService = {
         if (currentFingerprint) {
           const serverIso = currentModifiedDate ? currentModifiedDate.toISOString() : null;
 
-          // 1. Detección por fecha exacta de última edición del Excel
           if (serverIso && lastModified && serverIso !== lastModified) {
             return {
               upToDate: false,
@@ -341,7 +339,6 @@ export const catalogService = {
             };
           }
 
-          // 2. Detección por cambio de huella binaria determinista (CRC de hojas, timestamp interno)
           if (lastFingerprint && currentFingerprint !== lastFingerprint) {
             return {
               upToDate: false,
@@ -353,7 +350,6 @@ export const catalogService = {
             };
           }
 
-          // 3. Si no existía línea base previa
           if (!lastFingerprint || !lastModified) {
             return {
               upToDate: false,
@@ -365,7 +361,6 @@ export const catalogService = {
         }
       }
 
-      // Si el archivo no cambió, está actualizado
       return {
         upToDate: true,
         localCount,
@@ -377,7 +372,6 @@ export const catalogService = {
     }
   },
 
-  // 2. DESCARGA Y SINCRONIZACIÓN COMPLETA POR LOTES
   async syncCatalogFromServer(onProgress) {
     memoryCache = null; 
 
@@ -497,7 +491,6 @@ export const catalogService = {
       const rawDesc = row[1];
       if (rawCode === undefined || rawCode === null || !rawDesc) continue;
 
-      // Extraer el código preservando ceros a la izquierda y evitando notación científica
       const cellAddress = XLSX.utils.encode_cell({ c: 0, r: i });
       const cell = worksheet ? worksheet[cellAddress] : null;
 
@@ -534,7 +527,6 @@ export const catalogService = {
 
     await clearAndSaveBaseCatalog(validItems, onProgress);
 
-    // Guardar metadatos precisos para detección de versiones futuras y estadísticas del Excel
     const finalSize = String(arrayBuffer.byteLength);
     localStorage.setItem(STORAGE_KEY_SYNCED_ID, this.getCatalogFileId());
     localStorage.setItem(STORAGE_KEY_LAST_SYNC, new Date().toISOString());
@@ -546,7 +538,6 @@ export const catalogService = {
     localStorage.setItem(STORAGE_KEY_DUPLICATES, String(duplicateCount));
     localStorage.setItem(STORAGE_KEY_CODE_VERSION, CURRENT_CODE_VERSION);
 
-    // Publicar versión en Firestore para que todos los usuarios conectados reciban la sincronización visible
     try {
       await setDoc(doc(db, 'catalogo_meta', 'version'), {
         fileId: this.getCatalogFileId(),
@@ -584,7 +575,6 @@ export const catalogService = {
     const cleanBarcode = normalizeBarcode(rawBarcode);
     if (!cleanBarcode) return null;
 
-    // 1. PRIMERA PRIORIDAD: Catálogo Limpio Local (productos validados/depurados en operación real)
     const localLimpio = await getLocalItem(STORE_CLEAN, cleanBarcode);
     if (localLimpio) {
       if (!(localLimpio.codigo === '1' && String(localLimpio.descripcion).includes('ATOMIZADOR'))) {
@@ -592,11 +582,9 @@ export const catalogService = {
       }
     }
 
-    // 2. SEGUNDA PRIORIDAD: Catálogo Base Oficial (30,225 productos exactos del Excel sincronizado)
     const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
     if (localBase) return localBase;
 
-    // 3. TERCERA PRIORIDAD: Buscar en Firestore en caso de ser un producto extra registrado en red
     try {
       const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
       const limpioSnap = await getDoc(limpioRef);
@@ -661,6 +649,13 @@ export const catalogService = {
     if (cleanList.length === 0) return [];
 
     try {
+      await saveLocalBatch(STORE_CLEAN, cleanList);
+    } catch (e) {
+      console.warn('Error guardando lote en IndexedDB:', e);
+    }
+    memoryCache = null;
+
+    try {
       const batchSize = 400;
       for (let i = 0; i < cleanList.length; i += batchSize) {
         const chunk = cleanList.slice(i, i + batchSize);
@@ -669,19 +664,14 @@ export const catalogService = {
           const docRef = doc(db, 'catalogo_limpio', item.codigo);
           batch.set(docRef, item, { merge: true });
         });
-        await batch.commit();
+        batch.commit().catch(err => {
+          console.warn('Error guardando lote en Firestore catalogo_limpio (offline):', err);
+        });
       }
     } catch (e) {
-      console.warn('Error guardando lote en Firestore catalogo_limpio:', e);
+      console.warn('Error preparando lote en Firestore catalogo_limpio:', e);
     }
 
-    try {
-      await saveLocalBatch(STORE_CLEAN, cleanList);
-    } catch (e) {
-      console.warn('Error guardando lote en IndexedDB:', e);
-    }
-
-    memoryCache = null;
     return cleanList;
   },
 
@@ -762,7 +752,6 @@ export const catalogService = {
         .map(d => ({ codigo: d.id, ...d.data() }))
         .filter(it => it && it.codigo);
 
-      // Reconciliar con IndexedDB
       const database = await openDB();
       await new Promise((resolve, reject) => {
         const tx = database.transaction(STORE_CLEAN, 'readwrite');
@@ -781,7 +770,6 @@ export const catalogService = {
     }
   },
 
-  // Sincronizar catálogo limpio desde Firestore hacia la memoria local (reemplazo completo)
   async syncCleanCatalogFromFirestore() {
     try {
       const snap = await getDocs(collection(db, 'catalogo_limpio'));
@@ -809,7 +797,6 @@ export const catalogService = {
     }
   },
 
-  // Suscripción reactiva en tiempo real al catálogo limpio en Firestore
   subscribeCleanCatalog(onUpdate) {
     try {
       return onSnapshot(
@@ -853,7 +840,6 @@ export const catalogService = {
       const cleanSearchCode = normalizeBarcode(rawTrimmed);
       const isNumeric = /^\d+$/.test(cleanSearchCode);
 
-      // Si no es numérico, exigir al menos 2 caracteres para no saturar memoria
       if (!isNumeric && q.length < 2) return [];
 
       let exactMatch = null;
@@ -866,13 +852,11 @@ export const catalogService = {
         const baseItems = await getAllLocalItems(STORE_BASE);
 
         const itemMap = new Map();
-        // 1. Agregar productos del catálogo base del Excel primero
         baseItems.forEach(item => {
           if (item && item.codigo !== undefined && item.codigo !== null) {
             itemMap.set(String(item.codigo), item);
           }
         });
-        // 2. Los productos del Catálogo Limpio (validados en operaciones reales) SOBRESCRIBEN con máxima prioridad
         cleanItems.forEach(item => {
           if (item && item.codigo !== undefined && item.codigo !== null) {
             if (String(item.codigo) === '1' && String(item.descripcion).includes('ATOMIZADOR')) return;
@@ -889,12 +873,8 @@ export const catalogService = {
         const desc = med.descripcion ? String(med.descripcion).toLowerCase() : '';
         const cod = med.codigo ? String(med.codigo).toLowerCase() : '';
 
-        // Coincidencia en descripción
         if (desc.includes(q)) return true;
 
-        // Coincidencia exacta o por prefijo en código:
-        // '1' sólo coincide con códigos que empiezan con '1' (como '1', '10009', '13'),
-        // NUNCA con códigos que tienen ceros por delante como '001', '01' o '059'.
         if (searchCod) {
           if (cod.startsWith(searchCod)) return true;
         }
@@ -902,33 +882,27 @@ export const catalogService = {
         return false;
       });
 
-      // Ordenar con máxima prioridad a coincidencias exactas y de prefijo en código
       results.sort((a, b) => {
         const aCod = String(a.codigo || '').toLowerCase();
         const bCod = String(b.codigo || '').toLowerCase();
 
-        // 1. Coincidencia exacta de código (ej. '1' === '1' o '001' === '001' o '59' === '59')
         if (aCod === searchCod && bCod !== searchCod) return -1;
         if (bCod === searchCod && aCod !== searchCod) return 1;
 
-        // 2. Código que inicia exactamente con el texto buscado
         const aStarts = aCod.startsWith(searchCod);
         const bStarts = bCod.startsWith(searchCod);
         if (aStarts && !bStarts) return -1;
         if (!aStarts && bStarts) return 1;
 
-        // 3. Longitud más cercana si ambos inician con el código (ej. "1" antes que "13" antes que "10009")
         if (aStarts && bStarts && aCod.length !== bCod.length) {
           return aCod.length - bCod.length;
         }
 
-        // 4. Descripción exacta
         const aDesc = String(a.descripcion || '').toLowerCase();
         const bDesc = String(b.descripcion || '').toLowerCase();
         if (aDesc === q && bDesc !== q) return -1;
         if (bDesc === q && aDesc !== q) return 1;
 
-        // 5. Descripción que inicia con el término
         const aDescStarts = aDesc.startsWith(q);
         const bDescStarts = bDesc.startsWith(q);
         if (aDescStarts && !bDescStarts) return -1;

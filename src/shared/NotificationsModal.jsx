@@ -1,3 +1,7 @@
+/**
+ * Modal con centro de notificaciones para consultar alertas de pedidos, faltantes y avisos del sistema.
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -202,7 +206,7 @@ export function NotificationsModal({
         id="notification-messagebox-card"
         role="dialog"
         aria-label="Panel de Notificaciones"
-        className={`fixed z-[60] bg-white rounded-3xl shadow-2xl shadow-slate-900/20 border border-slate-200 flex flex-col max-h-[82vh] sm:max-h-[520px] overscroll-contain ${
+        className={`fixed z-[60] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl shadow-slate-900/20 border border-slate-200 dark:border-slate-800 flex flex-col max-h-[82vh] sm:max-h-[520px] overscroll-contain ${
           isClosing
             ? 'animate-popover-exit pointer-events-none'
             : 'animate-popover-enter'
@@ -215,16 +219,16 @@ export function NotificationsModal({
         }}
       >
         <div
-          className="absolute -top-[7px] w-3.5 h-3.5 bg-white border-t border-l border-slate-200 z-20 pointer-events-none"
+          className="absolute -top-[7px] w-3.5 h-3.5 bg-white dark:bg-slate-900 border-t border-l border-slate-200 dark:border-slate-800 z-20 pointer-events-none"
           style={{
             left: `${coords.arrowLeft}px`,
             transform: 'translateX(-50%) rotate(45deg)'
           }}
           aria-hidden="true"
         />
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-white rounded-t-3xl shrink-0 relative z-10">
+        <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 rounded-t-3xl shrink-0 relative z-10">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-2xs relative">
+            <div className="w-8 h-8 rounded-2xl bg-amber-50 dark:bg-transparent text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/30 flex items-center justify-center shadow-2xs relative">
               <Bell className="w-4 h-4" />
               {activeNotifications.length > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[9px] font-extrabold flex items-center justify-center shadow-xs">
@@ -233,7 +237,7 @@ export function NotificationsModal({
               )}
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900 leading-tight">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
                 Notificaciones
               </h3>
               <p className="text-[10px] text-slate-400">
@@ -244,15 +248,15 @@ export function NotificationsModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+            className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
             title="Cerrar notificaciones"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
         {permissionState !== 'granted' && typeof window !== 'undefined' && 'Notification' in window && (
-          <div className="px-4 py-2 bg-amber-50/95 border-b border-amber-200/80 flex items-center justify-between gap-2 text-xs">
-            <span className="text-amber-800 text-[11px] font-medium leading-tight">
+          <div className="px-4 py-2 bg-amber-50/95 dark:bg-transparent border-b border-amber-200/80 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+            <span className="text-amber-800 dark:text-amber-400 text-[11px] font-medium leading-tight">
               Activa notificaciones del sistema para recibir avisos aquí.
             </span>
             <button
@@ -264,14 +268,14 @@ export function NotificationsModal({
             </button>
           </div>
         )}
-        <div className="px-4 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center gap-1 shrink-0 overflow-x-auto">
+        <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1 shrink-0 overflow-x-auto">
           <button
             type="button"
             onClick={() => setFilterTab('todas')}
             className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all ${
               filterTab === 'todas'
-                ? 'bg-white text-slate-900 shadow-2xs font-bold'
-                : 'text-slate-500 hover:text-slate-800'
+                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs font-bold border border-transparent dark:border-slate-700'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white'
             }`}
           >
             Todas ({activeNotifications.length})
@@ -283,11 +287,11 @@ export function NotificationsModal({
               onClick={() => setFilterTab('pedidos')}
               className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1 ${
                 filterTab === 'pedidos'
-                  ? 'bg-blue-50 text-blue-700 shadow-2xs border border-blue-200 font-bold'
-                  : 'text-slate-500 hover:text-blue-700'
+                  ? 'bg-blue-50 dark:bg-transparent text-blue-700 dark:text-blue-400 shadow-2xs border border-blue-200 dark:border-blue-500/30 font-bold'
+                  : 'text-slate-500 hover:text-blue-700 dark:text-slate-400 dark:hover:text-blue-400'
               }`}
             >
-              <Truck className="w-3 h-3 text-blue-500" />
+              <Truck className="w-3 h-3 text-blue-500 dark:text-blue-400" />
               <span>Pedidos ({transferNotifs.length})</span>
             </button>
           )}
@@ -298,11 +302,11 @@ export function NotificationsModal({
               onClick={() => setFilterTab('material')}
               className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1 ${
                 filterTab === 'material'
-                  ? 'bg-amber-50 text-amber-800 shadow-2xs border border-amber-200 font-bold'
-                  : 'text-slate-500 hover:text-amber-800'
+                  ? 'bg-amber-50 dark:bg-transparent text-amber-800 dark:text-amber-400 shadow-2xs border border-amber-200 dark:border-amber-500/30 font-bold'
+                  : 'text-slate-500 hover:text-amber-800 dark:text-slate-400 dark:hover:text-amber-400'
               }`}
             >
-              <Clock className="w-3 h-3 text-amber-500" />
+              <Clock className="w-3 h-3 text-amber-500 dark:text-amber-400" />
               <span>Material ({materialNotifs.length})</span>
             </button>
           )}
@@ -310,10 +314,10 @@ export function NotificationsModal({
         <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5 max-h-[58vh] sm:max-h-[380px] overscroll-contain">
           {filteredList.length === 0 ? (
             <div className="py-8 px-4 text-center space-y-2">
-              <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-500/30 mx-auto flex items-center justify-center">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
-              <h4 className="text-xs font-bold text-slate-800">
+              <h4 className="text-xs font-bold text-slate-800 dark:text-white">
                 ¡Al día! No hay notificaciones pendientes
               </h4>
               <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
@@ -329,24 +333,24 @@ export function NotificationsModal({
                 const isFaltantesEntregados = notif.tipo === 'faltantes_entregados';
 
                 const badgeBg = isNueva
-                  ? 'bg-blue-100 text-blue-800'
+                  ? 'bg-blue-100 dark:bg-transparent text-blue-800 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30'
                   : isDespacho
-                  ? 'bg-emerald-100 text-emerald-800'
+                  ? 'bg-emerald-100 dark:bg-transparent text-emerald-800 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
                   : isFaltante
-                  ? 'bg-rose-100 text-rose-800'
+                  ? 'bg-rose-100 dark:bg-transparent text-rose-800 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
                   : isFaltantesEntregados
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-indigo-100 text-indigo-800';
+                  ? 'bg-emerald-100 dark:bg-transparent text-emerald-800 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
+                  : 'bg-indigo-100 dark:bg-transparent text-indigo-800 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30';
 
                 const cardBorder = isNueva
-                  ? 'bg-blue-50/40 border-blue-200/80 hover:border-blue-300'
+                  ? 'bg-blue-50/40 dark:bg-slate-800/40 border-blue-200/80 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-500'
                   : isDespacho
-                  ? 'bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300'
+                  ? 'bg-emerald-50/40 dark:bg-slate-800/40 border-emerald-200/80 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-500'
                   : isFaltante
-                  ? 'bg-rose-50/40 border-rose-200/80 hover:border-rose-300'
+                  ? 'bg-rose-50/40 dark:bg-slate-800/40 border-rose-200/80 dark:border-slate-800 hover:border-rose-300 dark:hover:border-rose-500'
                   : isFaltantesEntregados
-                  ? 'bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300'
-                  : 'bg-indigo-50/40 border-indigo-200/80 hover:border-indigo-300';
+                  ? 'bg-emerald-50/40 dark:bg-slate-800/40 border-emerald-200/80 dark:border-slate-800 hover:border-emerald-300 dark:hover:border-emerald-500'
+                  : 'bg-indigo-50/40 dark:bg-slate-800/40 border-indigo-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500';
 
                 const icon = isNueva ? (
                   <Inbox className="w-3.5 h-3.5 text-blue-600" />
@@ -380,7 +384,7 @@ export function NotificationsModal({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="w-6 h-6 rounded-lg bg-white flex items-center justify-center shrink-0 shadow-2xs border border-slate-100">
+                        <span className="w-6 h-6 rounded-lg bg-white dark:bg-slate-800 flex items-center justify-center shrink-0 shadow-2xs border border-slate-100 dark:border-slate-700">
                           {icon}
                         </span>
                         <span className={`text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full truncate ${badgeBg}`}>
@@ -389,7 +393,7 @@ export function NotificationsModal({
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[9px] font-mono font-bold text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200/80">
+                        <span className="text-[9px] font-mono font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-2 py-0.5 rounded-md border border-slate-200/80 dark:border-slate-700">
                           {formatNotifDate(notif.fecha)}
                         </span>
                         <button
@@ -406,7 +410,7 @@ export function NotificationsModal({
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-slate-800 font-medium leading-snug">
+                    <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium leading-snug">
                       {notif.mensaje}
                     </p>
                     <div className="pt-0.5 flex items-center justify-between gap-2 flex-wrap">
@@ -421,7 +425,7 @@ export function NotificationsModal({
                             e.stopPropagation();
                             handleTransferAction();
                           }}
-                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs group-hover:bg-blue-600"
+                          className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs border border-transparent dark:border-slate-700 group-hover:bg-blue-600"
                         >
                           <span>{notif.actionText}</span>
                           <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
@@ -449,15 +453,15 @@ export function NotificationsModal({
                   onClick={handleMaterialAction}
                   className={`p-3 rounded-2xl border transition-all space-y-2 cursor-pointer active:scale-[0.99] hover:shadow-xs group ${
                     isOverdue
-                      ? 'bg-red-50/50 border-red-200/80 hover:border-red-300'
-                      : 'bg-amber-50/40 border-amber-200/80 hover:border-amber-300'
+                      ? 'bg-red-50/50 dark:bg-slate-800/40 border-red-200/80 dark:border-slate-800 hover:border-red-300'
+                      : 'bg-amber-50/40 dark:bg-slate-800/40 border-amber-200/80 dark:border-slate-800 hover:border-amber-300'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span
                         className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
-                          isOverdue ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+                          isOverdue ? 'bg-red-100 dark:bg-transparent text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/30' : 'bg-amber-100 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
                         }`}
                       >
                         {isOverdue ? <AlertTriangle className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
@@ -465,8 +469,8 @@ export function NotificationsModal({
                       <span
                         className={`text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full truncate ${
                           isOverdue
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-amber-100 text-amber-800'
+                            ? 'bg-red-100 dark:bg-transparent text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/30'
+                            : 'bg-amber-100 dark:bg-transparent text-amber-800 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
                         }`}
                       >
                         {notif.titulo}
@@ -495,8 +499,8 @@ export function NotificationsModal({
                     {notif.mensaje}
                   </p>
                   {it && (
-                    <div className="p-2 bg-white/90 rounded-xl border border-slate-200/60 flex items-center justify-between text-[10px] gap-1.5 flex-wrap">
-                      <div className="flex items-center gap-1 font-bold text-slate-900 truncate">
+                    <div className="p-2 bg-white/90 dark:bg-slate-800 rounded-xl border border-slate-200/60 dark:border-slate-700 flex items-center justify-between text-[10px] gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1 font-bold text-slate-900 dark:text-slate-100 truncate">
                         <Package className="w-3 h-3 text-blue-600 shrink-0" />
                         <span className="truncate">{it.descripcion}</span>
                         <span className="font-mono text-slate-500 font-semibold shrink-0">({it.cantidad} pz)</span>
@@ -523,7 +527,7 @@ export function NotificationsModal({
                           e.stopPropagation();
                           onMarkAsReplaced(notif.materialId);
                         }}
-                        className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-700 hover:text-emerald-800 border border-emerald-200 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                        className="px-2.5 py-1 bg-white hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-slate-700 rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
                       >
                         <CheckCircle2 className="w-3 h-3" />
                         <span>Marcar Reemplazado</span>
@@ -537,7 +541,7 @@ export function NotificationsModal({
                           e.stopPropagation();
                           handleMaterialAction();
                         }}
-                        className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs group-hover:bg-blue-600"
+                        className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs border border-transparent dark:border-slate-700 group-hover:bg-blue-600"
                       >
                         <span>Ver en Módulo</span>
                         <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
@@ -550,7 +554,7 @@ export function NotificationsModal({
           )}
         </div>
 
-        <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/80 rounded-b-3xl flex items-center justify-center text-xs shrink-0">
+        <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 rounded-b-3xl flex items-center justify-center text-xs shrink-0">
           <span className="text-[10px] text-slate-400 font-medium">
             {activeNotifications.length} {activeNotifications.length === 1 ? 'notificación activa' : 'notificaciones activas'}
           </span>

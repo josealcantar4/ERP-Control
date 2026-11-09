@@ -1,3 +1,7 @@
+/**
+ * Componente tipográfico que anima un scroll horizontal tipo marquesina cuando el texto supera el ancho disponible.
+ */
+
 import React, { useRef, useState, useEffect } from 'react';
 
 export function MarqueeText({

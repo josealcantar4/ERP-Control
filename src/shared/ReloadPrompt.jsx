@@ -1,3 +1,7 @@
+/**
+ * Indicador de nueva versión disponible de la PWA que permite al usuario recargar la app para actualizarla.
+ */
+
 import React from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, CheckCircle, X } from 'lucide-react';

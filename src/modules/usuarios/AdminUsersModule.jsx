@@ -1,3 +1,7 @@
+/**
+ * Módulo de administración de usuarios, asignación de roles, sedes operativas y permisos del sistema.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -26,7 +30,7 @@ import {
 import { userService } from './userService';
 import { organizationService } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
-import { transitionView, FloatingInput, MarqueeSearchInput } from '../../shared';
+import { transitionView, FloatingInput, MarqueeSearchInput, playSuccessSound } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
@@ -49,13 +53,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   };
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // Data states
   const [usersList, setUsersList] = useState([]);
   const [sedesList, setSedesList] = useState([]);
   const [areasList, setAreasList] = useState([]);
   const [searchUser, setSearchUser] = useState('');
 
-  // Modals for CRUD (Users)
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [userForm, setUserForm] = useState({
@@ -65,18 +67,15 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // Modals for CRUD (Sedes)
   const [isSedeModalOpen, setIsSedeModalOpen] = useState(false);
   const [editingSede, setEditingSede] = useState(null);
   const [sedeForm, setSedeForm] = useState({ nombre: '', tipo: 'Sucursal', areas: [], esDestino: true });
   const [selectedAreaToAdd, setSelectedAreaToAdd] = useState('');
 
-  // Modals for CRUD (Areas)
   const [isAreaModalOpen, setIsAreaModalOpen] = useState(false);
   const [editingArea, setEditingArea] = useState(null);
   const [areaForm, setAreaForm] = useState({ nombre: '', excluirTransferencias: false });
 
-  // Pop-up dialog state
   const [dialog, setDialog] = useState({
     isOpen: false,
     type: 'alert',
@@ -116,7 +115,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [activeTab]);
 
-  // --- MÉTODOS DE USUARIOS ---
   const handleOpenCreateUser = () => {
     setEditingUser(null);
     setUserForm({
@@ -177,7 +175,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       const isExcluded = Boolean(areaObj?.excluirTransferencias);
       const isSedeArea = sedeAreas.some(sa => sa.toLowerCase() === currentArea.toLowerCase());
 
-      // Se conserva si es un área administrativa (excluida de transferencias) O si pertenece a la sede
       const isValidArea = Boolean(currentArea && (isExcluded || isSedeArea));
 
       return {
@@ -219,8 +216,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
     const sedeAreas = selectedSedeObj?.areas || [];
 
-    // Validar sub-área operativa únicamente si el usuario tiene roles de transferencias (solicitar/despachar)
-    // y la sede tiene sub-áreas configuradas
     const hasTransferRoles = userForm.roles.some(r => r === 'solicitar' || r === 'despachar');
     if (hasTransferRoles && sedeAreas.length > 0 && !userForm.area) {
       setFormError(`El rol operativo de transferencias en "${userForm.sede}" requiere que selecciones una sub-área.`);
@@ -251,9 +246,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     try {
       if (editingUser) {
         await userService.updateUser(editingUser.id || editingUser.username, payload);
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Actualizado', message: `Usuario guardado.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await userService.createUser(payload);
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Creado', message: `Usuario registrado.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsUserModalOpen(false);
@@ -293,7 +290,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         setIsProcessing(true);
         try {
           await userService.deleteUser(user.id || user.username);
-          // NOTA: Eliminamos setUsersList manual
+          playSuccessSound();
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
         } finally {
@@ -304,7 +301,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  // --- MÉTODOS DE SEDES ---
   const handleOpenCreateSede = () => {
     setEditingSede(null);
     setSedeForm({ nombre: '', tipo: 'Sucursal', areas: [], esDestino: true });
@@ -373,7 +369,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         const newName = sedeForm.nombre.trim();
         await organizationService.updateSede(editingSede.id, newName, sedeForm.tipo, sedeForm.areas, sedeForm.esDestino);
 
-        // Si la sede cambió de nombre, actualizar en cascada a los usuarios asignados a ella
         if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
           const affectedUsers = usersList.filter(u => (u.sede || '').toLowerCase() === oldName.toLowerCase());
           for (const u of affectedUsers) {
@@ -382,9 +377,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             } catch (_) {}
           }
         }
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Sede Actualizada', message: `La sede "${newName}" se actualizó correctamente.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await organizationService.createSede(sedeForm.nombre, sedeForm.tipo, sedeForm.areas, sedeForm.esDestino);
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Sede Creada', message: `La sede "${sedeForm.nombre}" se registró correctamente.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsSedeModalOpen(false);
@@ -430,6 +427,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         try {
           await organizationService.deleteSede(sede.id);
           organizationService.refreshSedesAndAreas();
+          playSuccessSound();
           setDialog({ isOpen: true, type: 'alert', title: 'Sede Eliminada', message: `La sede "${sede.nombre}" fue eliminada.`, variant: 'success', onConfirm: closeDialog });
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
@@ -441,7 +439,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  // --- MÉTODOS DE ÁREAS ---
   const handleOpenCreateArea = () => {
     setEditingArea(null);
     setAreaForm({ nombre: '', excluirTransferencias: false });
@@ -468,7 +465,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         const newName = areaForm.nombre.trim();
         await organizationService.updateArea(editingArea.id, newName, areaForm.excluirTransferencias);
 
-        // Si el nombre del área cambió, actualizar en sedes asociadas y usuarios
         if (oldName && newName && oldName.toLowerCase() !== newName.toLowerCase()) {
           for (const s of sedesList) {
             if (s.areas && s.areas.includes(oldName)) {
@@ -485,9 +481,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             } catch (_) {}
           }
         }
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Área Actualizada', message: `El área "${newName}" se actualizó correctamente.`, variant: 'success', onConfirm: closeDialog });
       } else {
         await organizationService.createArea(areaForm.nombre, areaForm.excluirTransferencias);
+        playSuccessSound();
         setDialog({ isOpen: true, type: 'alert', title: 'Área Creada', message: `El área "${areaForm.nombre}" se registró correctamente.`, variant: 'success', onConfirm: closeDialog });
       }
       setIsAreaModalOpen(false);
@@ -532,7 +530,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         setIsProcessing(true);
         try {
           await organizationService.deleteArea(area.id);
-          // Quitar área de todas las sedes que la tenían asociada
           for (const s of sedesList) {
             if (s.areas && s.areas.includes(area.nombre)) {
               const newAreas = s.areas.filter(a => a !== area.nombre);
@@ -542,6 +539,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             }
           }
           organizationService.refreshSedesAndAreas();
+          playSuccessSound();
           setDialog({ isOpen: true, type: 'alert', title: 'Área Eliminada', message: `El área "${area.nombre}" fue eliminada.`, variant: 'success', onConfirm: closeDialog });
         } catch (err) {
           setDialog({ isOpen: true, type: 'alert', title: 'Error', message: err.message, variant: 'danger', onConfirm: closeDialog });
@@ -582,7 +580,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 relative">
       
-      {/* PANTALLA DE CARGA GLOBAL */}
       {isProcessing && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm animate-fade-in">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3">
@@ -593,31 +590,54 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         document.body
       )}
 
-      {/* Top Header */}
-      <div className="flex items-center justify-between vt-module-header">
-        <button
-          onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all active:scale-95 cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Volver al Dashboard</span>
-        </button>
+      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
+        <div className="flex items-center justify-between vt-module-header gap-2">
+          <button
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Volver al Dashboard</span>
+          </button>
 
-        {/* Tab Switcher */}
-        <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium">
-          <button onClick={() => handleSwitchTab('usuarios')} className={`px-3 py-1 rounded-full transition-all cursor-pointer ${activeTab === 'usuarios' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'}`}>
-            Usuarios ({usersList.length})
-          </button>
-          <button onClick={() => handleSwitchTab('sedes')} className={`px-3 py-1 rounded-full transition-all cursor-pointer ${activeTab === 'sedes' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'}`}>
-            Sedes ({sedesList.length})
-          </button>
-          <button onClick={() => handleSwitchTab('areas')} className={`px-3 py-1 rounded-full transition-all cursor-pointer ${activeTab === 'areas' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-800'}`}>
-            Áreas ({areasList.length})
-          </button>
+          <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full flex text-xs font-medium border border-transparent dark:border-slate-700/60 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('usuarios')}
+              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+                activeTab === 'usuarios'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              Usuarios ({usersList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('sedes')}
+              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+                activeTab === 'sedes'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              Sedes ({sedesList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('areas')}
+              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+                activeTab === 'areas'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              Áreas ({areasList.length})
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* TAB 1: USUARIOS */}
       {activeTab === 'usuarios' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
@@ -697,7 +717,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* TAB 2: SEDES */}
       {activeTab === 'sedes' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
@@ -751,7 +770,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                     </div>
                   </div>
 
-                  {/* Badges de Áreas de la Sede */}
                   <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5">
                     {areas.length > 0 ? (
                       <>
@@ -776,7 +794,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* TAB 3: ÁREAS */}
       {activeTab === 'areas' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
@@ -834,7 +851,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* MODAL: USUARIO */}
       <AdminUserModal
         isOpen={isUserModalOpen}
         onClose={() => setIsUserModalOpen(false)}
@@ -853,7 +869,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         toggleRole={toggleRole}
       />
 
-      {/* MODAL: SEDE */}
       <AdminSedeModal
         isOpen={isSedeModalOpen}
         onClose={() => setIsSedeModalOpen(false)}
@@ -868,7 +883,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         handleRemoveAreaFromSedeForm={handleRemoveAreaFromSedeForm}
       />
 
-      {/* MODAL: ÁREA */}
       <AdminAreaModal
         isOpen={isAreaModalOpen}
         onClose={() => setIsAreaModalOpen(false)}
@@ -878,7 +892,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         handleSaveArea={handleSaveArea}
       />
 
-      {/* Pop-up dialog */}
       <ModalDialog
         isOpen={dialog.isOpen} type={dialog.type} title={dialog.title} message={dialog.message}
         variant={dialog.variant} confirmText={dialog.confirmText} cancelText={dialog.cancelText}
@@ -915,13 +928,11 @@ function AdminUserModal({
   const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
   const sedeSpecificAreas = selectedSedeObj?.areas || [];
 
-  // Áreas operativas vinculadas a esta sede (que no tengan marcada la exclusión de transferencias)
   const operativeSedeAreas = sedeSpecificAreas.filter(sa => {
     const aObj = areasList.find(a => a.nombre?.toLowerCase() === sa.toLowerCase());
     return !aObj?.excluirTransferencias;
   });
 
-  // Áreas administrativas o de gestión (marcadas como excluidas de transferencias en el catálogo de áreas)
   const excludedAdminAreas = areasList.filter(a => a.excluirTransferencias);
 
   const selectedAreaObj = areasList.find(a => a.nombre?.toLowerCase() === userForm.area?.toLowerCase());
@@ -937,7 +948,6 @@ function AdminUserModal({
         style={cardStyle}
         className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
-        {/* ENCABEZADO ESTÁTICO */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -956,9 +966,7 @@ function AdminUserModal({
           </button>
         </div>
 
-        {/* FORMULARIO CON CONTENIDO DESPLAZABLE Y BOTONES ESTÁTICOS */}
         <form onSubmit={handleSaveUser} className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* CONTENIDO DESPLAZABLE */}
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
             {formError && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
@@ -1213,7 +1221,6 @@ function AdminUserModal({
 
           </div>
 
-          {/* PIE DE ACCIONES ESTÁTICO (SIEMPRE VISIBLE) */}
           <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
             <button
               type="button"
@@ -1359,7 +1366,6 @@ function AdminSedeModal({
               </div>
             )}
 
-            {/* Lista de chips de áreas asignadas */}
             <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 min-h-[50px] flex flex-wrap items-center gap-1.5">
               {sedeForm.areas.length === 0 ? (
                 <span className="text-[11px] text-slate-400 italic px-1">

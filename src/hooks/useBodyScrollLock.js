@@ -1,6 +1,9 @@
+/**
+ * Hook para bloquear el scroll del cuerpo del documento cuando se despliegan modales o paneles superpuestos.
+ */
+
 import { useEffect } from 'react';
 
-// Contador global de modales activos para soportar modales anidados de forma segura
 let activeModalsCount = 0;
 let originalBodyOverflow = '';
 let originalHtmlOverflow = '';
@@ -15,13 +18,11 @@ export function useBodyScrollLock(isOpen) {
       originalHtmlOverflow = document.documentElement.style.overflow;
       originalPaddingRight = document.body.style.paddingRight;
 
-      // Calcular ancho de la barra de desplazamiento para evitar saltos en desktop
       const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
       if (scrollBarWidth > 0) {
         document.body.style.paddingRight = `${scrollBarWidth}px`;
       }
 
-      // Bloquear scroll tanto en body como en html
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
     }
@@ -38,4 +39,3 @@ export function useBodyScrollLock(isOpen) {
     };
   }, [isOpen]);
 }
-

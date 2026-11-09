@@ -1,12 +1,16 @@
+/**
+ * Modal para el registro y edición manual de productos dentro del catálogo limpio validado.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Tag, FileText, Check, AlertCircle, Sparkles } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
-import { FloatingInput } from '../../shared';
+import { FloatingInput, playSuccessSound } from '../../shared';
 
 export function CleanProductModal({
   isOpen,
-  item = null, // null para nuevo, objeto para editar
+  item = null,
   onClose,
   onSave
 }) {
@@ -57,6 +61,7 @@ export function CleanProductModal({
     try {
       setIsSubmitting(true);
       await onSave(cleanCod, cleanDesc);
+      playSuccessSound();
       onClose();
     } catch (err) {
       console.error('Error al guardar producto:', err);
@@ -77,7 +82,6 @@ export function CleanProductModal({
         className={`bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
         
-        {/* ENCABEZADO */}
         <div className="px-6 pt-6 pb-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -102,7 +106,6 @@ export function CleanProductModal({
           </button>
         </div>
 
-        {/* FORMULARIO */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-2xl flex items-center gap-2 text-xs">
@@ -111,7 +114,6 @@ export function CleanProductModal({
             </div>
           )}
 
-          {/* CÓDIGO */}
           <div>
             <FloatingInput
               label="Código / Clave del Producto"
@@ -130,7 +132,6 @@ export function CleanProductModal({
             )}
           </div>
 
-          {/* DESCRIPCIÓN */}
           <div>
             <FloatingInput
               label="Descripción Oficial del Producto"
@@ -146,7 +147,6 @@ export function CleanProductModal({
             />
           </div>
 
-          {/* BOTONES */}
           <div className="pt-2 flex items-center justify-end gap-2">
             <button
               type="button"

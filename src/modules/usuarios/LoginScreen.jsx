@@ -1,3 +1,7 @@
+/**
+ * Pantalla de autenticación de usuarios para inicio de sesión en el sistema ERP Control.
+ */
+
 import React, { useState } from 'react';
 import { Lock, User, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { userService } from './userService';
@@ -28,7 +32,6 @@ export function LoginScreen({ onLoginSuccess }) {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-8">
       
-      {/* Brand Header */}
       <div className="text-center mb-6 space-y-1.5">
         <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-sky-500 to-teal-600 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20 overflow-hidden">
             <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full p-2">
@@ -43,7 +46,6 @@ export function LoginScreen({ onLoginSuccess }) {
         </p>
       </div>
 
-      {/* Main Login Card (Apple Clean Light Style) */}
       <div className="w-full max-w-sm bg-white rounded-3xl p-7 border border-slate-200/80 shadow-sm space-y-5">
         
         {error && (

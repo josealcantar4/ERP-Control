@@ -1,3 +1,7 @@
+/**
+ * Modal para la creación y despacho inmediato de pedidos directos hacia cualquier sucursal sin solicitud previa.
+ */
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -25,7 +29,7 @@ import {
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
 import { CleanProductModal } from '../catalogo/CleanProductModal';
-import { transferService, canUserDispatch } from '../transferencias';
+import { transferService, canUserDispatch, playOrderSuccessSound } from '../transferencias';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
@@ -45,9 +49,8 @@ export function DespachoDirectoModal({
     onClose
   });
 
-  // Pestañas del modal: 'captura' | 'historial'
   const [activeTab, setActiveTab] = useState('captura');
-  const [tabDirection, setTabDirection] = useState('initial'); // 'initial' | 'forward' | 'back'
+  const [tabDirection, setTabDirection] = useState('initial');
 
   const handleSwitchTab = (newTab) => {
     if (newTab === activeTab) return;
@@ -61,39 +64,30 @@ export function DespachoDirectoModal({
     return tabName === 'historial' ? 'animate-tab-slide-right' : 'animate-tab-slide-left';
   };
 
-  // ID del borrador actual si se está continuando uno existente
   const [currentDraftId, setCurrentDraftId] = useState(null);
 
-  // Sedes y Destino
   const [sedesList, setSedesList] = useState([]);
   const [areasList, setAreasList] = useState([]);
   const [selectedSede, setSelectedSede] = useState('');
   const [selectedArea, setSelectedArea] = useState('');
 
-  // Folio TR
   const [folioDigits, setFolioDigits] = useState('');
 
-  // Observaciones
   const [notasAdicionales, setNotasAdicionales] = useState('');
 
-  // Artículos en la caja
   const [packedItems, setPackedItems] = useState([]);
 
-  // Lista de borradores de despacho directo en captura
   const [directDrafts, setDirectDrafts] = useState([]);
 
-  // Búsqueda de productos en catálogo
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Modales de escaneo y captura de cantidad
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [pendingItem, setPendingItem] = useState(null);
 
-  // Notificación de código no encontrado en catálogo (sin alerts)
-  const [scanError, setScanError] = useState(null); // { code: string }
+  const [scanError, setScanError] = useState(null);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [unregisteredCode, setUnregisteredCode] = useState('');
   const scanErrorTimerRef = useRef(null);
@@ -104,12 +98,10 @@ export function DespachoDirectoModal({
     };
   }, []);
 
-  // Estados de validación y carga
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savingStatus, setSavingStatus] = useState('');
 
-  // Control de scroll y viewport visual cuando el teclado móvil está activo
   const [viewportHeight, setViewportHeight] = useState(() => 
     typeof window !== 'undefined' && window.visualViewport ? window.visualViewport.height : null
   );
@@ -141,7 +133,6 @@ export function DespachoDirectoModal({
   const isFormLoadingRef = useRef(false);
   const autoSaveTimerRef = useRef(null);
 
-  // Estado de diálogo modal de confirmación y alerta
   const [dialog, setDialog] = useState({
     isOpen: false,
     type: 'alert',
@@ -158,7 +149,6 @@ export function DespachoDirectoModal({
     setDialog(prev => ({ ...prev, isOpen: false }));
   };
 
-  // Cargar lista de sedes, áreas y borradores
   useEffect(() => {
     if (isOpen) {
       const unsubSedes = organizationService.subscribeSedes((sedes) => {
@@ -184,11 +174,6 @@ export function DespachoDirectoModal({
     }
   }, [isOpen, currentUser]);
 
-  // Sedes disponibles para despachar:
-  // - Sedes distintas a la actual.
-  // - O la misma sede actual SI tiene 2 o más áreas operativas (para transferencias internas entre áreas).
-  // NOTA: No se filtra por s.esDestino ya que esa restricción aplica únicamente a la realización de pedidos (solicitar),
-  // no al envío directo de mercancía desde Bodega/Matriz.
   const availableDirectSedes = sedesList.filter(s => {
     const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
     if (!isOwnSede) return true;
@@ -204,7 +189,6 @@ export function DespachoDirectoModal({
   const targetDirectAllAreas = Array.isArray(targetDirectSedeObj?.areas) ? targetDirectSedeObj.areas : [];
   const isTargetDirectOwnSede = (selectedSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
 
-  // Filtrar áreas operativas (que NO estén excluidas de transferencias)
   const operativeDirectAreas = targetDirectAllAreas.filter(areaName => {
     const aObj = areasList.find(a => a.nombre?.toLowerCase() === areaName.toLowerCase());
     return !aObj?.excluirTransferencias;
@@ -216,7 +200,6 @@ export function DespachoDirectoModal({
 
   const targetDirectHasAreas = operativeDirectAreas.length > 0;
 
-  // Limpiar campos al abrir nuevo despacho
   const handleResetForm = () => {
     isFormLoadingRef.current = true;
     setCurrentDraftId(null);
@@ -242,7 +225,6 @@ export function DespachoDirectoModal({
     }
   }, [isOpen]);
 
-  // Búsqueda en catálogo con debounce
   useEffect(() => {
     const q = searchQuery.trim();
     if (!q) {
@@ -266,7 +248,6 @@ export function DespachoDirectoModal({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Cargar un borrador existente del historial para continuar capturando
   const handleLoadDraft = (draft) => {
     isFormLoadingRef.current = true;
     setCurrentDraftId(draft.id);
@@ -275,7 +256,6 @@ export function DespachoDirectoModal({
     const cleanDigits = (draft.folio || '').replace(/^TR/i, '');
     setFolioDigits(cleanDigits);
 
-    // Separar notas adicionales de la leyenda base si existiera
     const obs = draft.observaciones || '';
     const prefix = 'Pedido despachado sin haber sido solicitado';
     if (obs.startsWith(prefix)) {
@@ -299,7 +279,6 @@ export function DespachoDirectoModal({
     setErrorMsg('');
   };
 
-  // Eliminar un borrador del historial con validación y confirmación
   const handleDeleteDraft = (e, draftId) => {
     e.stopPropagation();
     const targetDraft = directDrafts.find(d => d.id === draftId);
@@ -329,9 +308,7 @@ export function DespachoDirectoModal({
     });
   };
 
-  // Autoguardado dinámico continuo de borrador (estilo Solicitar Pedido)
   const performAutoSave = useCallback(async () => {
-    // Si no hay productos en la caja, eliminar borrador activo si existía
     if (!packedItems || packedItems.length === 0) {
       if (currentDraftId) {
         try {
@@ -353,7 +330,6 @@ export function DespachoDirectoModal({
         ? `${observacionBase}: ${notasAdicionales.trim()}`
         : observacionBase;
 
-      // Respaldo de productos en catálogo limpio en segundo plano
       catalogService.saveBatchToCleanCatalog(packedItems);
 
       const saved = await transferService.saveDirectDispatchDraft({
@@ -384,7 +360,6 @@ export function DespachoDirectoModal({
     }
   }, [packedItems, selectedSede, selectedArea, folioDigits, notasAdicionales, currentDraftId, currentUser]);
 
-  // Efecto de autoguardado reactivo con debounce al alterar cualquier dato
   useEffect(() => {
     if (!isOpen) return;
     if (isFormLoadingRef.current) {
@@ -407,7 +382,6 @@ export function DespachoDirectoModal({
     };
   }, [packedItems, selectedSede, selectedArea, folioDigits, notasAdicionales, isOpen, performAutoSave, currentDraftId]);
 
-  // Selección de producto desde resultados de búsqueda
   const handleSelectProduct = (item) => {
     setPendingItem(item);
     setSearchQuery('');
@@ -416,7 +390,6 @@ export function DespachoDirectoModal({
     setIsQuantityOpen(true);
   };
 
-  // Detección de código de barras desde cámara o escáner
   const handleBarcodeDetected = async (code, itemObject) => {
     setIsScannerOpen(false);
     const cleanCode = String(code || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
@@ -432,7 +405,6 @@ export function DespachoDirectoModal({
         setScanError(null);
         handleSelectProduct(item);
       } else {
-        // CÓDIGO NO REGISTRADO: CERO ALERTS O PROMPTS
         setScanError({ code: cleanCode });
         if (scanErrorTimerRef.current) clearTimeout(scanErrorTimerRef.current);
         scanErrorTimerRef.current = setTimeout(() => {
@@ -444,7 +416,6 @@ export function DespachoDirectoModal({
     }
   };
 
-  // Búsqueda directa o pistola lectora al presionar Enter
   const handleSearchKeyDown = async (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -479,7 +450,6 @@ export function DespachoDirectoModal({
     }
   };
 
-  // Registro de producto nuevo no encontrado (desde modal limpio, sin alerts)
   const handleSaveUnregisteredProduct = async (code, desc) => {
     try {
       await catalogService.saveToCleanCatalog(code, desc);
@@ -493,12 +463,10 @@ export function DespachoDirectoModal({
     }
   };
 
-  // Confirmar cantidad agregada
   const handleConfirmQuantity = (qty) => {
     setIsQuantityOpen(false);
     if (!pendingItem) return;
 
-    // Registrar producto automáticamente en Catálogo Limpio
     if (pendingItem.codigo && pendingItem.descripcion) {
       catalogService.saveToCleanCatalog(pendingItem.codigo, pendingItem.descripcion);
     }
@@ -524,14 +492,15 @@ export function DespachoDirectoModal({
     });
 
     setPendingItem(null);
+    setTimeout(() => {
+      setIsScannerOpen(true);
+    }, 280);
   };
 
-  // Ejecutar eliminación confirmada de producto
   const executeRemoveItem = (codigo) => {
     setPackedItems(prev => prev.filter(it => String(it.codigo) !== String(codigo)));
   };
 
-  // Eliminar producto de la lista con confirmación obligatoria
   const handleRemoveItem = (codigo) => {
     const item = packedItems.find(it => String(it.codigo) === String(codigo));
     if (!item) return;
@@ -552,7 +521,6 @@ export function DespachoDirectoModal({
     });
   };
 
-  // Modificar cantidad directamente en la lista (+ / -) con validación preventiva
   const handleUpdateQty = (codigo, delta) => {
     const item = packedItems.find(it => String(it.codigo) === String(codigo));
     if (!item) return;
@@ -573,7 +541,6 @@ export function DespachoDirectoModal({
     );
   };
 
-  // Enviar el despacho directo
   const handleFinalize = async (e) => {
     e.preventDefault();
     setErrorMsg('');
@@ -629,6 +596,7 @@ export function DespachoDirectoModal({
         observaciones: observacionFinal,
         items: packedItems
       });
+      playOrderSuccessSound();
 
       if (onSuccess) {
         onSuccess(newDispatch);
@@ -667,21 +635,20 @@ export function DespachoDirectoModal({
             ? `${Math.min(viewportHeight - 16, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.92)}px`
             : undefined
         }}
-        className={`bg-white rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 h-[calc(100dvh-1rem)] sm:h-[650px] max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto transition-[height,max-height] duration-300 ease-out ${cardClass}`}
+        className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 dark:border-slate-800 h-[calc(100dvh-1rem)] sm:h-[650px] max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto transition-[height,max-height] duration-300 ease-out ${cardClass}`}
       >
         
-        {/* ENCABEZADO CON PESTAÑAS */}
-        <div className="px-6 pt-5 pb-3 border-b border-slate-100 shrink-0 bg-slate-50/70 space-y-3">
+        <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-slate-50/80 dark:bg-slate-900 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0">
                 <PackagePlus className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight">
                   Despacho Directo (Sin Solicitud)
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   {currentDraftId ? 'Continuando borrador en captura' : 'Salida de mercancía sin solicitud previa'}
                 </p>
               </div>
@@ -691,22 +658,21 @@ export function DespachoDirectoModal({
               type="button"
               onClick={handleClose}
               disabled={isSubmitting}
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center transition-colors cursor-pointer shrink-0 disabled:opacity-50"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* SELECTOR DE PESTAÑAS EN CÁPSULA CENTRADA (ESTILO CAPTURA / HISTORIAL) */}
           <div className="flex justify-center pt-0.5">
-            <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium w-fit">
+            <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full flex text-xs font-medium w-fit border border-transparent dark:border-slate-700/60">
               <button
                 type="button"
                 onClick={() => handleSwitchTab('captura')}
                 className={`px-3.5 py-1 rounded-full cursor-pointer transition-all duration-200 active:scale-95 flex items-center gap-1.5 ${
                   activeTab === 'captura'
                     ? 'bg-white text-slate-900 shadow-sm font-semibold'
-                    : 'text-slate-500 hover:text-slate-800'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
                 }`}
               >
                 <PackagePlus className="w-3.5 h-3.5" />
@@ -726,7 +692,7 @@ export function DespachoDirectoModal({
                 className={`px-3.5 py-1 rounded-full flex items-center gap-1.5 cursor-pointer transition-all duration-200 active:scale-95 ${
                   activeTab === 'historial'
                     ? 'bg-white text-slate-900 shadow-sm font-semibold'
-                    : 'text-slate-500 hover:text-slate-800'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
                 }`}
               >
                 <History className="w-3.5 h-3.5" />
@@ -743,7 +709,6 @@ export function DespachoDirectoModal({
           </div>
         </div>
 
-        {/* CUERPO DEL MODAL CON SCROLL UNIFICADO (DESDE DESTINO HASTA OBSERVACIÓN OFICIAL) */}
         {activeTab === 'captura' ? (
           <div 
             key="captura"
@@ -758,10 +723,8 @@ export function DespachoDirectoModal({
               </div>
             )}
 
-            {/* METADATOS: SUCURSAL DESTINO, ÁREA DESTINO (CONDICIONAL) Y FOLIO TR */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               
-              {/* Sede Destino */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-blue-600" />
@@ -787,7 +750,6 @@ export function DespachoDirectoModal({
                 </select>
               </div>
 
-              {/* Área de Destino (Condicional según las áreas configuradas en la sede) */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-emerald-600" />
@@ -817,7 +779,6 @@ export function DespachoDirectoModal({
                 )}
               </div>
 
-              {/* Folio de Transferencia TR */}
               <div className="sm:col-span-2">
                 <FloatingInput
                   label="Folio Transferencia (TR)"
@@ -833,7 +794,6 @@ export function DespachoDirectoModal({
 
             </div>
 
-            {/* NOTAS ADICIONALES (OPCIONAL) */}
             <div>
               <FloatingInput
                 label="Notas o Comentarios Adicionales (Opcional)"
@@ -845,7 +805,6 @@ export function DespachoDirectoModal({
               />
             </div>
 
-            {/* CAPTURA DE PRODUCTOS */}
             <div className="space-y-3 pt-2 border-t border-slate-100">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -878,7 +837,6 @@ export function DespachoDirectoModal({
                 </div>
               </div>
 
-              {/* Barra de Búsqueda + Botón Escanear */}
               <div className="flex gap-2">
                 <div className="flex-1">
                   <MarqueeSearchInput
@@ -908,7 +866,6 @@ export function DespachoDirectoModal({
                 </button>
               </div>
 
-              {/* Notificación inline si el código no se encuentra en el catálogo (Cero alerts intrusivos) */}
               {scanError && (
                 <div className="p-3 bg-amber-50 border border-amber-200/90 text-amber-900 rounded-2xl flex items-center justify-between gap-3 text-xs animate-fade-in shadow-sm">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -940,7 +897,6 @@ export function DespachoDirectoModal({
                 </div>
               )}
 
-              {/* Resultados flotantes de búsqueda */}
               {searchResults.length > 0 && (
                 <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-2xl shadow-lg">
                   {searchResults.map((item) => (
@@ -965,7 +921,6 @@ export function DespachoDirectoModal({
                 </div>
               )}
 
-              {/* LISTA DE PRODUCTOS EMPACADOS (Flujo natural sin scroll anidado) */}
               {packedItems.length === 0 ? (
                 <div className="p-6 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200 space-y-1 text-slate-400">
                   <Truck className="w-7 h-7 mx-auto text-slate-300" />
@@ -992,7 +947,6 @@ export function DespachoDirectoModal({
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {/* Controles de Cantidad con botones - y + */}
                         <div className="flex items-center bg-white rounded-xl border border-slate-200 shadow-2xs">
                           <button
                             type="button"
@@ -1015,7 +969,6 @@ export function DespachoDirectoModal({
                           </button>
                         </div>
 
-                        {/* Botón Borrar */}
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(it.codigo)}
@@ -1032,7 +985,6 @@ export function DespachoDirectoModal({
 
             </div>
 
-            {/* LEYENDA DISCRETA DE OBSERVACIÓN OFICIAL - AL FINAL DEL CONTENIDO CON SCROLL */}
             <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500">
               <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
               <span>
@@ -1044,7 +996,6 @@ export function DespachoDirectoModal({
             </div>
           </div>
         ) : (
-          /* PANEL 2: HISTORIAL (BORRADORES EN CAPTURA) */
           <div 
             key="historial"
             className={`flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-3 overscroll-contain touch-pan-y ${getTabAnimationClass('historial')}`}
@@ -1146,13 +1097,12 @@ export function DespachoDirectoModal({
           </div>
         )}
 
-        {/* PIE DE ACCIONES */}
-        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 shrink-0">
+        <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
             onClick={handleClose}
             disabled={isSubmitting}
-            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-2xl transition-all cursor-pointer disabled:opacity-50"
           >
             Cancelar
           </button>
@@ -1211,14 +1161,12 @@ export function DespachoDirectoModal({
 
       </div>
 
-      {/* MODAL DE ESCANEO DE CÓDIGO */}
       <BarcodeScannerModal
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
         onDetected={handleBarcodeDetected}
       />
 
-      {/* MODAL DE CAPTURA DE CANTIDAD */}
       <CaptureQuantityModal
         isOpen={isQuantityOpen}
         scannedItem={pendingItem}
@@ -1226,7 +1174,6 @@ export function DespachoDirectoModal({
         onConfirmQuantity={handleConfirmQuantity}
       />
 
-      {/* DIÁLOGO MODAL DE CONFIRMACIÓN / VALIDACIÓN DE ACCIDENTES */}
       <ModalDialog
         isOpen={dialog.isOpen}
         type={dialog.type}
@@ -1240,7 +1187,6 @@ export function DespachoDirectoModal({
         onClose={closeDialog}
       />
 
-      {/* MODAL PARA REGISTRAR PRODUCTO NO ENCONTRADO EN CATÁLOGO (SIN ALERTS) */}
       <CleanProductModal
         isOpen={isCleanModalOpen}
         item={unregisteredCode ? { codigo: unregisteredCode, descripcion: '' } : null}

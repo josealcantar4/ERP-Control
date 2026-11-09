@@ -1,3 +1,7 @@
+/**
+ * Servicio de administración de usuarios en Firestore para creación, actualización, asignación de sedes y control de roles.
+ */
+
 import { db } from '../../config/firebase';
 import {
   collection,
@@ -13,7 +17,6 @@ import {
 const CURRENT_USER_KEY = 'erp_current_user';
 
 export const userService = {
-  // Asegura que el Administrador exista en Firestore al iniciar
   async ensureAdminInitialized() {
     try {
       const snapAll = await getDocs(collection(db, 'usuarios'));
@@ -38,7 +41,6 @@ export const userService = {
     }
   },
 
-  // Suscripción en tiempo real a usuarios desde Firestore
   subscribeUsers(onUpdate) {
     this.ensureAdminInitialized();
 
@@ -68,7 +70,6 @@ export const userService = {
     );
   },
 
-  // Forzar verificación y obtención de usuarios actualizados
   async refreshUsers() {
     try {
       const snap = await getDocs(collection(db, 'usuarios'));
@@ -94,7 +95,6 @@ export const userService = {
     }
   },
 
-  // Inicio de sesión consultando Firestore con coincidencia exacta de usuario y contraseña
   async login(username, password) {
     const cleanUser = String(username || '').trim();
     const cleanPass = String(password || '');
@@ -134,7 +134,6 @@ export const userService = {
     throw new Error('Usuario o contraseña incorrectos.');
   },
 
-  // Crear usuario en Firestore con ID autogenerado
   async createUser(userData) {
     const username = userData.username?.trim();
     const password = userData.password?.trim();
@@ -150,7 +149,6 @@ export const userService = {
     if (!sede) throw new Error('Debes seleccionar una sede.');
     if (!roles || roles.length === 0) throw new Error('Debes asignar al menos un rol.');
 
-    // Validar que el username no esté en uso
     const snapAll = await getDocs(collection(db, 'usuarios'));
     const isTaken = snapAll.docs.some(d => 
       (d.data()?.username || '').toLowerCase() === username.toLowerCase()
@@ -159,7 +157,6 @@ export const userService = {
       throw new Error(`El nombre de usuario "${username}" ya está registrado.`);
     }
 
-    // Generar ID único automático de Firestore (no el username)
     const newDocRef = doc(collection(db, 'usuarios'));
     const newUserId = newDocRef.id;
 
@@ -179,7 +176,6 @@ export const userService = {
     return newUser;
   },
 
-  // Actualizar usuario en Firestore (permite cambiar username excepto si es Administrador)
   async updateUser(userId, updateData) {
     if (!userId) throw new Error('ID de usuario inválido.');
 
@@ -264,7 +260,6 @@ export const userService = {
     return { id: docRef.id, ...existing, ...updated };
   },
 
-  // Eliminar usuario de Firestore
   async deleteUser(userId) {
     if (!userId) return false;
 
@@ -290,7 +285,6 @@ export const userService = {
     return true;
   },
 
-  // Obtener sesión activa de localStorage
   getCurrentUser() {
     const raw = localStorage.getItem(CURRENT_USER_KEY);
     if (!raw) return null;
@@ -301,12 +295,10 @@ export const userService = {
     }
   },
 
-  // Cerrar sesión
   logout() {
     localStorage.removeItem(CURRENT_USER_KEY);
   },
 
-  // Obtener destinatarios habilitados directamente de Firestore
   async getMatrizDestinatarios() {
     try {
       const snap = await getDocs(collection(db, 'usuarios'));

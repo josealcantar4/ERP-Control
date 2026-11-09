@@ -1,3 +1,7 @@
+/**
+ * Módulo para la creación de solicitudes de reabastecimiento mediante escaneo de códigos de barra o búsqueda manual de catálogo.
+ */
+
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ScanBarcode, Send, Trash2, CheckCircle2, ArrowLeft, History, ChevronRight, Plus, Minus,
@@ -5,7 +9,7 @@ import {
 } from 'lucide-react';
 import { organizationService } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService, formatTransferFolio, canUserViewInSolicitar } from '../transferencias';
+import { transferService, formatTransferFolio, canUserViewInSolicitar, playOrderSuccessSound } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { BulkOrderWarningModal } from './BulkOrderWarningModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
@@ -64,7 +68,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [isBulkWarningOpen, setIsBulkWarningOpen] = useState(false);
   const [bulkWarningItems, setBulkWarningItems] = useState([]);
 
-  // Historial ordenado con borradores primero y luego por fecha más reciente
   const sortedHistory = useMemo(() => {
     return [...historialList].sort((a, b) => {
       if (a.estado === 'borrador' && b.estado !== 'borrador') return -1;
@@ -75,7 +78,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     });
   }, [historialList]);
 
-  // Filtrado reactivo en historial por folio, sucursal destino, área o producto
   const filteredHistory = useMemo(() => {
     const q = historySearch.toLowerCase().trim();
     if (!q) return sortedHistory;
@@ -91,7 +93,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     });
   }, [sortedHistory, historySearch]);
 
-  // Carga progresiva (chunk de 15 en 15)
   const visibleHistory = useMemo(() => {
     return filteredHistory.slice(0, historyLimit);
   }, [filteredHistory, historyLimit]);
@@ -112,7 +113,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     setHistoryLimit(15);
   };
 
-  // Carga incremental automática al hacer scroll al fondo
   useEffect(() => {
     if (activeTab !== 'historial' || !hasMoreHistory || isLoadingMoreHistory) return;
     const observer = new IntersectionObserver((entries) => {
@@ -140,7 +140,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const closeDialog = () => setDialog(prev => ({ ...prev, isOpen: false }));
 
   useEffect(() => {
-    // Suscribir a Sedes y Áreas en tiempo real
     const unsubSedes = organizationService.subscribeSedes((sedes) => {
       setSedesList(sedes);
     });
@@ -152,7 +151,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       const draft = await transferService.getActiveDraft(currentUser.username);
       if (draft && draft.items && draft.items.length > 0) {
         setCurrentDraft(prev => {
-          // Si el usuario ya comenzó a capturar o agregar productos localmente, nunca sobreescribir
           if (prev.items && prev.items.length > 0) return prev;
           if (draft.sucursalDestino) setSelectedDestSede(draft.sucursalDestino);
           if (draft.areaDestino) setSelectedDestArea(draft.areaDestino);
@@ -179,7 +177,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   }, [currentUser]);
 
   const triggerAutoSave = async (draft) => {
-    // REGLA: Si no hay productos, NO guardar borrador. Si ya existía, eliminarlo de inmediato.
     if (!draft || !draft.items || draft.items.length === 0) {
       if (draft?.id) {
         await transferService.deleteEmptyDraft(draft.id);
@@ -259,7 +256,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     setIsQuantityOpen(false);
     if (!scannedMedicine) return;
 
-    // Registrar producto automáticamente en Catálogo Limpio
     if (scannedMedicine.codigo && scannedMedicine.descripcion) {
       catalogService.saveToCleanCatalog(scannedMedicine.codigo, scannedMedicine.descripcion);
     }
@@ -290,6 +286,9 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     };
     setCurrentDraft(updated);
     triggerAutoSave(updated);
+    setTimeout(() => {
+      setIsScannerOpen(true);
+    }, 280);
   };
 
   const executeRemoveItem = async (index) => {
@@ -298,7 +297,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     setCurrentDraft(updated);
 
     if (newItems.length === 0) {
-      // Si se quedó sin productos, eliminar el borrador de inmediato para no dejar basura
       if (currentDraft?.id) {
         await transferService.deleteEmptyDraft(currentDraft.id);
       }
@@ -368,7 +366,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const targetAllAreas = Array.isArray(targetSedeObj?.areas) ? targetSedeObj.areas : [];
   const isTargetOwnSede = (selectedDestSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
 
-  // Filtrar áreas que NO estén excluidas de transferencias
   const operativeTargetAreas = targetAllAreas.filter(areaName => {
     const aObj = areasList.find(a => a.nombre?.toLowerCase() === areaName.toLowerCase());
     return !aObj?.excluirTransferencias;
@@ -442,11 +439,9 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
-    // Detección de productos con más de 4 piezas hacia destinos que NO son Bodega
     const isDestinationBodega = /bodega/i.test(selectedDestArea || '') || /bodega/i.test(selectedDestSede || '');
     const bulkItems = (currentDraft.items || []).filter(item => (Number(item.cantidadSolicitada) || 0) > 4);
 
-    // Si el destino NO es una bodega y se solicitan más de 4 piezas, advertir con la cuenta regresiva
     if (!isDestinationBodega && bulkItems.length > 0) {
       setBulkWarningItems(bulkItems);
       setIsBulkWarningOpen(true);
@@ -493,14 +488,13 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
         esTransferenciaInterna: isTargetOwnSede,
         fecha: new Date().toISOString()
       };
-      if (finalized.items && finalized.items.length > 0) {
-        await catalogService.saveBatchToCleanCatalog(finalized.items);
-      }
-      await transferService.saveDraft(finalized);
-      await transferService.submitSolicitud(finalized.id);
 
+      await transferService.sendSolicitud(finalized);
+      playOrderSuccessSound();
+
+      const newDraftId = 'sol-' + Date.now();
       setCurrentDraft({
-        id: 'sol-' + Date.now(),
+        id: newDraftId,
         sucursalOrigen: currentUser?.sede || 'Sucursal',
         areaOrigen: currentUser?.area || '',
         sucursalDestino: '',
@@ -513,6 +507,8 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       });
       setSelectedDestSede('');
       setSelectedDestArea('');
+      setSavingStatus('saved');
+
       handleSwitchTab('historial');
     } catch (e) {
       console.error('Error al enviar solicitud:', e);
@@ -559,10 +555,8 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       cancelText: 'Cancelar',
       onConfirm: async () => {
         closeDialog();
-        // 1. Actualización optimista inmediata en la UI de historial
         setHistorialList(prev => prev.filter(s => s.id !== sol.id));
 
-        // 2. Si el borrador eliminado coincide con el cargado en la captura, resetearlo inmediatamente
         if (currentDraft?.id === sol.id) {
           setCurrentDraft({
             id: 'sol-' + Date.now(),
@@ -583,7 +577,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
         try {
           await transferService.deleteDraft(sol.id, currentUser);
         } catch (err) {
-          // Si falló por validación de permisos, restaurar la lista
           const fallback = transferService.getLocalSolicitudes().filter(s => canUserViewInSolicitar(s, currentUser));
           setHistorialList(fallback);
           setDialog({
@@ -603,40 +596,53 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
 
   return (
     <div className="max-w-2xl mx-auto space-y-5 pb-20">
-      <div className="flex items-center justify-between vt-module-header">
-        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 bg-white px-3 py-1.5 rounded-full border border-slate-200/80 shadow-sm cursor-pointer">
-          <ArrowLeft className="w-3.5 h-3.5" /><span>Volver al Inicio</span>
-        </button>
-        <div className="bg-slate-200/70 p-0.5 rounded-full flex text-xs font-medium">
-          <button
-            onClick={() => handleSwitchTab('captura')}
-            className={`px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
-              activeTab === 'captura'
-                ? 'bg-white text-slate-900 shadow-sm font-semibold'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Captura
+      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5 transition-all">
+        <div className="flex items-center justify-between vt-module-header">
+          <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm cursor-pointer transition-colors">
+            <ArrowLeft className="w-3.5 h-3.5" /><span>Volver al Inicio</span>
           </button>
-          <button
-            onClick={() => handleSwitchTab('historial')}
-            className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all duration-200 ${
-              activeTab === 'historial'
-                ? 'bg-white text-slate-900 shadow-sm font-semibold'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <History className="w-3 h-3" />
-            <span>Historial ({historialList.length})</span>
-          </button>
+          <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full flex text-xs font-medium border border-transparent dark:border-slate-700/60">
+            <button
+              onClick={() => handleSwitchTab('captura')}
+              className={`px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
+                activeTab === 'captura'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+              }`}
+            >
+              Captura
+            </button>
+            <button
+              onClick={() => handleSwitchTab('historial')}
+              className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all duration-200 ${
+                activeTab === 'historial'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Historial ({historialList.length})</span>
+            </button>
+          </div>
         </div>
+
+        {activeTab === 'historial' && (
+          <div className="relative pt-0.5">
+            <MarqueeSearchInput
+              placeholder="Buscar por folio, destino o producto..."
+              value={historySearch}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onClear={() => handleSearchChange('')}
+            />
+          </div>
+        )}
       </div>
 
       {activeTab === 'captura' ? (
         <div key="tab-captura" className="space-y-5 animate-fade-in">
-          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-blue-600" />
                 Destino de la Transferencia
               </span>
@@ -649,7 +655,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
             </div>
 
             {isCurrentUserAreaExcluded && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2 text-xs text-amber-800">
+              <div className="p-3 bg-amber-50 dark:bg-transparent border border-amber-200/80 dark:border-amber-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-amber-800 dark:text-amber-400 shadow-2xs">
                 <Info className="w-4 h-4 shrink-0 text-amber-600" />
                 <span>
                   Tu área actual (<strong>{currentUser?.area}</strong>) está configurada como excluida de transferencias de mercancía.
@@ -657,16 +663,15 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
               </div>
             )}
 
-            {/* Selector de Destino: Sede y Área Condicional */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
                   Sede de Destino *
                 </label>
                 <select
                   value={selectedDestSede}
                   onChange={(e) => handleDestSedeChange(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-500 transition-colors"
+                  className="w-full bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500 transition-colors"
                 >
                   <option value="">-- Seleccionar Sede --</option>
                   {availableDestSedes.map((s) => (
@@ -678,14 +683,14 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-1">
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
                   Área de Destino {targetHasAreas ? '*' : ''}
                 </label>
                 {targetHasAreas ? (
                   <select
                     value={selectedDestArea}
                     onChange={(e) => handleDestAreaChange(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-blue-500 transition-colors"
+                    className="w-full bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500 transition-colors"
                   >
                     <option value="">-- Seleccionar Área --</option>
                     {availableDestAreas.map((areaName, idx) => (
@@ -695,7 +700,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                     ))}
                   </select>
                 ) : (
-                  <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-500 text-xs flex items-center gap-1.5">
+                  <div className="w-full bg-slate-100/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-slate-500 dark:text-slate-400 text-xs flex items-center gap-1.5">
                     <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     <span>{selectedDestSede ? 'Esta sede opera de forma directa' : 'Selecciona primero una sede'}</span>
                   </div>
@@ -711,9 +716,9 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
             </button>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
-            <div className="px-5 py-3.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Productos ({currentDraft.items?.length || 0})</h3>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5 bg-slate-50/70 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Productos ({currentDraft.items?.length || 0})</h3>
               <div className="text-[11px] text-slate-500">
                 {savingStatus === 'saving' ? <span className="text-blue-600 animate-pulse">Guardando...</span> : <span className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5 inline mr-1" />Guardado</span>}
               </div>
@@ -725,18 +730,18 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                 <p className="text-sm font-medium text-slate-700">Tu lista está vacía</p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {currentDraft.items.map((item, idx) => (
                   <div key={item.codigo + '-' + idx} className="p-4 flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <MarqueeText
                         text={item.descripcion}
-                        className="text-sm font-semibold text-slate-900 block"
+                        className="text-sm font-semibold text-slate-900 dark:text-slate-100 block"
                       />
-                      <p className="text-xs font-mono text-slate-400">Código: {item.codigo}</p>
+                      <p className="text-xs font-mono text-slate-400 dark:text-slate-500">Código: {item.codigo}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <div className="flex items-center bg-slate-50 rounded-xl border border-slate-200 shadow-2xs">
+                      <div className="flex items-center bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
                         <button
                           type="button"
                           onClick={() => handleUpdateQty(idx, -1)}
@@ -745,7 +750,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                         >
                           <Minus className="w-3 h-3" />
                         </button>
-                        <span className="font-mono font-bold text-xs px-2 text-slate-800 min-w-8 text-center select-none">
+                        <span className="font-mono font-bold text-xs px-2 text-slate-800 dark:text-slate-200 min-w-8 text-center select-none">
                           {item.cantidadSolicitada}
                         </span>
                         <button
@@ -772,8 +777,8 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
             )}
 
             {currentDraft.items && currentDraft.items.length > 0 && (
-              <div className="p-4 bg-slate-50/80 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <span className="text-xs text-slate-500">Tu lista está autoguardada.</span>
+              <div className="p-4 bg-slate-50/80 dark:bg-slate-800/60 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <span className="text-xs text-slate-500 dark:text-slate-400">Tu lista está autoguardada.</span>
                 <button onClick={handleSubmitSolicitud} className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs rounded-2xl shadow-md flex items-center justify-center gap-2 cursor-pointer">
                   <Send className="w-4 h-4" /><span>Enviar</span>
                 </button>
@@ -783,16 +788,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
         </div>
       ) : (
         <div key="tab-historial" className="space-y-4 animate-fade-in">
-          {/* Buscador de historial con marquesina de texto largo */}
-          <div className="bg-white p-3.5 rounded-3xl border border-slate-200/80 shadow-sm">
-            <MarqueeSearchInput
-              placeholder="Buscar por folio, destino o producto..."
-              value={historySearch}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              onClear={() => handleSearchChange('')}
-            />
-          </div>
-
           {isHistorialInitialLoading ? (
             <div className="bg-white rounded-3xl p-10 border border-slate-200/80 shadow-sm text-center space-y-3">
               <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
@@ -839,14 +834,12 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                       key={sol.id}
                       onClick={() => {
                         if (isDraft) {
-                          // Cargar borrador para continuar capturando
                           setCurrentDraft(sol);
                           if (sol.sucursalDestino) setSelectedDestSede(sol.sucursalDestino);
                           if (sol.areaDestino) setSelectedDestArea(sol.areaDestino);
                           handleSwitchTab('captura');
                           window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
                         } else {
-                          // Abrir vista detallada para completadas o en tránsito
                           setDetailSolicitud(sol);
                         }
                       }}
@@ -858,12 +851,12 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                             {sol.folio ? sol.folio : `Ref: ${formatTransferFolio(sol)}`}
                           </span>
                           {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
-                            <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full shrink-0">
+                            <span className="text-[10px] text-indigo-700 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-transparent border border-indigo-200 dark:border-indigo-500/30 px-2 py-0.5 rounded-full shrink-0">
                               Transferencia Interna
                             </span>
                           )}
                           {(sol.sucursalDestino || sol.areaDestino) && (
-                            <span className="text-[10px] text-slate-500 font-medium bg-slate-100 px-2 py-0.5 rounded-full truncate max-w-full">
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full truncate max-w-full">
                               ➔ {sol.sucursalDestino || 'Destino'}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}
                             </span>
                           )}
@@ -873,18 +866,18 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                           <span
                             className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap ${
                               isDraft
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                ? 'bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
                                 : sol.estado === 'faltantes_despachados'
-                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                ? 'bg-purple-50 dark:bg-transparent text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/30'
                                 : sol.estado === 'cerrada_con_faltantes'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                ? 'bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
                                 : sol.estado === 'recibida_incompleta'
-                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                ? 'bg-red-50 dark:bg-transparent text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/30'
                                 : sol.estado === 'completada' || sol.estado === 'recibida'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                ? 'bg-emerald-50 dark:bg-transparent text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
                                 : sol.estado === 'en_despacho'
-                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                ? 'bg-indigo-50 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30'
+                                : 'bg-blue-50 dark:bg-transparent text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30'
                             }`}
                           >
                             {isDraft
@@ -892,11 +885,11 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                               : sol.estado === 'faltantes_despachados'
                               ? 'Faltantes en camino'
                               : sol.estado === 'cerrada_con_faltantes'
-                              ? 'Cerrada c/ faltantes'
+                              ? 'Cerrada con Faltantes'
                               : sol.estado === 'recibida_incompleta'
                               ? 'Incompleta'
                               : sol.estado === 'recibida' && sol.reporteFaltantes?.length > 0
-                              ? 'Recibida c/ Faltantes'
+                              ? 'Recibida con Faltantes'
                               : sol.estado === 'en_despacho'
                               ? 'En Despacho'
                               : sol.estado
@@ -904,7 +897,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                               : ''}
                           </span>
 
-                          {/* Botón de eliminar SOLO disponible para borradores */}
                           {canDeleteDraft && (
                             <button
                               onClick={(e) => handleDeleteDraft(e, sol)}
@@ -932,12 +924,10 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
                 })}
               </div>
 
-              {/* Resumen del conteo al final de la lista */}
               <div className="pt-2 text-center text-xs text-slate-400">
                 <span>Mostrando {visibleHistory.length} de {filteredHistory.length} transferencias</span>
               </div>
 
-              {/* Centinela para scroll infinito y/o botón Cargar Más */}
               {hasMoreHistory && (
                 <div ref={sentinelRef} className="pt-2 pb-2 text-center">
                   <button
@@ -975,14 +965,12 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       <CaptureQuantityModal isOpen={isQuantityOpen} scannedItem={scannedMedicine} onClose={() => setIsQuantityOpen(false)} onConfirmQuantity={handleConfirmQuantity} />
       <ModalDialog isOpen={dialog.isOpen} type={dialog.type} title={dialog.title} message={dialog.message} confirmText={dialog.confirmText} onConfirm={dialog.onConfirm} onCancel={dialog.onCancel} />
       
-      {/* Modal de Detalle de Transferencia */}
       <TransferDetailModal
         isOpen={Boolean(detailSolicitud)}
         solicitud={detailSolicitud}
         onClose={() => setDetailSolicitud(null)}
       />
 
-      {/* Modal de Advertencia con Cuenta Regresiva para Pedidos > 4 Piezas hacia Bodega */}
       <BulkOrderWarningModal
         isOpen={isBulkWarningOpen}
         onClose={() => setIsBulkWarningOpen(false)}

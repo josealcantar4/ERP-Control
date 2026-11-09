@@ -1,3 +1,7 @@
+/**
+ * Utilidad para transiciones suaves de vista utilizando la API View Transitions del navegador con degradación elegante.
+ */
+
 import { flushSync } from 'react-dom';
 
 export function transitionView(updateFn, { direction = 'forward', type = null } = {}) {

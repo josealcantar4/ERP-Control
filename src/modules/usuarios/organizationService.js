@@ -1,3 +1,7 @@
+/**
+ * Servicio para la consulta y gestión de sedes, sucursales y estructuras organizacionales en Firestore.
+ */
+
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
   collection,
@@ -72,7 +76,6 @@ function generateCleanId(prefix, text) {
 }
 
 export const organizationService = {
-  // Suscripción en tiempo real a Sedes
   subscribeSedes(onUpdate) {
     const initialLocal = getLocalSedes();
     if (initialLocal.length > 0) {
@@ -113,7 +116,6 @@ export const organizationService = {
     return () => window.removeEventListener('erp_sedes_changed', handler);
   },
 
-  // Forzar verificación y obtención de sedes y áreas actualizadas
   async refreshSedesAndAreas() {
     const result = { sedes: [], areas: [] };
     if (isFirebaseConfigured) {
@@ -153,7 +155,6 @@ export const organizationService = {
     return result;
   },
 
-  // Crear una nueva Sede (con lista opcional de sub-áreas)
   async createSede(nombre, tipo = 'Sucursal', areas = [], esDestino = true) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre de la sede es obligatorio.');
@@ -183,7 +184,6 @@ export const organizationService = {
     return id;
   },
 
-  // Actualizar una Sede existente
   async updateSede(id, nombre, tipo, areas = null, esDestino = undefined) {
     if (!id) throw new Error('El ID de la sede es obligatorio.');
     const cleanNombre = nombre.trim();
@@ -214,7 +214,6 @@ export const organizationService = {
     return true;
   },
 
-  // Agregar una sub-área a una Sede
   async addAreaToSede(sedeId, areaNombre) {
     if (!sedeId) throw new Error('ID de sede requerido.');
     const cleanArea = String(areaNombre || '').trim();
@@ -232,7 +231,6 @@ export const organizationService = {
     return true;
   },
 
-  // Remover una sub-área de una Sede
   async removeAreaFromSede(sedeId, areaNombre) {
     if (!sedeId) throw new Error('ID de sede requerido.');
     const cleanArea = String(areaNombre || '').trim();
@@ -247,7 +245,6 @@ export const organizationService = {
     return true;
   },
 
-  // Obtener las sub-áreas configuradas para una Sede por ID o Nombre
   getSedeAreas(sedeNombreOrId) {
     if (!sedeNombreOrId) return [];
     const sedes = getLocalSedes();
@@ -257,7 +254,6 @@ export const organizationService = {
     return Array.isArray(found?.areas) ? found.areas : [];
   },
 
-  // Eliminar una Sede
   async deleteSede(id) {
     if (!id) throw new Error('El ID de la sede es obligatorio.');
 
@@ -270,7 +266,6 @@ export const organizationService = {
     return true;
   },
 
-  // Suscripción en tiempo real a Áreas
   subscribeAreas(onUpdate) {
     const initialLocal = getLocalAreas();
     if (initialLocal.length > 0) {
@@ -310,7 +305,6 @@ export const organizationService = {
     return () => window.removeEventListener('erp_areas_changed', handler);
   },
 
-  // Crear una nueva Área
   async createArea(nombre, excluirTransferencias = false) {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
@@ -334,7 +328,6 @@ export const organizationService = {
     return id;
   },
 
-  // Actualizar un Área existente
   async updateArea(id, nombre, excluirTransferencias = false) {
     if (!id) throw new Error('El ID del área es obligatorio.');
     const cleanNombre = nombre.trim();
@@ -357,12 +350,10 @@ export const organizationService = {
     return true;
   },
 
-  // Obtener áreas operativas para transferencias y pedidos
   getOperativeAreas() {
     return getLocalAreas().filter(a => !a.excluirTransferencias);
   },
 
-  // Eliminar un Área
   async deleteArea(id) {
     if (!id) throw new Error('El ID del área es obligatorio.');
 

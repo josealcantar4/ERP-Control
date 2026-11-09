@@ -1,3 +1,7 @@
+/**
+ * Módulo de administración del catálogo que permite forzar la sincronización del archivo central y gestionar el catálogo limpio.
+ */
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ArrowLeft,
@@ -25,7 +29,7 @@ import { CleanProductModal } from './CleanProductModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { MarqueeSearchInput } from '../../shared';
+import { MarqueeSearchInput, playSuccessSound } from '../../shared';
 
 export function CatalogUploadModule({ currentUser, onBack }) {
   const activeUser = currentUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('erp_current_user') || '{}') : {});
@@ -42,19 +46,17 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     duplicateCount: 0
   });
   const [isVerifying, setIsVerifying] = useState(false);
-  const [serverState, setServerState] = useState('checking'); // 'up_to_date' | 'server_updated' | 'offline' | 'checking'
-  const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message }
+  const [serverState, setServerState] = useState('checking');
+  const [feedback, setFeedback] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   const [customFileId, setCustomFileId] = useState('');
 
-  // Estado del Catálogo Limpio (Firestore)
   const [cleanItems, setCleanItems] = useState([]);
   const [cleanSearchQuery, setCleanSearchQuery] = useState('');
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [editingCleanItem, setEditingCleanItem] = useState(null);
   const [isHistorySyncing, setIsHistorySyncing] = useState(false);
 
-  // Diálogo modal para confirmaciones
   const [dialog, setDialog] = useState({
     isOpen: false,
     type: 'alert',
@@ -70,13 +72,17 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     setDialog(prev => ({ ...prev, isOpen: false }));
   };
 
-  // Sincronización SIEMPRE VISIBLE del Excel Central
+  useEffect(() => {
+    if (feedback && feedback.type === 'success') {
+      playSuccessSound();
+    }
+  }, [feedback]);
+
   const handleForceSync = () => {
     setFeedback(null);
     window.dispatchEvent(new CustomEvent('erp_trigger_catalog_sync', { detail: { force: true } }));
   };
 
-  // Cargar estado inicial y reconciliar con Firestore
   const loadStatus = useCallback(async () => {
     try {
       if (isRootAdmin) {
@@ -88,7 +94,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       setCatalogStatus(status);
       setCustomFileId(status.fileId);
 
-      // Verificación con el servidor
       setIsVerifying(true);
       const versionCheck = await catalogService.checkServerCatalogVersion();
       if (versionCheck.offline) {
@@ -97,7 +102,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         setServerState('up_to_date');
       } else {
         setServerState('server_updated');
-        // Disparar sincronización visible en primer plano para todos los usuarios
         window.dispatchEvent(new CustomEvent('erp_trigger_catalog_sync', { detail: { force: false } }));
       }
     } catch (err) {
@@ -111,7 +115,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
   useEffect(() => {
     loadStatus();
 
-    // Suscripción reactiva en tiempo real al Catálogo Limpio (Exclusivo Administrador)
     let unsubscribe = null;
     if (isRootAdmin) {
       unsubscribe = catalogService.subscribeCleanCatalog((items) => {
@@ -120,7 +123,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       });
     }
 
-    // Escuchar cuando la sincronización global visible termine
     const handleGlobalSync = async (e) => {
       setServerState('up_to_date');
       const status = await catalogService.getCatalogStatus();
@@ -141,13 +143,11 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     };
   }, [isRootAdmin, loadStatus]);
 
-  // Guardar ID o URL personalizada del recurso central (Exclusivo Administrador)
   const handleSaveConfig = () => {
     if (!isRootAdmin) return;
     if (!customFileId.trim()) return;
     let clean = customFileId.trim();
 
-    // Solo extrae ID si NO es una URL completa que empieza con http(s)
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       const matchId = clean.match(/\/d\/([a-zA-Z0-9_-]+)/) || clean.match(/id=([a-zA-Z0-9_-]+)/);
       if (matchId && matchId[1]) {
@@ -164,7 +164,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     loadStatus();
   };
 
-  // Apertura de modales de producto limpio (Exclusivo Administrador)
   const handleOpenAddClean = () => {
     if (!isRootAdmin) return;
     setEditingCleanItem(null);
@@ -177,7 +176,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     setIsCleanModalOpen(true);
   };
 
-  // Guardar o Actualizar producto limpio (Exclusivo Administrador)
   const handleSaveCleanProduct = async (codigo, descripcion) => {
     if (!isRootAdmin) return;
     if (editingCleanItem) {
@@ -195,7 +193,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     }
   };
 
-  // Eliminar producto limpio con confirmación (Exclusivo Administrador)
   const handleDeleteCleanProduct = (item) => {
     if (!isRootAdmin) return;
     setDialog({
@@ -262,7 +259,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     });
   };
 
-  // Filtro de búsqueda en tiempo real
   const filteredCleanItems = useMemo(() => {
     const q = cleanSearchQuery.trim().toLowerCase();
     if (!q) return cleanItems;
@@ -273,7 +269,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     });
   }, [cleanItems, cleanSearchQuery]);
 
-  // Carga progresiva (15 en 15) como en historial
   const [cleanItemsLimit, setCleanItemsLimit] = useState(15);
   const [isLoadingMoreClean, setIsLoadingMoreClean] = useState(false);
   const cleanSentinelRef = useRef(null);
@@ -349,16 +344,16 @@ export function CatalogUploadModule({ currentUser, onBack }) {
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
       
-      {/* BOTÓN VOLVER */}
-      <button
-        onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3.5 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all cursor-pointer"
-      >
-        <ArrowLeft className="w-3.5 h-3.5" />
-        <span>Volver al Dashboard</span>
-      </button>
+      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all cursor-pointer"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Volver al Dashboard</span>
+        </button>
+      </div>
 
-      {/* ENCABEZADO PRINCIPAL */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -379,7 +374,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           </div>
 
-          {/* Configuración avanzada (Solo visible y editable por el usuario Administrador) */}
           {isRootAdmin && (
             <button
               onClick={() => setShowConfig(!showConfig)}
@@ -391,7 +385,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           )}
         </div>
 
-        {/* CONFIGURACIÓN AVANZADA COLAPSABLE (Solo visible y editable por el usuario Administrador) */}
         {isRootAdmin && showConfig && (
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 animate-fade-in">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
@@ -416,10 +409,8 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
         )}
 
-        {/* TARJETAS DE ESTADO */}
         <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRootAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
           
-          {/* Tarjeta 1: Productos Locales Base */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
             <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
               <Database className="w-3.5 h-3.5 text-blue-600" />
@@ -435,7 +426,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </p>
           </div>
 
-          {/* Tarjeta 2: Catálogo Limpio (Solo visible para el usuario Administrador) */}
           {isRootAdmin && (
             <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
               <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
@@ -451,7 +441,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           )}
 
-          {/* Tarjeta 3: Última Sincronización y Edición del Archivo */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
             <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
               <Clock className="w-3.5 h-3.5 text-indigo-600" />
@@ -465,7 +454,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </p>
           </div>
 
-          {/* Tarjeta 4: Estado Servidor Central */}
           <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
             <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
               {serverState === 'offline' ? (
@@ -497,7 +485,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
         </div>
 
-        {/* FEEDBACK BANNER */}
         {feedback && (
           <div
             className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-medium animate-fade-in ${
@@ -523,7 +510,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
         )}
 
-        {/* ACCIÓN PRINCIPAL: FORZAR SINCRONIZACIÓN MANUAL (SIEMPRE VISIBLE) */}
         <div className="space-y-3 pt-2">
           <button
             onClick={handleForceSync}
@@ -539,11 +525,9 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
       </div>
 
-      {/* SECCIÓN: GESTIÓN DEL CATÁLOGO LIMPIO (Exclusivo Administrador) */}
       {isRootAdmin && (
         <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
           
-          {/* Cabecera de la sección */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
@@ -566,15 +550,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
             <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
               <button
-                onClick={handleSyncFromHistory}
-                disabled={isHistorySyncing}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-                title="Escanear historial de solicitudes y despachos para registrar productos"
-              >
-                <HardDriveDownload className={`w-4 h-4 text-emerald-600 ${isHistorySyncing ? 'animate-bounce' : ''}`} />
-                <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial'}</span>
-              </button>
-              <button
                 onClick={handleOpenAddClean}
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
               >
@@ -584,7 +559,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           </div>
 
-          {/* Barra de Búsqueda con AutoScroll y Carrusel */}
           <div>
             <MarqueeSearchInput
               value={cleanSearchQuery}
@@ -595,7 +569,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             />
           </div>
 
-          {/* Listado de Productos Limpios */}
           {cleanItems.length === 0 ? (
             <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-3">
               <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
@@ -611,16 +584,8 @@ export function CatalogUploadModule({ currentUser, onBack }) {
               </div>
               <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
                 <button
-                  onClick={handleSyncFromHistory}
-                  disabled={isHistorySyncing}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
-                >
-                  <HardDriveDownload className="w-3.5 h-3.5" />
-                  <span>{isHistorySyncing ? 'Alimentando...' : 'Alimentar desde Historial de Pedidos'}</span>
-                </button>
-                <button
                   onClick={handleOpenAddClean}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-2xs"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Registrar producto manual</span>
@@ -675,12 +640,10 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                 </div>
               ))}
 
-              {/* Resumen del conteo al final de la lista */}
               <div className="pt-2 text-center text-xs text-slate-400">
                 <span>Mostrando {visibleCleanItems.length} de {filteredCleanItems.length} productos</span>
               </div>
 
-              {/* Centinela para scroll infinito y/o botón Cargar Más */}
               {hasMoreClean && (
                 <div ref={cleanSentinelRef} className="pt-1 pb-2 text-center">
                   <button
@@ -709,7 +672,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         </div>
       )}
 
-      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO LIMPIO (Exclusivo Administrador) */}
       {isRootAdmin && (
         <CleanProductModal
           isOpen={isCleanModalOpen}
@@ -719,7 +681,6 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         />
       )}
 
-      {/* MODAL DIALOG PARA CONFIRMACIONES Y ALERTAS */}
       <ModalDialog
         isOpen={dialog.isOpen}
         type={dialog.type}

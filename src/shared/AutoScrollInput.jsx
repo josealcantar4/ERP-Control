@@ -1,3 +1,7 @@
+/**
+ * Componente de entrada de texto interactivo con auto-desplazamiento horizontal automático al exceder el límite visual.
+ */
+
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 

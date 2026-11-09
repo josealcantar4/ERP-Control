@@ -1,16 +1,22 @@
+/**
+ * Configuración del empaquetador Vite con integración de React, Tailwind CSS v4 y soporte de Progressive Web App (PWA).
+ */
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString())
+  },
   plugins: [
     react(),
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'maskable-icon-512x512.png', 'notification.mp3', 'check.mp3', 'sw-push-listener.js', 'notification-badge-96x96.png'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'maskable-icon-512x512.png', 'notification.mp3', 'check.mp3', 'order-success.mp3', 'sw-push-listener.js', 'notification-badge-96x96.png'],
       manifest: {
         id: '/erp-control',
         name: 'ERP Control',
@@ -51,6 +57,7 @@ export default defineConfig({
         ]
       },
       workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3}'],
         importScripts: ['sw-push-listener.js'],
         navigateFallback: 'index.html'

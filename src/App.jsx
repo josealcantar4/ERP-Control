@@ -1,3 +1,7 @@
+/**
+ * Componente raíz de la aplicación ERP Control. Administra el enrutamiento de módulos, estado de autenticación, actualización PWA, sincronización global de catálogo y estructura del contenedor principal.
+ */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { userService, organizationService, AdminUsersModule, LoginScreen } from './modules/usuarios';
 import { catalogService, CatalogUploadModule, CatalogSyncModal } from './modules/catalogo';
@@ -8,6 +12,9 @@ import { RecibirModule } from './modules/recibir';
 import { MaterialModule, materialService } from './modules/material';
 import {
   AppleNavbar,
+  AppSidebar,
+  userPreferencesService,
+  themeService,
   DashboardScreen,
   OfflineIndicator,
   ReloadPrompt,
@@ -40,6 +47,37 @@ export default function App() {
   useEffect(() => {
     isNotificationsOpenRef.current = isNotificationsOpen;
   }, [isNotificationsOpen]);
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [userPreferences, setUserPreferences] = useState(() => {
+    return userPreferencesService.getLocalPreferences();
+  });
+
+  useEffect(() => {
+    themeService.applyTheme();
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsub = userPreferencesService.subscribeUserPreferences(currentUser, (newPrefs) => {
+      setUserPreferences(newPrefs);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentUser?.id, currentUser?.username]);
+
+  const handleUpdatePreferences = async (partial) => {
+    setUserPreferences(prev => ({
+      ...prev,
+      ...partial,
+      sounds: {
+        ...(prev?.sounds || {}),
+        ...(partial.sounds || {})
+      }
+    }));
+    await userPreferencesService.savePreferences(currentUser, partial);
+  };
   const [materialNotifications, setMaterialNotifications] = useState([]);
   const [transferNotifications, setTransferNotifications] = useState([]);
   const [notificationDetailTransfer, setNotificationDetailTransfer] = useState(null);
@@ -221,7 +259,6 @@ export default function App() {
 
     const now = Date.now();
     const lastTime = lastScreenRefreshTimeRef.current[screen] || 0;
-    // Evitar ráfagas o múltiples llamadas encadenadas (mínimo 4s entre verificaciones automáticas)
     if (!force && (isScreenRefreshingRef.current || (now - lastTime < 4000))) {
       return;
     }
@@ -311,6 +348,7 @@ export default function App() {
   }, []);
 
   const navigateTo = (screen, customDirection = null) => {
+    setIsSidebarOpen(false);
     const direction = customDirection || (screen === 'dashboard' ? 'back' : 'forward');
     transitionView(() => {
       setCurrentScreen(screen);
@@ -363,6 +401,7 @@ export default function App() {
   }, []);
 
   const handleLoginSuccess = (user) => {
+    setIsSidebarOpen(false);
     transitionView(() => {
       setCurrentUser(user);
       let targetScreen = 'dashboard';
@@ -380,6 +419,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    setIsSidebarOpen(false);
     transitionView(() => {
       userService.logout();
       transferService.resetSolicitudesSubscription();
@@ -422,47 +462,54 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-colors duration-200 overflow-x-clip relative">
       <OfflineIndicator />
 
-      <CatalogSyncModal
-        isOpen={syncModal.isOpen}
-        status={syncModal.status}
-        progress={syncModal.progress}
-        error={syncModal.error}
-        onRetry={() => runCatalogAutoSync(true)}
-        onDismiss={() => setSyncModal(prev => ({ ...prev, isOpen: false }))}
-      />
+      <div
+        className={`flex flex-col min-h-screen w-full transition-transform duration-300 ease-out ${
+          isSidebarOpen ? 'transform -translate-x-72 sm:-translate-x-80 pointer-events-none select-none' : ''
+        }`}
+      >
+        <CatalogSyncModal
+          isOpen={syncModal.isOpen}
+          status={syncModal.status}
+          progress={syncModal.progress}
+          error={syncModal.error}
+          onRetry={() => runCatalogAutoSync(true)}
+          onDismiss={() => setSyncModal(prev => ({ ...prev, isOpen: false }))}
+        />
 
-      <AppleNavbar
-        currentUser={currentUser}
-        onLogout={handleLogout}
-        onNavigate={navigateTo}
-        currentScreen={currentScreen}
-        notificationCount={notificationsList.length}
-        isNotificationsOpen={isNotificationsOpen}
-        onOpenNotifications={() => {
-          if (isNotificationsOpenRef.current) {
-            setIsNotificationsOpen(false);
-            return;
-          }
+        <AppleNavbar
+          currentUser={currentUser}
+          onNavigate={navigateTo}
+          currentScreen={currentScreen}
+          notificationCount={notificationsList.length}
+          isNotificationsOpen={isNotificationsOpen}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen(prev => !prev)}
+          onOpenNotifications={() => {
+            if (isNotificationsOpenRef.current) {
+              setIsNotificationsOpen(false);
+              return;
+            }
+            setIsSidebarOpen(false);
 
-          transferService.unlockAudioEngine();
-          if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-          }
-          if (currentUser) {
-            const latestSolicitudes = transferService.getLocalSolicitudes();
-            const freshTransferNotifs = transferService.calculateTransferNotifications(latestSolicitudes, currentUser);
-            setTransferNotifications(freshTransferNotifs);
+            transferService.unlockAudioEngine();
+            if ('Notification' in window && Notification.permission === 'default') {
+              Notification.requestPermission();
+            }
+            if (currentUser) {
+              const latestSolicitudes = transferService.getLocalSolicitudes();
+              const freshTransferNotifs = transferService.calculateTransferNotifications(latestSolicitudes, currentUser);
+              setTransferNotifications(freshTransferNotifs);
 
-            const latestMaterial = materialService.getLocalMateriales();
-            const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial);
-            setMaterialNotifications(freshMaterialNotifs);
-          }
-          setIsNotificationsOpen(true);
-        }}
-      />
+              const latestMaterial = materialService.getLocalMateriales();
+              const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial);
+              setMaterialNotifications(freshMaterialNotifs);
+            }
+            setIsNotificationsOpen(true);
+          }}
+        />
       <NotificationsModal
         isOpen={isNotificationsOpen}
         notifications={notificationsList}
@@ -566,10 +613,20 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="py-4 text-center text-[11px] text-slate-400 vt-footer">
+      <footer className="py-4 text-center text-[11px] text-slate-400 dark:text-slate-500 vt-footer">
         ERP Control &bull; {currentUser.sede}
       </footer>
       <ReloadPrompt />
     </div>
+
+    <AppSidebar
+      isOpen={isSidebarOpen}
+      onClose={() => setIsSidebarOpen(false)}
+      currentUser={currentUser}
+      onLogout={handleLogout}
+      preferences={userPreferences}
+      onUpdatePreferences={handleUpdatePreferences}
+    />
+  </div>
   );
 }

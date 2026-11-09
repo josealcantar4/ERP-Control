@@ -1,29 +1,29 @@
+/**
+ * Módulo para la inspección física, verificación de productos recibidos, captura de discrepancias y reporte de faltantes por sucursal.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X, RotateCcw, FileText, ChevronRight } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserReceive, playCheckSound } from '../transferencias';
-import { transitionView, QuantityStepper, DiscrepancySummaryModal } from '../../shared';
+import { transferService, formatTransferFolio, canUserReceive, playCheckSound, playOrderSuccessSound } from '../transferencias';
+import { transitionView, QuantityStepper, DiscrepancySummaryModal, ModalDialog } from '../../shared';
 
 export function getDispatchedQty(item) {
   if (!item) return 0;
-  // 1. Si bodega registró cantidadDespachada explícita (incluso 0 si hubo faltante total en bodega)
   if (item.cantidadDespachada !== undefined && item.cantidadDespachada !== null) {
     const desp = Number(item.cantidadDespachada);
     if (!isNaN(desp) && desp >= 0) return desp;
   }
 
-  // 2. Si es despacho directo o sin solicitud previa con 'cantidad'
   if (item.cantidad !== undefined && item.cantidad !== null) {
     const cant = Number(item.cantidad);
     if (!isNaN(cant) && cant >= 0) return cant;
   }
 
-  // 3. Fallback a cantidadSolicitada
   if (item.cantidadSolicitada !== undefined && item.cantidadSolicitada !== null) {
     const sol = Number(item.cantidadSolicitada);
     if (!isNaN(sol) && sol >= 0) return sol;
   }
 
-  // 4. Fallback a cantidadEsperada
   if (item.cantidadEsperada !== undefined && item.cantidadEsperada !== null) {
     const esp = Number(item.cantidadEsperada);
     if (!isNaN(esp) && esp >= 0) return esp;
@@ -74,7 +74,6 @@ function getProgressFromOrder(order) {
         if (!isNaN(itemRec) && itemRec >= 0 && item.recibido) {
           quantities[idx] = itemRec;
         } else {
-          // Inicializar siempre al número de piezas despachadas por bodega
           quantities[idx] = dispatched;
         }
       }
@@ -92,12 +91,10 @@ function getProgressFromOrder(order) {
         if (!isNaN(itemRec) && itemRec >= 0 && item.recibido) {
           faltantesQtys[idx] = itemRec;
         } else {
-          // Inicializar siempre al número de piezas despachadas por bodega
           faltantesQtys[idx] = dispatched;
         }
       }
       const qty = faltantesQtys[idx] !== undefined ? faltantesQtys[idx] : dispatched;
-      // Solo preservar observación de reenvío si realmente hay faltante y no precargar motivos de reportes anteriores
       if (qty < dispatched) {
         if (faltanteObservations[idx] === undefined && item.observacionRecepcionReenvio) {
           faltanteObservations[idx] = item.observacionRecepcionReenvio;
@@ -182,9 +179,24 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [activeObservationIndex, setActiveObservationIndex] = useState(null);
   const [activeFaltanteObservationIndex, setActiveFaltanteObservationIndex] = useState(null);
   
-  // Estado para el modal de resumen de discrepancias
   const [isDiscrepancyModalOpen, setIsDiscrepancyModalOpen] = useState(false);
   const [discrepanciesToReport, setDiscrepanciesToReport] = useState([]);
+
+  const [dialog, setDialog] = useState({
+    isOpen: false,
+    type: 'confirm',
+    title: '',
+    message: '',
+    variant: 'primary',
+    confirmText: 'Aceptar',
+    cancelText: 'Cancelar',
+    onConfirm: () => {},
+    onCancel: () => {}
+  });
+
+  const closeDialog = () => {
+    setDialog(prev => ({ ...prev, isOpen: false }));
+  };
 
   const [isLoadingOrders, setIsLoadingOrders] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
@@ -193,7 +205,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
 
   useEffect(() => {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
-      // Mostrar pedidos despachados inicialmente y re-despachos de faltantes según sede y área receptora
       const validos = list.filter((s) => canUserReceive(s, currentUser));
       setSolicitudes(validos);
       setIsLoadingOrders(false);
@@ -204,7 +215,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         const found = validos.find(s => s.id === targetId);
         if (found) {
           setSelectedOrder(found);
-          // Si el estado local aún no tenía progreso cargado, sincronizarlo
           const prog = getProgressFromOrder(found);
           setCheckedItems(prev => (Object.keys(prev).length > 0 ? prev : prog.checked));
           setReceivedQuantities(prev => (Object.keys(prev).length > 0 ? prev : prog.quantities));
@@ -221,7 +231,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     return () => unsubscribe();
   }, [currentUser, selectedOrder?.id]);
 
-  // Listener para apertura inmediata reactiva al presionar notificaciones sin esperar remount
   useEffect(() => {
     const handleOpenEvent = (e) => {
       const detail = e.detail;
@@ -291,7 +300,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     return dispatched;
   };
 
-  // Ajuste de cantidades con stepper [ - ] / [ + ] / [ 🗑️ ]
   const handleQuantityChange = async (index, newQty) => {
     const item = selectedOrder?.items?.[index];
     if (!item) return;
@@ -352,7 +360,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  // Toque sobre la fila: Si el producto tiene discrepancia se bloquea para selección normal; si no, toggle
   const handleRowClick = async (index) => {
     const item = selectedOrder?.items?.[index];
     if (!item) return;
@@ -360,7 +367,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     const current = getReceivedQty(index, item);
     const hasDiscrepancy = current !== dispatched;
 
-    // Si tiene discrepancia, se mantiene bloqueado en modo revisado con discrepancia
     if (hasDiscrepancy) {
       return;
     }
@@ -417,7 +423,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  // Captura de observación por producto en recepción de caja física
   const handleObservationChange = async (index, text) => {
     const newObservations = { ...itemObservations, [index]: text };
     setItemObservations(newObservations);
@@ -606,7 +611,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     });
   };
 
-  // Validación final al presionar "Listo, Terminar Revisión"
   const handleListo = () => {
     if (!selectedOrder?.items) return;
 
@@ -614,7 +618,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     selectedOrder.items.forEach((item, index) => {
       const dispatched = getDispatchedQty(item);
       const isChecked = checkedItems[index];
-      // Si el ítem no fue revisado por el usuario, se toma como 0 (ausencia total)
       const received = isChecked ? getReceivedQty(index, item) : 0;
       const diff = received - dispatched;
 
@@ -638,7 +641,21 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       setDiscrepanciesToReport(discrepancies);
       setIsDiscrepancyModalOpen(true);
     } else {
-      finalizeReceive([]); // Todo completo, sin discrepancias
+      const folio = selectedOrder ? formatTransferFolio(selectedOrder) : 'este pedido';
+      setDialog({
+        isOpen: true,
+        type: 'confirm',
+        title: 'Confirmar Recepción de Pedido',
+        message: `¿Confirmas que has verificado físicamente todos los productos del pedido ${folio} y deseas dar por terminada la recepción?`,
+        confirmText: 'Sí, finalizar recepción',
+        cancelText: 'Continuar revisando',
+        variant: 'primary',
+        onConfirm: () => {
+          closeDialog();
+          finalizeReceive([]);
+        },
+        onCancel: closeDialog
+      });
     }
   };
 
@@ -652,6 +669,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       observacionRecepcion: itemObservations[idx] || it.observacionRecepcion || ''
     }));
     await transferService.receiveSolicitud(selectedOrder.id, faltantes, updatedItems);
+    playOrderSuccessSound();
     setIsDiscrepancyModalOpen(false);
     closeOrder();
   };
@@ -678,11 +696,11 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         observacionRecepcion: obsMap[idx] || it.observacionRecepcion || ''
       }))
     });
+    playOrderSuccessSound();
     setIsDiscrepancyModalOpen(false);
     closeOrder();
   };
 
-  // Manejo de finalización de recepción para re-despacho de faltantes (cerrar o volver a reportar)
   const handleListoFaltantes = async (reReportToBodega = false) => {
     const itemsResolucion = selectedOrder.resolucionFaltantes?.itemsResolucion || [];
     const newlyDispatched = itemsResolucion.filter(i => i.despachado);
@@ -693,7 +711,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     newlyDispatched.forEach((item, idx) => {
       const dispatchedQty = getExpectedNewFaltanteQty(item, selectedOrder);
       const currentVal = newFaltantesQuantities[idx];
-      // Si el usuario ajustó la cantidad o marcó el ítem, usamos la cantidad indicada; si no, por defecto la despachada
       const receivedQty = currentVal !== undefined ? Number(currentVal) : dispatchedQty;
       const obs = newFaltanteObservations[idx] || item.observacion || '';
 
@@ -727,21 +744,77 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       notas: notasReporte,
       usuarioRecepcion: currentUser?.username || 'sucursal'
     });
+    playOrderSuccessSound();
     closeOrder();
+  };
+
+  const requestConfirmListoFaltantes = (reReportToBodega = false) => {
+    const folio = selectedOrder ? formatTransferFolio(selectedOrder) : 'este pedido';
+
+    if (reReportToBodega) {
+      setDialog({
+        isOpen: true,
+        type: 'confirm',
+        title: 'Volver a Reportar a Bodega',
+        message: `¿Confirmas que deseas enviar un nuevo reporte de faltantes a Bodega para el pedido ${folio}?`,
+        confirmText: 'Sí, volver a reportar',
+        cancelText: 'Cancelar',
+        variant: 'danger',
+        onConfirm: () => {
+          closeDialog();
+          handleListoFaltantes(true);
+        },
+        onCancel: closeDialog
+      });
+      return;
+    }
+
+    const itemsResolucion = selectedOrder?.resolucionFaltantes?.itemsResolucion || [];
+    const newlyDispatched = itemsResolucion.filter(i => i.despachado);
+    const itemsAunFaltantes = [];
+
+    newlyDispatched.forEach((item, idx) => {
+      const dispatchedQty = getExpectedNewFaltanteQty(item, selectedOrder);
+      const currentVal = newFaltantesQuantities[idx];
+      const receivedQty = currentVal !== undefined ? Number(currentVal) : dispatchedQty;
+      if (receivedQty < dispatchedQty) {
+        itemsAunFaltantes.push(item);
+      }
+    });
+
+    const hasFaltantes = itemsAunFaltantes.length > 0;
+    setDialog({
+      isOpen: true,
+      type: 'confirm',
+      title: hasFaltantes ? 'Cerrar Pedido con Faltantes' : 'Confirmar Recepción de Faltantes',
+      message: hasFaltantes
+        ? `¿Confirmas que deseas cerrar definitivamente el pedido ${folio} con los faltantes registrados?`
+        : `¿Confirmas que has recibido y verificado los productos reenviados del pedido ${folio} y deseas dar por terminada la recepción?`,
+      confirmText: hasFaltantes ? 'Sí, cerrar con faltantes' : 'Sí, finalizar recepción',
+      cancelText: 'Continuar revisando',
+      variant: 'primary',
+      onConfirm: () => {
+        closeDialog();
+        handleListoFaltantes(false);
+      },
+      onCancel: closeDialog
+    });
   };
 
   const isReDespacho = selectedOrder?.estado === 'faltantes_despachados';
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => selectedOrder ? closeOrder() : onBack()}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white px-3 py-1.5 rounded-full border border-slate-200/80 shadow-sm transition-all active:scale-95 cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>{selectedOrder ? 'Volver a Entrantes' : 'Volver al Inicio'}</span>
-        </button>
+      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => selectedOrder ? closeOrder() : onBack()}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>{selectedOrder ? 'Volver a Entrantes' : 'Volver al Inicio'}</span>
+          </button>
+        </div>
       </div>
 
       {!selectedOrder ? (
@@ -849,7 +922,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                       </div>
                     </div>
 
-                    {/* Barra de Progreso de Productos (idéntica al módulo de despacho) */}
                     <div className="pt-3 border-t border-slate-100">
                       <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
                         <span>Progreso de revisión: {checkedCount} de {totalCount} productos</span>
@@ -875,11 +947,8 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
           )}
         </div>
       ) : isReDespacho ? (
-        /* VISTA DE RECEPCIÓN PARA RE-DESPACHO DE FALTANTES */
         <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
-          {/* Header Card Re-despacho */}
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-purple-200/80 shadow-sm space-y-3">
-            {/* Top row: Título sin borde y badges */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-sm sm:text-base font-extrabold text-purple-700 uppercase tracking-wide flex items-center gap-2">
                 <Truck className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600 shrink-0" />
@@ -895,7 +964,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
               </div>
             </div>
 
-            {/* Folio y Descripción */}
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-slate-900 font-mono tracking-tight">
                 {selectedOrder.resolucionFaltantes?.folioEnvio || selectedOrder.folio || formatTransferFolio(selectedOrder)}
@@ -905,7 +973,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
               </p>
             </div>
 
-            {/* Contexto de Seguimiento: Motivo Sucursal + Respuesta Bodega */}
             {(() => {
               const motivoSucursal =
                 selectedOrder.reporteDiscrepancias?.observaciones ||
@@ -963,9 +1030,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             })()}
           </div>
 
-          {/* Listado Diferenciado: Lo nuevo para checar + lo pasado inmutable */}
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
-            {/* 1. SECCIÓN: LO NUEVO MANDADO PARA VOLVER A CHECAR */}
             {selectedOrder.resolucionFaltantes?.itemsResolucion
               ?.filter(i => i.despachado)
               .map((item, idx) => {
@@ -998,7 +1063,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                   (cantSolicitadaTotal > cantFaltanteReportada ? cantSolicitadaTotal - cantFaltanteReportada : 0)
                 );
 
-                // Es envío parcial de faltantes si Bodega mandó menos de lo que se reportó faltante
                 const isPartialReenvio = Boolean(expected < cantFaltanteReportada);
 
                 const motivoSucursalItem = 
@@ -1083,7 +1147,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                             )}
                           </div>
 
-                          {/* Motivo reportado por la sucursal para este producto */}
                           {Boolean(motivoSucursalItem) && (
                             <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-rose-950 bg-rose-50/90 px-2.5 py-1 rounded-xl border border-rose-200/80">
                               <FileText className="w-3.5 h-3.5 text-rose-600 shrink-0" />
@@ -1092,7 +1155,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                             </div>
                           )}
 
-                          {/* Cita del Despachador para este producto si aplica */}
                           {Boolean(itemMotivo && itemMotivo !== motivoSucursalItem) && (
                             <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-purple-950 bg-purple-50/90 px-2.5 py-1 rounded-xl border border-purple-200/80">
                               <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
@@ -1113,7 +1175,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                       </div>
                     </div>
 
-                    {/* Campo de observación si se reciben menos piezas o se desea agregar observación */}
                     {showObsField ? (
                       <div className="pt-2.5 border-t border-purple-100 sm:pl-9" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between text-xs text-purple-900 mb-1 font-semibold">
@@ -1165,7 +1226,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                 );
               })}
 
-            {/* 2. SECCIÓN: FALTANTES QUE NO FUERON DESPACHADOS POR BODEGA (BLOQUEADOS) */}
             {selectedOrder.resolucionFaltantes?.itemsResolucion
               ?.filter(i => !i.despachado)
               .map((item, idx) => (
@@ -1195,7 +1255,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                 </div>
               ))}
 
-            {/* 3. SECCIÓN: LO PASADO (YA RECIBIDO EN LA ENTREGA ANTERIOR, INMUTABLE) */}
             {selectedOrder.items
               ?.filter(it => !selectedOrder.reporteFaltantes?.some(rf => rf.codigo === it.codigo))
               .map((item, idx) => (
@@ -1252,24 +1311,22 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {/* Opción 1: Re-reportar a Bodega */}
                     <button
                       type="button"
-                      onClick={() => handleListoFaltantes(true)}
+                      onClick={() => requestConfirmListoFaltantes(true)}
                       className="w-full py-3.5 px-4 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold text-xs sm:text-sm rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
                       <AlertTriangle className="w-4 h-4 shrink-0" />
                       <span>Volver a Reportar a Bodega</span>
                     </button>
 
-                    {/* Opción 2: Cerrar definitivamente con faltantes */}
                     <button
                       type="button"
-                      onClick={() => handleListoFaltantes(false)}
+                      onClick={() => requestConfirmListoFaltantes(false)}
                       className="w-full py-3.5 px-4 bg-slate-800 hover:bg-slate-900 active:scale-[0.98] text-white font-bold text-xs sm:text-sm rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
                       <CheckCircle2 className="w-4 h-4 text-slate-300 shrink-0" />
-                      <span>Cerrar Pedido c/ Faltantes</span>
+                      <span>Cerrar Pedido con Faltantes</span>
                     </button>
                   </div>
                 </div>
@@ -1283,7 +1340,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                 </p>
                 <button
                   type="button"
-                  onClick={() => handleListoFaltantes(false)}
+                  onClick={() => requestConfirmListoFaltantes(false)}
                   className="w-full py-4 bg-purple-600 hover:bg-purple-500 active:scale-[0.98] text-white font-bold text-sm rounded-3xl shadow-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <PackageOpen className="w-5 h-5" />
@@ -1294,7 +1351,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
           })()}
         </div>
       ) : (
-        /* VISTA DE RECEPCIÓN ESTÁNDAR */
         <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-2">
             <div className="flex items-center justify-between">
@@ -1325,7 +1381,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             )}
           </div>
 
-          {/* LISTA DE PRODUCTOS CON STEPPER DE AJUSTE */}
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
             {selectedOrder.items?.map((item, index) => {
               const expected = getExpectedQty(item);
@@ -1380,7 +1435,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
                     <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                      {/* Indicador de Estado / Check */}
                       <div
                         className={`w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
                           isAbsent
@@ -1401,7 +1455,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                         )}
                       </div>
 
-                      {/* Información del Producto */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4
@@ -1420,7 +1473,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                             </span>
                           )}
 
-                          {/* Etiqueta solo si no coinciden solicitadas vs despachadas */}
                           {hasDiffSolicitadoDespachado && (
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border uppercase tracking-wider ${
                               cantDespachada < cantSolicitada
@@ -1431,7 +1483,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                             </span>
                           )}
 
-                          {/* Badges de Estado / Discrepancia en recepción */}
                           {isAbsent && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-800 border border-red-200 uppercase tracking-wider">
                               Ausencia Total (0 pz)
@@ -1467,7 +1518,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                           </span>
                         </div>
 
-                        {/* Cita/justificación del despacho si no mandaron todas las piezas */}
                         {itemMotivo && (
                           <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-amber-950 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80">
                             <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
@@ -1477,7 +1527,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                       </div>
                     </div>
 
-                    {/* Stepper de Ajuste Numérico */}
                     <div className="shrink-0 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
                       <QuantityStepper
                         value={current}
@@ -1488,7 +1537,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
                     </div>
                   </div>
 
-                  {/* Campo de observación por producto en recepción de caja física */}
                   {(hasDiscrepancy || activeObservationIndex === index) ? (
                     <div className="pt-2.5 border-t border-slate-100 sm:pl-9" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-between text-xs text-slate-600 mb-1 font-semibold">
@@ -1553,7 +1601,6 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* MODAL DE RESUMEN DE DISCREPANCIAS */}
       <DiscrepancySummaryModal
         isOpen={isDiscrepancyModalOpen}
         onClose={() => setIsDiscrepancyModalOpen(false)}
@@ -1561,6 +1608,19 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         solicitud={selectedOrder}
         discrepancias={discrepanciesToReport}
         usuarioReceptor={currentUser?.username}
+      />
+
+      <ModalDialog
+        isOpen={dialog.isOpen}
+        type={dialog.type}
+        title={dialog.title}
+        message={dialog.message}
+        variant={dialog.variant}
+        confirmText={dialog.confirmText}
+        cancelText={dialog.cancelText}
+        onConfirm={dialog.onConfirm}
+        onCancel={dialog.onCancel}
+        onClose={closeDialog}
       />
     </div>
   );

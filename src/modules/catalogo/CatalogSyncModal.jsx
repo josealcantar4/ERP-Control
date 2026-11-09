@@ -1,3 +1,7 @@
+/**
+ * Modal interactivo que muestra el progreso en tiempo real de la sincronización del catálogo central con almacenamiento local.
+ */
+
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
@@ -5,8 +9,8 @@ import { useModalAnimation } from '../../hooks';
 
 export function CatalogSyncModal({
   isOpen,
-  status, // 'checking' | 'downloading' | 'parsing' | 'saving' | 'done' | 'error'
-  progress, // { percent, currentBatch, totalBatches, message, totalRecords }
+  status,
+  progress,
   error,
   onRetry,
   onDismiss
@@ -23,21 +27,20 @@ export function CatalogSyncModal({
   const percent = progress?.percent || 0;
 
   const modalContent = (
-    <div className={`fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
+    <div className={`fixed inset-0 z-[9999] bg-slate-900/60 dark:bg-black/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
       <div
         ref={cardRef}
         style={cardStyle}
-        className={`bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto overscroll-contain shadow-2xl border border-slate-100 text-center space-y-5 my-auto ${cardClass}`}
+        className={`bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-7 max-w-md w-full max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] overflow-y-auto overscroll-contain shadow-2xl border border-slate-100 dark:border-slate-800 text-center space-y-5 my-auto ${cardClass}`}
       >
         
-        {/* ICONO DE ESTADO */}
         <div>
           {isDone ? (
-            <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-100 mx-auto flex items-center justify-center shadow-sm shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-50 dark:bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-500/30 mx-auto flex items-center justify-center shadow-sm shrink-0">
               <CheckCircle2 className="w-7 h-7" />
             </div>
           ) : isError ? (
-            <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 border border-amber-100 mx-auto flex items-center justify-center shadow-sm shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-transparent text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-500/30 mx-auto flex items-center justify-center shadow-sm shrink-0">
               <AlertTriangle className="w-7 h-7" />
             </div>
           ) : (
@@ -47,16 +50,15 @@ export function CatalogSyncModal({
           )}
         </div>
 
-        {/* TÍTULOS Y DESCRIPCIÓN */}
         <div className="space-y-1.5">
-          <h3 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+          <h3 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight">
             {isDone
               ? 'Catálogo Sincronizado'
               : isError
               ? 'Servidor Central No Disponible'
               : 'Sincronizando Catálogo Central'}
           </h3>
-          <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
+          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
             {isDone
               ? 'La base de datos de productos está completamente actualizada y lista para trabajar.'
               : isError
@@ -65,52 +67,60 @@ export function CatalogSyncModal({
           </p>
         </div>
 
-        {/* BARRA DE PROGRESO Y MENSAJE ACTIVO */}
         {!isDone && !isError && (
-          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/70 space-y-3 text-left">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-              <span className="truncate pr-2">{progress?.message || 'Procesando...'}</span>
-              <span className="font-mono text-blue-600 shrink-0">{percent}%</span>
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/70 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 space-y-3 text-left">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug break-words flex-1 min-w-0">
+                {progress?.message || 'Procesando...'}
+              </p>
+              <span className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400 shrink-0 tabular-nums">
+                {percent}%
+              </span>
             </div>
 
-            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-200/80 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden p-0.5 shadow-inner">
               <div
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300"
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300 shadow-sm"
                 style={{ width: `${percent}%` }}
               ></div>
             </div>
 
-            {progress?.totalBatches > 0 && (
-              <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                <span className="inline-flex items-center gap-1 font-mono font-bold bg-blue-100/70 text-blue-800 px-2 py-0.5 rounded-md shrink-0">
-                  <Layers className="w-3 h-3" />
+            <div className="flex items-center justify-between gap-2 flex-wrap text-xs pt-0.5">
+              {progress?.totalBatches > 0 ? (
+                <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold bg-blue-100/80 dark:bg-transparent text-blue-800 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 px-2.5 py-1 rounded-lg shrink-0">
+                  <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   Lote {progress.currentBatch} de {progress.totalBatches}
                 </span>
-                <span className="text-[10px] text-slate-400 shrink-0">
-                  {progress?.totalRecords?.toLocaleString()} registros
+              ) : (
+                <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+                  Sincronizando información...
                 </span>
-              </div>
-            )}
+              )}
+
+              {progress?.totalRecords > 0 && (
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 ml-auto shrink-0">
+                  <strong className="text-slate-700 dark:text-slate-200 font-semibold">{progress.totalRecords.toLocaleString()}</strong> registros
+                </span>
+              )}
+            </div>
           </div>
         )}
 
-        {/* RESUMEN DE ÉXITO */}
         {isDone && (
-          <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs text-emerald-800 space-y-1">
+          <div className="p-4 bg-emerald-50 dark:bg-transparent rounded-2xl border border-emerald-100 dark:border-slate-800 text-xs text-emerald-800 dark:text-emerald-400 space-y-1">
             <div className="font-bold flex items-center justify-center gap-1.5">
               <span>{progress?.totalRecords?.toLocaleString()} productos indexados</span>
             </div>
-            <p className="text-[11px] text-emerald-600">Disponibles para escaneo de códigos de barra y búsquedas rápidas.</p>
+            <p className="text-[11px] text-emerald-600 dark:text-emerald-400">Disponibles para escaneo de códigos de barra y búsquedas rápidas.</p>
           </div>
         )}
 
-        {/* ACCIONES Y BOTONES */}
         <div className="pt-1">
           {isDone && (
             <button
               type="button"
               onClick={handleClose}
-              className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
+              className="w-full py-3 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 border border-transparent dark:border-slate-700 text-white font-bold text-xs rounded-2xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
             >
               <span>Continuar</span>
               <ArrowRight className="w-4 h-4" />
@@ -130,7 +140,7 @@ export function CatalogSyncModal({
               <button
                 type="button"
                 onClick={handleClose}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-2xl transition-all cursor-pointer"
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs rounded-2xl transition-all cursor-pointer"
               >
                 Continuar con versión local
               </button>

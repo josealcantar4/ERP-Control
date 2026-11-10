@@ -75,14 +75,14 @@ export function DiscrepancySummaryModal({
   const modalContent = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
         className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 dark:border-slate-800 flex flex-col max-h-[calc(100dvh-2rem)] sm:max-h-[90dvh] overflow-hidden my-auto ${cardClass}`}
       >
-        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 shrink-0 space-y-2">
+        <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shrink-0 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-amber-700 bg-amber-100/80 border border-amber-200 px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />

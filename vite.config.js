@@ -11,6 +11,25 @@ export default defineConfig({
   define: {
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString())
   },
+  build: {
+    target: 'es2020',
+    cssCodeSplit: true,
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('xlsx')) return 'vendor-xlsx';
+            if (id.includes('html5-qrcode')) return 'vendor-scanner';
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+            return 'vendor-common';
+          }
+        }
+      }
+    }
+  },
   plugins: [
     react(),
     tailwindcss(),

@@ -77,6 +77,8 @@ export function DespachoDirectoModal({
 
   const [packedItems, setPackedItems] = useState([]);
 
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
   const [directDrafts, setDirectDrafts] = useState([]);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -214,6 +216,7 @@ export function DespachoDirectoModal({
     setScanError(null);
     setUnregisteredCode('');
     setIsSubmitting(false);
+    setIsConfirmOpen(false);
     setSavingStatus('');
   };
 
@@ -391,7 +394,6 @@ export function DespachoDirectoModal({
   };
 
   const handleBarcodeDetected = async (code, itemObject) => {
-    setIsScannerOpen(false);
     const cleanCode = String(code || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
     if (!cleanCode) return;
 
@@ -492,9 +494,6 @@ export function DespachoDirectoModal({
     });
 
     setPendingItem(null);
-    setTimeout(() => {
-      setIsScannerOpen(true);
-    }, 280);
   };
 
   const executeRemoveItem = (codigo) => {
@@ -541,8 +540,8 @@ export function DespachoDirectoModal({
     );
   };
 
-  const handleFinalize = async (e) => {
-    e.preventDefault();
+  const handleOpenConfirm = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     setErrorMsg('');
 
     if (!selectedSede || !selectedSede.trim()) {
@@ -570,6 +569,10 @@ export function DespachoDirectoModal({
       return;
     }
 
+    setIsConfirmOpen(true);
+  };
+
+  const executeDispatch = async () => {
     const fullFolio = `TR${folioDigits.trim()}`;
     const observacionBase = 'Pedido despachado sin haber sido solicitado';
     const observacionFinal = notasAdicionales.trim()
@@ -578,6 +581,7 @@ export function DespachoDirectoModal({
 
     try {
       setIsSubmitting(true);
+      setErrorMsg('');
       await catalogService.saveBatchToCleanCatalog(packedItems);
       const newDispatch = await transferService.createDirectDispatch({
         id: currentDraftId,
@@ -601,6 +605,7 @@ export function DespachoDirectoModal({
       if (onSuccess) {
         onSuccess(newDispatch);
       }
+      setIsConfirmOpen(false);
       onClose();
     } catch (err) {
       console.error('Error al despachar pedido directo:', err);
@@ -617,7 +622,7 @@ export function DespachoDirectoModal({
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, !isSubmitting)}
-      className={`fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 overflow-hidden ${backdropClass}`}
+      className={`fixed inset-0 z-[100] bg-slate-900/70 flex items-center justify-center p-2 sm:p-6 overflow-hidden ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -638,7 +643,7 @@ export function DespachoDirectoModal({
         className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-100 dark:border-slate-800 h-[calc(100dvh-1rem)] sm:h-[650px] max-h-[calc(100dvh-1rem)] sm:max-h-[92dvh] flex flex-col overflow-hidden my-auto transition-[height,max-height] duration-300 ease-out ${cardClass}`}
       >
         
-        <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-slate-50/80 dark:bg-slate-900 space-y-3">
+        <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-slate-50 dark:bg-slate-900 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0">
@@ -1125,7 +1130,7 @@ export function DespachoDirectoModal({
 
               <button
                 type="button"
-                onClick={handleFinalize}
+                onClick={handleOpenConfirm}
                 disabled={isSubmitting || packedItems.length === 0 || !folioDigits.trim() || !selectedSede}
                 className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-2xl shadow-sm transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -1163,6 +1168,7 @@ export function DespachoDirectoModal({
 
       <BarcodeScannerModal
         isOpen={isScannerOpen}
+        isPaused={isQuantityOpen || isCleanModalOpen || dialog.isOpen || isConfirmOpen}
         onClose={() => setIsScannerOpen(false)}
         onDetected={handleBarcodeDetected}
       />
@@ -1170,7 +1176,10 @@ export function DespachoDirectoModal({
       <CaptureQuantityModal
         isOpen={isQuantityOpen}
         scannedItem={pendingItem}
-        onClose={() => setIsQuantityOpen(false)}
+        onClose={() => {
+          setIsQuantityOpen(false);
+          setPendingItem(null);
+        }}
         onConfirmQuantity={handleConfirmQuantity}
       />
 
@@ -1194,8 +1203,228 @@ export function DespachoDirectoModal({
         onSave={handleSaveUnregisteredProduct}
       />
 
+      <ConfirmDirectDispatchModal
+        isOpen={isConfirmOpen}
+        onClose={() => {
+          if (!isSubmitting) setIsConfirmOpen(false);
+        }}
+        onConfirm={executeDispatch}
+        isSubmitting={isSubmitting}
+        errorMsg={errorMsg}
+        selectedSede={selectedSede}
+        selectedArea={selectedArea}
+        isTargetDirectOwnSede={isTargetDirectOwnSede}
+        folioDigits={folioDigits}
+        packedItems={packedItems}
+        notasAdicionales={notasAdicionales}
+        currentUser={currentUser}
+      />
+
     </div>
   );
 
   return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
+}
+
+function ConfirmDirectDispatchModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  isSubmitting,
+  errorMsg,
+  selectedSede,
+  selectedArea,
+  isTargetDirectOwnSede,
+  folioDigits,
+  packedItems = [],
+  notasAdicionales = '',
+  currentUser
+}) {
+  const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
+    isOpen,
+    onClose
+  });
+
+  if (!shouldRender) return null;
+
+  const totalUnits = packedItems.reduce((acc, it) => acc + Number(it.cantidad || 0), 0);
+  const fullFolio = `TR${(folioDigits || '').trim()}`;
+
+  const content = (
+    <div
+      onClick={(e) => handleBackdropClick(e, !isSubmitting)}
+      className={`fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+    >
+      <div
+        ref={cardRef}
+        style={cardStyle}
+        className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden border border-slate-100 dark:border-slate-800 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[90vh] overscroll-contain ${cardClass}`}
+      >
+        <div className="p-5 pb-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0 bg-slate-50/80 dark:bg-slate-900">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800/60 flex items-center justify-center shrink-0">
+              <Truck className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white leading-snug">
+                Confirmar Despacho Directo
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Revisa el resumen antes de enviar la mercancía
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 min-h-0 text-left">
+          {errorMsg && (
+            <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/70 rounded-2xl text-red-700 dark:text-red-400 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Building2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  Destino:
+                </span>
+                <span className="text-sm font-bold text-slate-900 dark:text-white">
+                  {selectedSede}
+                </span>
+                {selectedArea && (
+                  <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-800/60">
+                    Área: {selectedArea}
+                  </span>
+                )}
+              </div>
+
+              <div className="font-mono text-xs font-bold px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/80">
+                Folio: {fullFolio}
+              </div>
+            </div>
+
+            {isTargetDirectOwnSede && (
+              <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                • Transferencia interna entre áreas de la misma sede
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/70 dark:border-slate-800 text-center">
+              <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">
+                Productos Distintos
+              </span>
+              <span className="text-lg font-bold text-slate-900 dark:text-white font-mono">
+                {packedItems.length}
+              </span>
+            </div>
+            <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 rounded-2xl border border-emerald-100 dark:border-emerald-800/50 text-center">
+              <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">
+                Total de Piezas
+              </span>
+              <span className="text-lg font-bold text-emerald-800 dark:text-emerald-300 font-mono">
+                {totalUnits}
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs px-1">
+              <span className="font-bold text-slate-700 dark:text-slate-200">
+                Resumen de lo que se va a despachar:
+              </span>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                {packedItems.length} ítem{packedItems.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="max-h-56 sm:max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-2 text-xs overscroll-contain shadow-2xs">
+              {packedItems.map((item, idx) => (
+                <div key={item.codigo || idx} className="py-2 first:pt-1 last:pb-1 flex items-center justify-between gap-2.5">
+                  <div className="min-w-0 flex-1">
+                    <span className="font-bold text-slate-800 dark:text-slate-100 truncate block text-xs" title={item.descripcion}>
+                      {item.descripcion}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 block mt-0.5">
+                      Código: {item.codigo}
+                    </span>
+                  </div>
+                  <span className="shrink-0 px-2.5 py-1 rounded-xl font-mono text-xs font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80 shadow-2xs">
+                    {item.cantidad} pza{item.cantidad === 1 ? '' : 's'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {notasAdicionales.trim() && (
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
+                <FileText className="w-3.5 h-3.5 text-slate-400" />
+                <span>Notas adicionales:</span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 italic">
+                {notasAdicionales.trim()}
+              </p>
+            </div>
+          )}
+
+          <div className="pt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0"></span>
+            <span>
+              Se registrará con la observación:{' '}
+              <strong className="text-slate-700 dark:text-slate-300 font-semibold font-mono">
+                &ldquo;Pedido despachado sin haber sido solicitado&rdquo;
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900 flex items-center justify-end gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+          >
+            Volver a la caja
+          </button>
+
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isSubmitting}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-2xl shadow-sm transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Despachando...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Confirmar y Despachar</span>
+              </>
+            )}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

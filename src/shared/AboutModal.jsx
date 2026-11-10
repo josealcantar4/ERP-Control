@@ -92,14 +92,14 @@ export function AboutModal({ isOpen, onClose }) {
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, handleClose)}
-      className={`fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 dark:bg-black/75 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 dark:bg-black/80 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
         className={`bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden my-auto overscroll-contain max-h-[calc(100dvh-2rem)] flex flex-col ${cardClass}`}
       >
-        <div className="p-4 sm:p-5 pb-3 sm:pb-4 flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
+        <div className="p-4 sm:p-5 pb-3 sm:pb-4 flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-sky-500 to-teal-600 text-white flex items-center justify-center shadow-sm shrink-0">
               <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full p-2">

@@ -2,10 +2,39 @@
  * Módulo para la inspección física, verificación de productos recibidos, captura de discrepancias y reporte de faltantes por sucursal.
  */
 
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, CheckCircle2, Check, PackageOpen, AlertTriangle, Truck, X, RotateCcw, FileText, ChevronRight } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserReceive, playCheckSound, playOrderSuccessSound } from '../transferencias';
-import { transitionView, QuantityStepper, DiscrepancySummaryModal, ModalDialog } from '../../shared';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Check,
+  PackageOpen,
+  AlertTriangle,
+  Truck,
+  X,
+  RotateCcw,
+  FileText,
+  ChevronRight,
+  History,
+  Clock,
+  Loader2,
+  ChevronDown
+} from 'lucide-react';
+import {
+  transferService,
+  formatTransferFolio,
+  canUserReceive,
+  canUserViewInRecibirHistory,
+  TransferDetailModal,
+  playCheckSound,
+  playOrderSuccessSound
+} from '../transferencias';
+import {
+  transitionView,
+  QuantityStepper,
+  DiscrepancySummaryModal,
+  ModalDialog,
+  MarqueeSearchInput
+} from '../../shared';
 
 export function getDispatchedQty(item) {
   if (!item) return 0;
@@ -108,11 +137,91 @@ function getProgressFromOrder(order) {
   return { checked, quantities, checkedFaltantes, faltantesQtys, observations, faltanteObservations };
 }
 
-export function RecibirModule({ currentUser, onBack, onRefresh }) {
+export const RecibirModule = React.memo(function RecibirModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
     return list.filter(s => canUserReceive(s, currentUser));
   });
+
+  const [historialList, setHistorialList] = useState(() => {
+    const list = transferService.getLocalSolicitudes() || [];
+    return list.filter(s => canUserViewInRecibirHistory(s, currentUser));
+  });
+
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('erp_recibir_active_tab') || 'recibir';
+  });
+
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyLimit, setHistoryLimit] = useState(15);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
+  const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
+  const [detailSolicitud, setDetailSolicitud] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('erp_recibir_active_tab', activeTab);
+  }, [activeTab]);
+
+  const handleSwitchTab = (newTab) => {
+    if (newTab === activeTab) return;
+    if (newTab === 'historial') {
+      setIsHistorialInitialLoading(true);
+      setHistoryLimit(15);
+      setTimeout(() => setIsHistorialInitialLoading(false), 220);
+    }
+    transitionView(() => {
+      setActiveTab(newTab);
+    });
+  };
+
+  const sortedHistory = useMemo(() => {
+    return [...historialList].sort((a, b) => {
+      const dateA = new Date(a.fechaRecepcion || a.reporteDiscrepancias?.fecha || a.fechaDespacho || a.fecha || 0).getTime();
+      const dateB = new Date(b.fechaRecepcion || b.reporteDiscrepancias?.fecha || b.fechaDespacho || b.fecha || 0).getTime();
+      return dateB - dateA;
+    });
+  }, [historialList]);
+
+  const filteredHistory = useMemo(() => {
+    const q = historySearch.toLowerCase().trim();
+    if (!q) return sortedHistory;
+
+    return sortedHistory.filter(sol => {
+      const folio = (sol.folio || formatTransferFolio(sol) || '').toLowerCase();
+      const origen = (sol.sucursalDestino || sol.usuarioDestino || 'Bodega').toLowerCase();
+      const areaOrigen = (sol.areaDestino || '').toLowerCase();
+      const receptor = (sol.usuarioReceptor || sol.usuarioRecepcion || sol.reporteDiscrepancias?.usuarioReceptor || '').toLowerCase();
+      const obs = (sol.observaciones || '').toLowerCase();
+      const matchesText =
+        folio.includes(q) ||
+        origen.includes(q) ||
+        areaOrigen.includes(q) ||
+        receptor.includes(q) ||
+        obs.includes(q);
+      if (matchesText) return true;
+
+      return sol.items?.some(it => {
+        const desc = (it.descripcion || '').toLowerCase();
+        const cod = (it.codigo || '').toLowerCase();
+        return desc.includes(q) || cod.includes(q);
+      });
+    });
+  }, [sortedHistory, historySearch]);
+
+  const visibleHistory = useMemo(() => {
+    return filteredHistory.slice(0, historyLimit);
+  }, [filteredHistory, historyLimit]);
+
+  const hasMoreHistory = visibleHistory.length < filteredHistory.length;
+
+  const handleLoadMoreHistory = useCallback(() => {
+    if (isLoadingMoreHistory) return;
+    setIsLoadingMoreHistory(true);
+    setTimeout(() => {
+      setHistoryLimit(prev => prev + 15);
+      setIsLoadingMoreHistory(false);
+    }, 200);
+  }, [isLoadingMoreHistory]);
 
   const [selectedOrder, setSelectedOrder] = useState(() => {
     const savedOrderId = sessionStorage.getItem('erp_recibir_order_id');
@@ -207,6 +316,8 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
     const unsubscribe = transferService.subscribeSolicitudes((list) => {
       const validos = list.filter((s) => canUserReceive(s, currentUser));
       setSolicitudes(validos);
+      const recibidos = list.filter((s) => canUserViewInRecibirHistory(s, currentUser));
+      setHistorialList(recibidos);
       setIsLoadingOrders(false);
 
       const savedOrderId = sessionStorage.getItem('erp_recibir_order_id');
@@ -668,7 +779,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
       cantidadDespachada: getDispatchedQty(it),
       observacionRecepcion: itemObservations[idx] || it.observacionRecepcion || ''
     }));
-    await transferService.receiveSolicitud(selectedOrder.id, faltantes, updatedItems);
+    await transferService.receiveSolicitud(selectedOrder.id, faltantes, updatedItems, currentUser?.username || 'sucursal');
     playOrderSuccessSound();
     setIsDiscrepancyModalOpen(false);
     closeOrder();
@@ -805,7 +916,7 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
-      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
+      <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5">
         <div className="flex items-center justify-between">
           <button
             onClick={() => selectedOrder ? closeOrder() : onBack()}
@@ -814,11 +925,62 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>{selectedOrder ? 'Volver a Entrantes' : 'Volver al Inicio'}</span>
           </button>
+
+          {selectedOrder ? (
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full truncate border border-slate-200/60 dark:border-slate-700/60">
+              Recepción: <strong className="text-slate-800 dark:text-slate-200">{currentUser?.sede}{currentUser?.area ? ` (${currentUser.area})` : ''}</strong>
+            </span>
+          ) : (
+            <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full flex text-xs font-medium border border-transparent dark:border-slate-700/60 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleSwitchTab('recibir')}
+                className={`px-3 py-1 rounded-full flex items-center gap-1.5 cursor-pointer transition-all duration-200 ${
+                  activeTab === 'recibir'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+                }`}
+              >
+                <span>Recibir</span>
+                {solicitudes.length > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    activeTab === 'recibir' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-300/80 text-slate-700'
+                  }`}>
+                    {solicitudes.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchTab('historial')}
+                className={`px-3 py-1 rounded-full flex items-center gap-1 cursor-pointer transition-all duration-200 ${
+                  activeTab === 'historial'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Historial ({historialList.length})</span>
+              </button>
+            </div>
+          )}
         </div>
+
+        {!selectedOrder && activeTab === 'historial' && (
+          <div className="relative pt-0.5">
+            <MarqueeSearchInput
+              placeholder="Buscar por folio, origen, producto o notas..."
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              onClear={() => setHistorySearch('')}
+            />
+          </div>
+        )}
       </div>
 
       {!selectedOrder ? (
-        <div key="entrantes-list" className="space-y-4 animate-fade-in">
+        activeTab === 'recibir' ? (
+          <div key="entrantes-list" className="space-y-4 animate-fade-in">
           <h3 className="text-sm font-bold text-slate-900 tracking-tight">
             Transferencias Entrantes ({solicitudes.length})
           </h3>
@@ -946,6 +1108,149 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
             </div>
           )}
         </div>
+        ) : (
+          <div key="historial-list" className="space-y-4 animate-fade-in">
+            {isHistorialInitialLoading ? (
+              <div className="bg-white dark:bg-slate-900 rounded-3xl p-10 border border-slate-200/80 dark:border-slate-800 shadow-sm text-center space-y-3">
+                <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Cargando transferencias recibidas...</p>
+                <p className="text-[11px] text-slate-400">Consultando historial en tiempo real</p>
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="bg-white dark:bg-slate-900 rounded-3xl p-10 border border-slate-200/80 dark:border-slate-800 shadow-sm text-center space-y-2">
+                <History className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto" />
+                <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                  {historySearch ? 'No se encontraron resultados' : 'Sin transferencias recibidas en el historial'}
+                </h4>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  {historySearch
+                    ? `No hay transferencias que coincidan con "${historySearch}".`
+                    : 'Las transferencias recibidas e inspeccionadas físicamente por este usuario aparecerán aquí.'}
+                </p>
+                {historySearch && (
+                  <button
+                    type="button"
+                    onClick={() => setHistorySearch('')}
+                    className="mt-2 text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer"
+                  >
+                    Ver todo el historial
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {visibleHistory.map(sol => {
+                  const isFaltantesCerrados = sol.estado === 'cerrada_con_faltantes';
+                  const isIncompleta = sol.estado === 'recibida_incompleta';
+                  const hasFaltantesReport = Boolean(sol.reporteFaltantes && sol.reporteFaltantes.length > 0);
+                  const totalUnits = sol.items?.reduce((acc, it) => acc + Number(it.cantidadRecibida || it.cantidadDespachada || it.cantidad || 0), 0) || 0;
+                  const totalItems = sol.items?.length || 0;
+
+                  const dateStr = sol.fechaRecepcion || sol.reporteDiscrepancias?.fecha || sol.fechaDespacho || sol.fecha;
+                  const formattedDate = dateStr
+                    ? new Date(dateStr).toLocaleString('es-MX', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short'
+                      })
+                    : 'Fecha no registrada';
+
+                  const origenText = sol.sucursalDestino || sol.usuarioDestino || 'Bodega';
+                  const receptorText = sol.usuarioReceptor || sol.usuarioRecepcion || sol.reporteDiscrepancias?.usuarioReceptor || currentUser?.username || 'Sucursal';
+
+                  return (
+                    <div
+                      key={sol.id}
+                      onClick={() => setDetailSolicitud(sol)}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-3.5 hover:shadow-md hover:border-emerald-300 dark:hover:border-emerald-700/60 transition-all cursor-pointer group ios-card-hover active:scale-[0.99]"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-lg font-bold font-mono tracking-tight text-emerald-700 dark:text-emerald-400">
+                              {sol.resolucionFaltantes?.folioEnvio || sol.folio || formatTransferFolio(sol)}
+                            </h4>
+                            {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                                Transferencia Interna
+                              </span>
+                            )}
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                              isIncompleta
+                                ? 'bg-red-50 dark:bg-transparent text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/30'
+                                : isFaltantesCerrados
+                                ? 'bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30'
+                                : 'bg-emerald-50 dark:bg-transparent text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30'
+                            }`}>
+                              {isIncompleta
+                                ? 'Incompleta con Faltantes'
+                                : isFaltantesCerrados
+                                ? 'Cerrada con Faltantes'
+                                : 'Recibida Completa'}
+                            </span>
+                            {(sol.sinSolicitud || sol.esDespachoDirecto) && (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-transparent text-amber-800 dark:text-amber-400 border border-amber-300 dark:border-amber-600 uppercase tracking-wider">
+                                Despacho Directo
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Enviado desde: <strong className="text-slate-700 dark:text-slate-200 font-semibold">{origenText}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}</strong>
+                          </p>
+                          <div className="flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500 flex-wrap">
+                            <span>Recibió: <strong className="text-slate-600 dark:text-slate-300 font-medium">{receptorText}</strong></span>
+                            <span>&bull;</span>
+                            <span>{totalItems} producto{totalItems === 1 ? '' : 's'} ({totalUnits} pzas)</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 hidden sm:inline">
+                            {formattedDate}
+                          </span>
+                          <ChevronRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-colors" />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="pt-2 text-center text-xs text-slate-400">
+                  <span>Mostrando {visibleHistory.length} de {filteredHistory.length} transferencias recibidas</span>
+                </div>
+
+                {hasMoreHistory && (
+                  <div className="pt-1 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreHistory}
+                      disabled={isLoadingMoreHistory}
+                      className="px-5 py-2.5 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 hover:border-slate-300 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-2xl shadow-sm hover:shadow transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoadingMoreHistory ? (
+                        <>
+                          <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                          <span>Cargando más transferencias...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-4 h-4 text-slate-400" />
+                          <span>Cargar más ({filteredHistory.length - visibleHistory.length} restantes)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {!hasMoreHistory && filteredHistory.length > 0 && (
+                  <p className="text-center text-[11px] text-slate-400 pt-2 pb-2">
+                    Has llegado al final del historial ({filteredHistory.length} transferencias en total)
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )
       ) : isReDespacho ? (
         <div key={selectedOrder.id} className="space-y-4 animate-fade-in">
           <div className="bg-white rounded-3xl p-4 sm:p-5 border border-purple-200/80 shadow-sm space-y-3">
@@ -1622,6 +1927,12 @@ export function RecibirModule({ currentUser, onBack, onRefresh }) {
         onCancel={dialog.onCancel}
         onClose={closeDialog}
       />
+
+      <TransferDetailModal
+        isOpen={Boolean(detailSolicitud)}
+        solicitud={detailSolicitud}
+        onClose={() => setDetailSolicitud(null)}
+      />
     </div>
   );
-}
+});

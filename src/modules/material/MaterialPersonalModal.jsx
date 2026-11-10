@@ -92,7 +92,7 @@ export function MaterialPersonalModal({
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, !isSubmitting)}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}

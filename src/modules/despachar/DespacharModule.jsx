@@ -37,7 +37,7 @@ import { DespachoDirectoModal } from './DespachoDirectoModal';
 import { transitionView, QuantityStepper, MarqueeSearchInput, FloatingInput } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
-export function DespacharModule({ currentUser, onBack, onRefresh }) {
+export const DespacharModule = React.memo(function DespacharModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
     const list = transferService.getLocalSolicitudes() || [];
     return list.filter(s => canUserDispatch(s, currentUser));
@@ -672,7 +672,6 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleExtraScanDetected = async (barcode, itemObject) => {
-    setIsScannerOpen(false);
     setIsProcessing(true);
 
     try {
@@ -873,7 +872,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
     <div className="max-w-3xl mx-auto space-y-6 pb-20 relative">
 
       {isProcessing && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 animate-fade-in">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             <span className="text-sm font-bold text-slate-800">Procesando...</span>
@@ -882,8 +881,8 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
         document.body
       )}
 
-      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5 transition-all">
-        <div className="flex items-center justify-between vt-module-header gap-2">
+      <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={() => {
               if (selectedSolicitud) {
@@ -956,7 +955,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
           <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-blue-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
-              <div className="inline-flex items-center gap-1.5 bg-white/20 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-blue-100">
+              <div className="inline-flex items-center gap-1.5 bg-white/20 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-blue-100">
                 <PackagePlus className="w-3.5 h-3.5" />
                 <span>Despacho Directo</span>
               </div>
@@ -1178,18 +1177,18 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
           <div className="space-y-3 pt-3">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-slate-400" />
-                <h3 className="text-sm font-bold text-slate-700 tracking-tight">
+                <Clock className="w-4 h-4 text-slate-400 dark:text-slate-500" />
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 tracking-tight">
                   En Proceso de Captura en Sucursales ({inProgressDrafts.length})
                 </h3>
               </div>
-              <span className="text-[11px] font-medium text-slate-400">
+              <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
                 Monitoreo en vivo &bull; Aún no enviadas
               </span>
             </div>
 
             {inProgressDrafts.length === 0 ? (
-              <div className="bg-slate-100/60 rounded-3xl p-6 border border-slate-200/60 text-center text-slate-400 text-xs">
+              <div className="bg-slate-100/60 dark:bg-slate-800/40 rounded-3xl p-6 border border-slate-200/60 dark:border-slate-800/80 text-center text-slate-500 dark:text-slate-400 text-xs">
                 No hay sucursales armando borradores en este momento.
               </div>
             ) : (
@@ -1644,6 +1643,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
       <BarcodeScannerModal
         isOpen={isScannerOpen}
+        isPaused={isQtyModalOpen || dialog.isOpen}
         onClose={() => setIsScannerOpen(false)}
         onDetected={handleExtraScanDetected}
       />
@@ -1709,7 +1709,7 @@ export function DespacharModule({ currentUser, onBack, onRefresh }) {
 
     </div>
   );
-}
+});
 
 function ExtraProductModal({
   isOpen,
@@ -1732,7 +1732,7 @@ function ExtraProductModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}

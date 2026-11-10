@@ -51,7 +51,7 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
   const modalContent = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto overscroll-contain select-none ${backdropClass}`}
+      className={`fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 overflow-y-auto overscroll-contain select-none ${backdropClass}`}
     >
       <div
         ref={cardRef}

@@ -802,24 +802,40 @@ export const catalogService = {
       return onSnapshot(
         collection(db, 'catalogo_limpio'),
         async (snap) => {
-          const items = snap.docs
-            .map(d => ({ codigo: d.id, ...d.data() }))
-            .filter(it => it && it.codigo);
-
           const database = await openDB();
           await new Promise((resolve, reject) => {
             const tx = database.transaction(STORE_CLEAN, 'readwrite');
             const store = tx.objectStore(STORE_CLEAN);
-            const clearReq = store.clear();
-            clearReq.onsuccess = () => {
-              items.forEach(item => store.put(item));
-            };
+
+            snap.docChanges().forEach(change => {
+              const docData = change.doc.data();
+              const item = { codigo: change.doc.id, ...docData };
+              if (change.type === 'removed') {
+                store.delete(change.doc.id);
+                if (memoryCache) {
+                  memoryCache = memoryCache.filter(m => String(m.codigo) !== String(change.doc.id));
+                }
+              } else {
+                store.put(item);
+                if (memoryCache) {
+                  const idx = memoryCache.findIndex(m => String(m.codigo) === String(item.codigo));
+                  if (idx >= 0) {
+                    memoryCache[idx] = item;
+                  } else {
+                    memoryCache.push(item);
+                  }
+                }
+              }
+            });
+
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
           });
 
-          memoryCache = null;
-          if (onUpdate) onUpdate(items);
+          if (onUpdate) {
+            const items = snap.docs.map(d => ({ codigo: d.id, ...d.data() }));
+            onUpdate(items);
+          }
         },
         (err) => {
           console.warn('Fallback suscripción catalogo_limpio:', err);

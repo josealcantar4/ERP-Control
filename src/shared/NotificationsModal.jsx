@@ -33,7 +33,6 @@ export function NotificationsModal({
   onDismissNotification,
   onViewTransferDetail
 }) {
-  const [filterTab, setFilterTab] = useState('todas');
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -166,14 +165,6 @@ export function NotificationsModal({
   if (!shouldRender) return null;
 
   const activeNotifications = notifications.filter(n => !localDismissedIds.has(n.id));
-  const transferNotifs = activeNotifications.filter(n => n.categoria === 'transferencia');
-  const materialNotifs = activeNotifications.filter(n => n.categoria !== 'transferencia');
-
-  const filteredList = filterTab === 'pedidos'
-    ? transferNotifs
-    : filterTab === 'material'
-    ? materialNotifs
-    : activeNotifications;
 
   const formatNotifDate = (dateStr) => {
     if (!dateStr) return '';
@@ -268,51 +259,8 @@ export function NotificationsModal({
             </button>
           </div>
         )}
-        <div className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1 shrink-0 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setFilterTab('todas')}
-            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all ${
-              filterTab === 'todas'
-                ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-2xs font-bold border border-transparent dark:border-slate-700'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white'
-            }`}
-          >
-            Todas ({activeNotifications.length})
-          </button>
-
-          {transferNotifs.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setFilterTab('pedidos')}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1 ${
-                filterTab === 'pedidos'
-                  ? 'bg-blue-50 dark:bg-transparent text-blue-700 dark:text-blue-400 shadow-2xs border border-blue-200 dark:border-blue-500/30 font-bold'
-                  : 'text-slate-500 hover:text-blue-700 dark:text-slate-400 dark:hover:text-blue-400'
-              }`}
-            >
-              <Truck className="w-3 h-3 text-blue-500 dark:text-blue-400" />
-              <span>Pedidos ({transferNotifs.length})</span>
-            </button>
-          )}
-
-          {materialNotifs.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setFilterTab('material')}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1 ${
-                filterTab === 'material'
-                  ? 'bg-amber-50 dark:bg-transparent text-amber-800 dark:text-amber-400 shadow-2xs border border-amber-200 dark:border-amber-500/30 font-bold'
-                  : 'text-slate-500 hover:text-amber-800 dark:text-slate-400 dark:hover:text-amber-400'
-              }`}
-            >
-              <Clock className="w-3 h-3 text-amber-500 dark:text-amber-400" />
-              <span>Material ({materialNotifs.length})</span>
-            </button>
-          )}
-        </div>
         <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5 max-h-[58vh] sm:max-h-[380px] overscroll-contain">
-          {filteredList.length === 0 ? (
+          {activeNotifications.length === 0 ? (
             <div className="py-8 px-4 text-center space-y-2">
               <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-500/30 mx-auto flex items-center justify-center">
                 <CheckCircle2 className="w-5 h-5" />
@@ -325,7 +273,7 @@ export function NotificationsModal({
               </p>
             </div>
           ) : (
-            filteredList.map((notif) => {
+            activeNotifications.map((notif) => {
               if (notif.categoria === 'transferencia') {
                 const isNueva = notif.tipo === 'nueva_solicitud';
                 const isDespacho = notif.tipo === 'caja_despachada';

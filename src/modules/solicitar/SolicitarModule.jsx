@@ -18,7 +18,7 @@ import { ModalDialog } from '../../shared/ModalDialog';
 import { MarqueeText } from '../../shared/MarqueeText';
 import { transitionView, MarqueeSearchInput } from '../../shared';
 
-export function SolicitarModule({ currentUser, onBack, onRefresh }) {
+export const SolicitarModule = React.memo(function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [sedesList, setSedesList] = useState([]);
   const [areasList, setAreasList] = useState([]);
   const [selectedDestSede, setSelectedDestSede] = useState('');
@@ -225,7 +225,6 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
   };
 
   const handleBarcodeDetected = async (barcode, itemObject) => {
-    setIsScannerOpen(false);
     const cleanBarcode = String(barcode || '').trim().replace(/\s+/g, '').replace(/\//g, '-');
     let item = itemObject;
     if (!item && cleanBarcode) {
@@ -286,9 +285,7 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
     };
     setCurrentDraft(updated);
     triggerAutoSave(updated);
-    setTimeout(() => {
-      setIsScannerOpen(true);
-    }, 280);
+    setScannedMedicine(null);
   };
 
   const executeRemoveItem = async (index) => {
@@ -596,8 +593,8 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
 
   return (
     <div className="max-w-2xl mx-auto space-y-5 pb-20">
-      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5 transition-all">
-        <div className="flex items-center justify-between vt-module-header">
+      <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 space-y-2.5">
+        <div className="flex items-center justify-between">
           <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm cursor-pointer transition-colors">
             <ArrowLeft className="w-3.5 h-3.5" /><span>Volver al Inicio</span>
           </button>
@@ -961,8 +958,21 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
         </div>
       )}
 
-      <BarcodeScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onDetected={handleBarcodeDetected} />
-      <CaptureQuantityModal isOpen={isQuantityOpen} scannedItem={scannedMedicine} onClose={() => setIsQuantityOpen(false)} onConfirmQuantity={handleConfirmQuantity} />
+      <BarcodeScannerModal
+        isOpen={isScannerOpen}
+        isPaused={isQuantityOpen || dialog.isOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onDetected={handleBarcodeDetected}
+      />
+      <CaptureQuantityModal
+        isOpen={isQuantityOpen}
+        scannedItem={scannedMedicine}
+        onClose={() => {
+          setIsQuantityOpen(false);
+          setScannedMedicine(null);
+        }}
+        onConfirmQuantity={handleConfirmQuantity}
+      />
       <ModalDialog isOpen={dialog.isOpen} type={dialog.type} title={dialog.title} message={dialog.message} confirmText={dialog.confirmText} onConfirm={dialog.onConfirm} onCancel={dialog.onCancel} />
       
       <TransferDetailModal
@@ -981,4 +991,4 @@ export function SolicitarModule({ currentUser, onBack, onRefresh }) {
       />
     </div>
   );
-}
+});

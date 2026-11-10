@@ -70,7 +70,7 @@ export function ModalDialog({
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, type !== 'alert' ? handleCancelClick : false)}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[130] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}

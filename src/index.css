@@ -13,6 +13,16 @@ html.dark {
   color-scheme: dark;
 }
 
+html {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, a, input, select, textarea, [role="button"], label {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -52,16 +62,16 @@ html.dark body {
   background: #475569;
 }
 
-.ios-glass {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+#barcode-camera-view video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
 }
 
-.dark .ios-glass {
-  background: rgba(15, 23, 42, 0.85);
-  border-color: rgba(51, 65, 85, 0.6);
+#qr-shaded-region {
+  display: none !important;
 }
+
 
 .ios-card {
   background: #ffffff;
@@ -112,6 +122,12 @@ html.dark body {
 .dark .bg-slate-50\/50,
 .dark .bg-slate-50\/90,
 .dark .bg-slate-100,
+.dark .bg-slate-100\/90,
+.dark .bg-slate-100\/80,
+.dark .bg-slate-100\/70,
+.dark .bg-slate-100\/60,
+.dark .bg-slate-100\/50,
+.dark .bg-slate-100\/40,
 .dark .bg-slate-200,
 .dark .bg-slate-200\/95,
 .dark .bg-slate-200\/90,
@@ -123,6 +139,8 @@ html.dark body {
 }
 
 .dark .bg-slate-100\/80,
+.dark .bg-slate-100\/60,
+.dark .bg-slate-100\/50,
 .dark .bg-slate-200\/80 {
   background-color: rgba(15, 23, 42, 0.8) !important;
 }
@@ -1067,8 +1085,17 @@ input[type="number"] {
   animation: shimmer 1.5s infinite;
 }
 
+@keyframes pageFadeQuick {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .ios-page-transition {
-  animation: iosSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: pageFadeQuick 0.12s ease-out forwards;
 }
 
 .ios-tap-active {
@@ -1142,162 +1169,39 @@ input[type="number"] {
 
 @keyframes modalZoomInFromOrigin {
   0% {
-    opacity: 0;
-    transform: scale(0.92);
+    opacity: 0.85;
+    transform: scale(0.97);
   }
   100% {
     opacity: 1;
-    transform: none;
+    transform: scale(1);
   }
 }
 
 @keyframes modalZoomOutToOrigin {
   0% {
     opacity: 1;
-    transform: none;
+    transform: scale(1);
   }
   100% {
     opacity: 0;
-    transform: scale(0.92);
+    transform: scale(0.97);
   }
 }
 
 .animate-modal-enter {
-  animation: modalZoomInFromOrigin 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modalZoomInFromOrigin 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 .animate-modal-exit {
-  animation: modalZoomOutToOrigin 0.18s cubic-bezier(0.32, 0, 0.67, 0) forwards;
+  animation: modalZoomOutToOrigin 0.12s cubic-bezier(0.32, 0, 0.67, 0) forwards;
   pointer-events: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-.vt-navbar {
-  view-transition-name: app-navbar;
-}
 
-.vt-main {
-  view-transition-name: app-main-content;
-}
-
-.vt-module-header {
-  view-transition-name: module-header;
-}
-
-.vt-footer {
-  view-transition-name: app-footer;
-}
-
-.vt-offline {
-  view-transition-name: app-offline-banner;
-}
-
-::view-transition-group(app-main-content),
-::view-transition-group(app-navbar),
-::view-transition-group(module-header),
-::view-transition-group(app-footer),
-::view-transition-group(app-offline-banner) {
-  animation-duration: 0.28s;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-::view-transition-old(app-main-content),
-::view-transition-new(app-main-content) {
-  backface-visibility: hidden;
-  transform-origin: 50% 50%;
-  height: 100%;
-  width: 100%;
-}
-@supports (view-transition-name: none) {
-  .ios-page-transition {
-    animation: none !important;
-  }
-}
-@keyframes vtSlideOutLeft {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-24px);
-  }
-}
-
-@keyframes vtSlideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(28px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes vtSlideOutRight {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(28px);
-  }
-}
-
-@keyframes vtSlideInLeft {
-  from {
-    opacity: 0;
-    transform: translateX(-24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes vtFadeOut {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes vtFadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes vtZoomOut {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-}
-
-@keyframes vtZoomIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
 @keyframes modalTabSlideInRight {
   from {
     opacity: 0;
@@ -1328,41 +1232,6 @@ input[type="number"] {
 .animate-tab-slide-left {
   animation: modalTabSlideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
-}
-
-[data-transition-direction="forward"]::view-transition-old(app-main-content) {
-  animation: vtSlideOutLeft 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-[data-transition-direction="forward"]::view-transition-new(app-main-content) {
-  animation: vtSlideInRight 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-[data-transition-direction="back"]::view-transition-old(app-main-content) {
-  animation: vtSlideOutRight 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-[data-transition-direction="back"]::view-transition-new(app-main-content) {
-  animation: vtSlideInLeft 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-[data-transition-direction="tab"]::view-transition-old(app-main-content) {
-  animation: vtFadeOut 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-[data-transition-direction="tab"]::view-transition-new(app-main-content) {
-  animation: vtFadeIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-[data-transition-direction="login"]::view-transition-old(root) {
-  animation: vtZoomOut 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-[data-transition-direction="login"]::view-transition-new(root) {
-  animation: vtZoomIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none !important;
-  }
 }
 
 @keyframes textMarqueeBounce {

@@ -71,14 +71,14 @@ export function BulkOrderWarningModal({
   const modalContent = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-5 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
         style={cardStyle}
         className={`bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col my-auto max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh] overflow-hidden overscroll-contain ${cardClass}`}
       >
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50/70 shrink-0">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-amber-50 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-sm border border-amber-200">
               <AlertTriangle className="w-5 h-5" />

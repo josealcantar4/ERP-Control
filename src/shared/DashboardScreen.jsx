@@ -7,7 +7,7 @@ import { SendHorizontal, Boxes, ChevronRight, PackageOpen, Database, ClipboardCh
 import { transferService, canUserReceive, canUserDispatch } from '../modules/transferencias';
 import { materialService } from '../modules/material/materialService';
 
-export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
+export const DashboardScreen = React.memo(function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => transferService.getLocalSolicitudes() || []);
   const [materiales, setMateriales] = useState(() => materialService.getLocalMateriales());
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
@@ -217,4 +217,4 @@ export function DashboardScreen({ currentUser, onNavigate, onRefresh }) {
       </div>
     </div>
   );
-}
+});

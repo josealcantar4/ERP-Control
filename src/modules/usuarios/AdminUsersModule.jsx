@@ -581,7 +581,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     <div className="max-w-3xl mx-auto space-y-6 pb-20 relative">
       
       {isProcessing && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 animate-fade-in">
           <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-3">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
             <span className="text-sm font-bold text-slate-800">Procesando...</span>
@@ -590,8 +590,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         document.body
       )}
 
-      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
-        <div className="flex items-center justify-between vt-module-header gap-2">
+      <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6">
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={onBack}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
@@ -941,7 +941,7 @@ function AdminUserModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -1267,7 +1267,7 @@ function AdminSedeModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -1442,7 +1442,7 @@ function AdminAreaModal({
   const content = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm select-none overflow-hidden overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-hidden overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}

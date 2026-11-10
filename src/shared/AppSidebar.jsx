@@ -263,7 +263,7 @@ export function AppSidebar({
         onTouchMove={(e) => e.preventDefault()}
         onWheel={(e) => e.preventDefault()}
         aria-hidden="true"
-        className={`fixed inset-0 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs z-[80] transition-opacity duration-300 select-none touch-none overscroll-contain ${
+        className={`fixed inset-0 bg-slate-900/50 dark:bg-black/70 z-[80] transition-opacity duration-300 select-none touch-none overscroll-contain ${
           isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
       />
@@ -421,7 +421,7 @@ export function AppSidebar({
                     <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug">
                       Notificaciones
                     </span>
-                    <span className="block text-[10px] text-slate-400 dark:text-slate-500 leading-snug mt-0.5">
+                    <span className="block text-[10px] text-slate-400 dark:text-slate-500 leading-snug mt-0.5 break-words">
                       {notificationStatus === 'granted'
                         ? 'Alertas en tiempo real activas'
                         : notificationStatus === 'denied'
@@ -468,7 +468,7 @@ export function AppSidebar({
                     <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200 leading-snug">
                       Cámara y Escáner
                     </span>
-                    <span className="block text-[10px] text-slate-400 dark:text-slate-500 leading-snug mt-0.5">
+                    <span className="block text-[10px] text-slate-400 dark:text-slate-500 leading-snug mt-0.5 break-words">
                       {cameraStatus === 'granted'
                         ? 'Escaneo de códigos de barra listo'
                         : cameraStatus === 'denied'

@@ -27,6 +27,8 @@ import { MarqueeSearchInput } from './MarqueeSearchInput';
 
 const STORAGE_KEY = 'erp_scanner_camera_settings';
 
+let cachedCameraDevices = null;
+
 const BARCODE_ONLY_FORMATS = [
   Html5QrcodeSupportedFormats.EAN_13,
   Html5QrcodeSupportedFormats.EAN_8,
@@ -34,12 +36,7 @@ const BARCODE_ONLY_FORMATS = [
   Html5QrcodeSupportedFormats.UPC_E,
   Html5QrcodeSupportedFormats.CODE_128,
   Html5QrcodeSupportedFormats.CODE_39,
-  Html5QrcodeSupportedFormats.CODE_93,
-  Html5QrcodeSupportedFormats.CODABAR,
-  Html5QrcodeSupportedFormats.ITF,
-  Html5QrcodeSupportedFormats.RSS_14,
-  Html5QrcodeSupportedFormats.RSS_EXPANDED,
-  Html5QrcodeSupportedFormats.UPC_EAN_EXTENSION
+  Html5QrcodeSupportedFormats.ITF
 ];
 
 function isExcludedOrQrCode(decodedResult) {
@@ -87,95 +84,24 @@ function saveCameraSettings(settings) {
   }
 }
 
-function isUltraWideOrAux(label = '') {
-  const l = label.toLowerCase();
-  return (
-    l.includes('0.5') ||
-    l.includes('0,5') ||
-    l.includes('0.6') ||
-    l.includes('ultra') ||
-    l.includes('ultrawide') ||
-    l.includes('wide-angle') ||
-    l.includes('gran angular') ||
-    l.includes('macro') ||
-    l.includes('depth') ||
-    l.includes('tele') ||
-    l.includes('virtual')
-  );
-}
-
-function isFrontCamera(label = '') {
-  const l = label.toLowerCase();
-  return (
-    l.includes('front') ||
-    l.includes('frontal') ||
-    l.includes('selfie') ||
-    l.includes('delantera') ||
-    l.includes('user')
-  );
-}
-
-function isPrimaryMainCamera(label = '') {
-  const l = label.toLowerCase();
-  if (isUltraWideOrAux(l) || isFrontCamera(l)) return false;
-  return (
-    l.includes('main') ||
-    l.includes('principal') ||
-    l.includes('primary') ||
-    l.includes('1x') ||
-    l.includes('1.0') ||
-    l.includes('camera 0') ||
-    l.includes('camera2 0') ||
-    l.includes('back 0') ||
-    l.includes('back camera 0') ||
-    l.includes('rear 0') ||
-    l === 'back camera' ||
-    l === 'cámara trasera'
-  );
-}
-
-function findBestMainCamera(devices) {
-  if (!devices || devices.length === 0) return { selectedId: null, backCameras: [] };
-
-  const backCameras = devices.filter(d => !isFrontCamera(d.label));
-  if (backCameras.length === 0) {
-    return { selectedId: devices[0].id, backCameras: devices };
-  }
-  if (backCameras.length === 1) {
-    return { selectedId: backCameras[0].id, backCameras };
-  }
-
-  let selectedId = null;
-  const explicit = backCameras.find(d => isPrimaryMainCamera(d.label));
-  if (explicit) {
-    selectedId = explicit.id;
-  } else {
-    const nonAux = backCameras.filter(d => !isUltraWideOrAux(d.label));
-    if (nonAux.length > 0) {
-      selectedId = nonAux[0].id;
-    } else {
-      const nonUltra = backCameras.filter(d => {
-        const l = (d.label || '').toLowerCase();
-        return !l.includes('0.5') && !l.includes('0,5') && !l.includes('ultra');
-      });
-      selectedId = nonUltra.length > 0 ? nonUltra[0].id : backCameras[0].id;
-    }
-  }
-
-  const sortedBackCameras = [...backCameras].sort((a, b) => {
-    if (a.id === selectedId) return -1;
-    if (b.id === selectedId) return 1;
-    return 0;
-  });
-
-  return { selectedId, backCameras: sortedBackCameras };
-}
-
-function determineCameraLabel(deviceOrLabel, index = 0, allCameras = []) {
+function classifyCamera(deviceOrLabel, index = 0, totalCount = 1) {
   const rawLabel = typeof deviceOrLabel === 'string'
     ? deviceOrLabel
     : (deviceOrLabel?.label || '');
   const l = rawLabel.toLowerCase();
+
+  if (
+    l.includes('front') ||
+    l.includes('frontal') ||
+    l.includes('delantera') ||
+    l.includes('selfie') ||
+    l.includes('user') ||
+    l.includes('facing front') ||
+    l.includes('camera2 1') ||
+    (l.includes('camera 1') && !l.includes('camera 10'))
+  ) {
+    return { type: 'front', label: 'Frontal', sortOrder: 90 };
+  }
 
   if (
     l.includes('0.5') ||
@@ -183,32 +109,30 @@ function determineCameraLabel(deviceOrLabel, index = 0, allCameras = []) {
     l.includes('0.6') ||
     l.includes('0,6') ||
     l.includes('ultra') ||
+    l.includes('ultrawide') ||
     l.includes('gran angular') ||
     l.includes('wide-angle') ||
-    l.includes('ultrawide')
+    l.includes('camera2 2') ||
+    (l.includes('camera 2') && !l.includes('camera 20'))
   ) {
-    return '0.5x Ultra';
+    return { type: 'wide', label: '0.5x Ultra', sortOrder: 20 };
   }
 
   if (
     l.includes('tele') ||
-    l.includes('telephoto') ||
-    l.includes('telefoto') ||
     l.includes('periscope') ||
-    l.includes('periscopio')
+    l.includes('periscopio') ||
+    l.includes('camera2 3') ||
+    (l.includes('camera 3') && !l.includes('camera 30'))
   ) {
-    if (l.includes('3x')) return '3x Tele';
-    if (l.includes('2x')) return '2x Tele';
-    if (l.includes('5x')) return '5x Tele';
-    return 'Telefoto';
+    if (l.includes('3x')) return { type: 'tele', label: '3x Tele', sortOrder: 30 };
+    if (l.includes('2x')) return { type: 'tele', label: '2x Tele', sortOrder: 30 };
+    if (l.includes('5x')) return { type: 'tele', label: '5x Tele', sortOrder: 30 };
+    return { type: 'tele', label: 'Telefoto', sortOrder: 30 };
   }
 
   if (l.includes('macro') || l.includes('cercano')) {
-    return 'Macro';
-  }
-
-  if (l.includes('front') || l.includes('frontal') || l.includes('selfie') || l.includes('delantera')) {
-    return 'Frontal';
+    return { type: 'macro', label: 'Macro', sortOrder: 40 };
   }
 
   if (
@@ -217,38 +141,53 @@ function determineCameraLabel(deviceOrLabel, index = 0, allCameras = []) {
     l.includes('primary') ||
     l.includes('1x') ||
     l.includes('1.0') ||
-    l.includes('camera 0') ||
     l.includes('camera2 0') ||
+    (l.includes('camera 0') && !l.includes('camera 00')) ||
     l.includes('back 0') ||
     l.includes('rear 0') ||
+    l.includes('facing back') ||
     l === 'back camera' ||
     l === 'cámara trasera'
   ) {
-    return '1x Principal';
+    return { type: 'main', label: '1x Principal', sortOrder: 10 };
   }
 
-  if (l.includes('camera2 2') || l.includes('camera 2') || l.includes('back 2') || l.includes('rear 2')) {
-    return '0.5x Ultra';
+  if (index === 0) {
+    return { type: 'main', label: '1x Principal', sortOrder: 10 };
   }
-
-  if (l.includes('camera2 3') || l.includes('camera 3') || l.includes('back 3') || l.includes('rear 3')) {
-    return 'Telefoto';
+  if (index === 1 && totalCount === 2) {
+    return { type: 'front', label: 'Frontal', sortOrder: 90 };
   }
-
-  if (allCameras.length > 1) {
-    const pos = typeof index === 'number' && index >= 0
-      ? index
-      : (deviceOrLabel?.id ? allCameras.findIndex(d => d.id === deviceOrLabel.id) : 0);
-    if (pos === 0) return '1x Principal';
-    if (pos === 1) return '0.5x Ultra';
-    if (pos === 2) return 'Telefoto';
-    return `Lente ${pos + 1}`;
+  if (index === 1) {
+    return { type: 'wide', label: '0.5x Ultra', sortOrder: 20 };
   }
-
-  return '1x Principal';
+  return { type: 'aux', label: `Lente ${index + 1}`, sortOrder: 50 + index };
 }
 
-export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
+function determineCameraLabel(deviceOrLabel, index = 0, allCameras = []) {
+  if (deviceOrLabel && typeof deviceOrLabel === 'object' && deviceOrLabel.displayName) {
+    return deviceOrLabel.displayName;
+  }
+  const info = classifyCamera(deviceOrLabel, index, allCameras?.length || 1);
+  return info.label;
+}
+
+function prepareCameraList(devices = []) {
+  if (!devices || devices.length === 0) return [];
+  const classified = devices.map((dev, idx) => {
+    const info = classifyCamera(dev, idx, devices.length);
+    return {
+      ...dev,
+      cameraType: info.type,
+      displayName: info.label,
+      sortOrder: info.sortOrder
+    };
+  });
+  classified.sort((a, b) => a.sortOrder - b.sortOrder);
+  return classified;
+}
+
+export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = false }) {
   const {
     shouldRender,
     isClosing,
@@ -269,7 +208,15 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   const [hasSearched, setHasSearched] = useState(false);
   const [activeMode, setActiveMode] = useState('camera');
   const activeModeRef = useRef('camera');
+  const onDetectedRef = useRef(onDetected);
+  onDetectedRef.current = onDetected;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const lastScanTimeRef = useRef(0);
   const searchInputRef = useRef(null);
+  const isPausedRef = useRef(isPaused);
+  isPausedRef.current = isPaused;
+  const isInternalPausedRef = useRef(false);
   const [scannerError, setScannerError] = useState('');
   const [isStarting, setIsStarting] = useState(true);
   const [isCameraSuspended, setIsCameraSuspended] = useState(false);
@@ -278,6 +225,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   const zoomFeedbackTimeoutRef = useRef(null);
   const inactivityTimerRef = useRef(null);
   const scannerRef = useRef(null);
+  const isSwitchingCameraRef = useRef(false);
   const activeStreamRef = useRef(null);
   const activeTrackRef = useRef(null);
   const [availableCameras, setAvailableCameras] = useState([]);
@@ -294,58 +242,21 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     maxZoom: 4
   });
 
-  const handleSwitchMode = (mode) => {
-    setActiveMode(mode);
-    activeModeRef.current = mode;
-    resetInactivityTimer();
-
-    const track = activeTrackRef.current || getVideoTrack();
-    if (mode === 'search') {
-      if (isTorchOn && track) {
-        applyTorch(track, false);
-      }
-      if (track) {
-        track.enabled = false;
-      }
-      setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
-    } else {
-      if (track) {
-        track.enabled = true;
-      }
-      if (isTorchOn && track) {
-        applyTorch(track, true);
+  const getVideoTrack = useCallback(() => {
+    if (activeTrackRef.current && activeTrackRef.current.readyState === 'live') {
+      return activeTrackRef.current;
+    }
+    const videoElem = document.querySelector('#barcode-camera-view video');
+    if (videoElem && videoElem.srcObject) {
+      const tracks = videoElem.srcObject.getVideoTracks();
+      if (tracks && tracks.length > 0) {
+        activeTrackRef.current = tracks[0];
+        activeStreamRef.current = videoElem.srcObject;
+        return tracks[0];
       }
     }
-  };
-
-  useEffect(() => {
-    if (activeMode !== 'search') return;
-    const query = searchQuery.trim();
-    if (!query || query.length < 2) {
-      if (!query) {
-        setSearchResults([]);
-        setHasSearched(false);
-      }
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        const results = await catalogService.searchMedicines(query);
-        setSearchResults(results || []);
-        setHasSearched(true);
-      } catch (err) {
-        console.error('Error en búsqueda automática:', err);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 280);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery, activeMode]);
+    return null;
+  }, []);
 
   const suspendCameraDueInactivity = useCallback(async () => {
     setIsCameraSuspended(true);
@@ -383,12 +294,100 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = null;
     }
-    if (isOpen && !isCameraSuspended && !isClosing) {
+    if (isOpen && !isCameraSuspended && !isClosing && !isPaused && activeModeRef.current === 'camera') {
       inactivityTimerRef.current = setTimeout(() => {
         suspendCameraDueInactivity();
       }, 60000);
     }
-  }, [isOpen, isCameraSuspended, isClosing, suspendCameraDueInactivity]);
+  }, [isOpen, isCameraSuspended, isClosing, isPaused, suspendCameraDueInactivity]);
+
+  useEffect(() => {
+    const track = activeTrackRef.current || getVideoTrack();
+    if (isPaused) {
+      isInternalPausedRef.current = true;
+      if (isTorchOn && track) {
+        applyTorch(track, false);
+      }
+    } else {
+      if (!track || track.readyState === 'ended') {
+        if (isOpen && !isCameraSuspended && !isClosing) {
+          setScannerSessionKey(k => k + 1);
+        }
+      } else {
+        track.enabled = true;
+        const video = document.querySelector('#barcode-camera-view video');
+        if (video && video.paused) {
+          video.play().catch(() => {});
+        }
+        if (isTorchOn && !isCameraSuspended && isOpen) {
+          applyTorch(track, true);
+        }
+      }
+      resetInactivityTimer();
+      const timer = setTimeout(() => {
+        isInternalPausedRef.current = false;
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isPaused, isTorchOn, isCameraSuspended, isOpen, isClosing, resetInactivityTimer]);
+
+  const handleSwitchMode = (mode) => {
+    setActiveMode(mode);
+    activeModeRef.current = mode;
+    resetInactivityTimer();
+
+    const track = activeTrackRef.current || getVideoTrack();
+    if (mode === 'search') {
+      isInternalPausedRef.current = true;
+      if (isTorchOn && track) {
+        applyTorch(track, false);
+      }
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    } else {
+      if (track) {
+        track.enabled = true;
+      }
+      const video = document.querySelector('#barcode-camera-view video');
+      if (video && video.paused) {
+        video.play().catch(() => {});
+      }
+      if (isTorchOn && track && !isCameraSuspended) {
+        applyTorch(track, true);
+      }
+      setTimeout(() => {
+        isInternalPausedRef.current = false;
+      }, 500);
+    }
+  };
+
+  useEffect(() => {
+    if (activeMode !== 'search') return;
+    const query = searchQuery.trim();
+    if (!query || query.length < 2) {
+      if (!query) {
+        setSearchResults([]);
+        setHasSearched(false);
+      }
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await catalogService.searchMedicines(query);
+        setSearchResults(results || []);
+        setHasSearched(true);
+      } catch (err) {
+        console.error('Error en búsqueda automática:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 280);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, activeMode]);
 
   const handleResumeCamera = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
@@ -407,21 +406,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     setIsFocusing(false);
     setIsTorchOn(false);
     setFocusIndicator({ x: '50%', y: '50%', visible: false });
-  };
-  const getVideoTrack = () => {
-    if (activeTrackRef.current && activeTrackRef.current.readyState === 'live') {
-      return activeTrackRef.current;
-    }
-    const videoElem = document.querySelector('#barcode-camera-view video');
-    if (videoElem && videoElem.srcObject) {
-      const tracks = videoElem.srcObject.getVideoTracks();
-      if (tracks && tracks.length > 0) {
-        activeTrackRef.current = tracks[0];
-        activeStreamRef.current = videoElem.srcObject;
-        return tracks[0];
-      }
-    }
-    return null;
   };
 
   const forceStopHardware = async () => {
@@ -550,12 +534,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         } catch (_) {}
       }
     }
-    if (scannerRef.current && scannerRef.current.applyVideoConstraints) {
-      try {
-        await scannerRef.current.applyVideoConstraints({ advanced: [{ torch: Boolean(enabled) }] });
-        ok = true;
-      } catch (_) {}
-    }
     return ok;
   };
 
@@ -599,7 +577,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     setIsStarting(true);
     let isCancelled = false;
     let html5QrCode = null;
-    let pollInterval = null;
 
     async function startScanner() {
       if (scannerRef.current) {
@@ -633,7 +610,10 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       try {
         html5QrCode = new Html5Qrcode('barcode-camera-view', {
           formatsToSupport: BARCODE_ONLY_FORMATS,
-          verbose: false
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
         });
         scannerRef.current = html5QrCode;
       } catch (_e) {
@@ -644,40 +624,36 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         }
         return;
       }
-      let devices = [];
-      try {
-        devices = await Html5Qrcode.getCameras();
-        if (devices.length > 0 && !devices[0].label) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: { ideal: 'environment' } }
-            });
-            stream.getTracks().forEach(t => t.stop());
-            devices = await Html5Qrcode.getCameras();
-          } catch (_) {}
+
+      let devices = cachedCameraDevices;
+      if (!devices || devices.length === 0 || !devices[0]?.label) {
+        try {
+          devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0 && devices[0].label) {
+            cachedCameraDevices = devices;
+          }
+        } catch (err) {
+          console.warn('Error al enumerar dispositivos de video:', err);
         }
-      } catch (err) {
-        console.warn('Error al enumerar dispositivos de video:', err);
       }
 
       if (isCancelled) return;
-      const { selectedId, backCameras } = findBestMainCamera(devices);
-      setAvailableCameras(backCameras);
+      const preparedList = prepareCameraList(devices || []);
+      setAvailableCameras(preparedList);
 
+      const mainCamera = preparedList.find(d => d.cameraType === 'main') || preparedList[0];
       const stored = getStoredCameraSettings();
-      const validStoredCamera = stored.cameraId && backCameras.some(d => d.id === stored.cameraId && !isUltraWideOrAux(d.label));
-      const targetCameraId = validStoredCamera ? stored.cameraId : selectedId;
+      const validStoredCamera = stored.cameraId && preparedList.some(d => d.id === stored.cameraId);
+      const targetDevice = validStoredCamera
+        ? (preparedList.find(d => d.id === stored.cameraId) || mainCamera)
+        : mainCamera;
 
-      setActiveCameraId(targetCameraId);
-      const chosenIndex = backCameras.findIndex(d => d.id === targetCameraId);
-      const chosenDev = backCameras[chosenIndex >= 0 ? chosenIndex : 0];
-      const initialLabel = determineCameraLabel(chosenDev, chosenIndex, backCameras);
-      setCameraLabel(initialLabel);
+      const targetCameraId = targetDevice?.id;
+      setActiveCameraId(targetCameraId || null);
+      setCameraLabel(targetDevice?.displayName || '1x Principal');
 
       const qrConfig = {
-        fps: 20,
-        qrbox: { width: 280, height: 140 },
-        aspectRatio: 1.333333
+        fps: 10
       };
 
       const cameraInput = targetCameraId ? targetCameraId : { facingMode: 'environment' };
@@ -688,13 +664,23 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
           qrConfig,
           async (decodedText, decodedResult) => {
             if (isCancelled) return;
+            if (isPausedRef.current || isInternalPausedRef.current) return;
             if (activeModeRef.current !== 'camera') return;
             if (isExcludedOrQrCode(decodedResult)) return;
-            isCancelled = true;
+
+            const now = Date.now();
+            if (now - lastScanTimeRef.current < 1200) return;
+            lastScanTimeRef.current = now;
+
+            isInternalPausedRef.current = true;
             if (navigator.vibrate) navigator.vibrate(50);
-            await forceStopHardware();
-            resetAll();
-            onDetected(decodedText);
+            const track = getVideoTrack();
+            if (isTorchOn && track) {
+              applyTorch(track, false);
+            }
+            if (onDetectedRef.current) {
+              onDetectedRef.current(decodedText);
+            }
           },
           () => {}
         );
@@ -707,57 +693,61 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
         setIsStarting(false);
         resetInactivityTimer();
 
-        let attempts = 0;
-        pollInterval = setInterval(async () => {
-          if (isCancelled) {
-            clearInterval(pollInterval);
-            return;
+        try {
+          const freshDevs = await Html5Qrcode.getCameras();
+          if (freshDevs && freshDevs.length > 0 && freshDevs[0].label) {
+            cachedCameraDevices = freshDevs;
+            const refreshed = prepareCameraList(freshDevs);
+            setAvailableCameras(refreshed);
+
+            const runningTrack = getVideoTrack();
+            if (runningTrack && runningTrack.label) {
+              const matched = refreshed.find(d => d.label === runningTrack.label) || refreshed.find(d => d.id === targetCameraId);
+              if (matched) {
+                setActiveCameraId(matched.id);
+                setCameraLabel(matched.displayName);
+              }
+            }
           }
-          const track = getVideoTrack();
-          if (track) {
-            clearInterval(pollInterval);
-            activeTrackRef.current = track;
-            const videoElem = document.querySelector('#barcode-camera-view video');
-            if (videoElem && videoElem.srcObject) {
-              activeStreamRef.current = videoElem.srcObject;
-            }
+        } catch (_) {}
 
-            if (track.label) {
-              const detectedLabel = determineCameraLabel(track.label, chosenIndex, backCameras);
-              setCameraLabel(detectedLabel);
-            }
+        const track = getVideoTrack();
+        if (track) {
+          activeTrackRef.current = track;
+          const videoElem = document.querySelector('#barcode-camera-view video');
+          if (videoElem && videoElem.srcObject) {
+            activeStreamRef.current = videoElem.srcObject;
+          }
 
-            const caps = track.getCapabilities ? track.getCapabilities() : {};
+          if (track.label && !targetCameraId) {
+            setCameraLabel(determineCameraLabel(track.label, 0, availableCameras));
+          }
 
-            setCameraCapabilities({
-              hasTorch: Boolean(caps.torch),
-              hasZoom: Boolean(caps.zoom),
-              minZoom: caps.zoom?.min || 1,
-              maxZoom: caps.zoom?.max || 4
+          const caps = track.getCapabilities ? track.getCapabilities() : {};
+
+          setCameraCapabilities({
+            hasTorch: Boolean(caps.torch),
+            hasZoom: Boolean(caps.zoom),
+            minZoom: caps.zoom?.min || 1,
+            maxZoom: caps.zoom?.max || 4
+          });
+
+          try {
+            await track.applyConstraints({
+              advanced: [{ focusMode: 'continuous' }]
             });
+          } catch (_) {}
 
-            try {
-              await track.applyConstraints({
-                advanced: [{ focusMode: 'continuous' }]
-              });
-            } catch (_) {}
+          setZoomLevel(stored.zoom);
+          await applyZoom(track, stored.zoom);
 
-            setZoomLevel(stored.zoom);
-            await applyZoom(track, stored.zoom);
-
-            if (stored.torch && caps.torch) {
-              setIsTorchOn(true);
-              await applyTorch(track, true);
-            } else {
-              setIsTorchOn(false);
-            }
-
-            resetInactivityTimer();
-          } else if (++attempts > 30) {
-            clearInterval(pollInterval);
+          if (stored.torch && caps.torch) {
+            setIsTorchOn(true);
+            await applyTorch(track, true);
+          } else {
+            setIsTorchOn(false);
           }
-        }, 80);
-
+        }
       } catch (err) {
         if (!isCancelled) {
           console.error('Error al iniciar la cámara principal:', err);
@@ -771,7 +761,6 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
 
     return () => {
       isCancelled = true;
-      if (pollInterval) clearInterval(pollInterval);
       if (inactivityTimerRef.current) {
         clearTimeout(inactivityTimerRef.current);
         inactivityTimerRef.current = null;
@@ -779,7 +768,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       forceStopHardware();
       resetAll();
     };
-  }, [isOpen, shouldRender, isClosing, scannerSessionKey, isCameraSuspended, onDetected, resetInactivityTimer]);
+  }, [isOpen, shouldRender, isClosing, scannerSessionKey, isCameraSuspended]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -787,7 +776,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         forceStopHardware();
-        onClose();
+        if (onCloseRef.current) onCloseRef.current();
       }
     };
 
@@ -804,43 +793,73 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       window.removeEventListener('pagehide', handlePageHide);
       window.removeEventListener('beforeunload', handlePageHide);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   const handleSwitchCamera = async () => {
-    if (availableCameras.length <= 1 || !scannerRef.current) return;
-    const currentIndex = availableCameras.findIndex(d => d.id === activeCameraId);
-    const nextIndex = (currentIndex + 1) % availableCameras.length;
-    const nextDevice = availableCameras[nextIndex];
-    if (!nextDevice) return;
+    if (isSwitchingCameraRef.current || isStarting || availableCameras.length <= 1 || !scannerRef.current) return;
+    isSwitchingCameraRef.current = true;
 
     try {
       resetInactivityTimer();
       setIsStarting(true);
-      if (activeTrackRef.current) {
-        await applyTorch(activeTrackRef.current, false);
-        try { activeTrackRef.current.stop(); } catch (_) {}
+      const track = activeTrackRef.current || getVideoTrack();
+      if (track) {
+        try { await applyTorch(track, false); } catch (_) {}
+        try { track.stop(); } catch (_) {}
         activeTrackRef.current = null;
       }
+
       if (scannerRef.current && scannerRef.current.isScanning) {
-        await scannerRef.current.stop();
+        try {
+          await scannerRef.current.stop();
+        } catch (stopErr) {
+          console.warn('Advertencia al detener escáner:', stopErr);
+        }
       }
+
+      const container = document.getElementById('barcode-camera-view');
+      if (container) {
+        try { container.innerHTML = ''; } catch (_) {}
+      }
+
+      const currentIndex = availableCameras.findIndex(d => d.id === activeCameraId);
+      const nextIndex = (currentIndex >= 0 ? currentIndex + 1 : 0) % availableCameras.length;
+      const nextDevice = availableCameras[nextIndex];
+      if (!nextDevice) {
+        setIsStarting(false);
+        isSwitchingCameraRef.current = false;
+        return;
+      }
+
       setActiveCameraId(nextDevice.id);
-      const nextLabel = determineCameraLabel(nextDevice, nextIndex, availableCameras);
-      setCameraLabel(nextLabel);
+      setCameraLabel(nextDevice.displayName || nextDevice.label);
 
       const current = getStoredCameraSettings();
       saveCameraSettings({ ...current, cameraId: nextDevice.id });
 
       await scannerRef.current.start(
         nextDevice.id,
-        { fps: 20, qrbox: { width: 280, height: 140 }, aspectRatio: 1.333333 },
+        {
+          fps: 10
+        },
         async (decodedText, decodedResult) => {
+          if (isPausedRef.current || isInternalPausedRef.current) return;
           if (activeModeRef.current !== 'camera') return;
           if (isExcludedOrQrCode(decodedResult)) return;
+
+          const now = Date.now();
+          if (now - lastScanTimeRef.current < 1200) return;
+          lastScanTimeRef.current = now;
+
+          isInternalPausedRef.current = true;
           if (navigator.vibrate) navigator.vibrate(50);
-          await forceStopHardware();
-          resetAll();
-          onDetected(decodedText);
+          const currentTrack = getVideoTrack();
+          if (isTorchOn && currentTrack) {
+            applyTorch(currentTrack, false);
+          }
+          if (onDetectedRef.current) {
+            onDetectedRef.current(decodedText);
+          }
         },
         () => {}
       );
@@ -849,30 +868,27 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       resetInactivityTimer();
 
       setTimeout(async () => {
-        const track = getVideoTrack();
-        if (track) {
-          activeTrackRef.current = track;
-          if (track.label) {
-            setCameraLabel(determineCameraLabel(track.label, nextIndex, availableCameras));
-          }
+        const newTrack = getVideoTrack();
+        if (newTrack) {
+          activeTrackRef.current = newTrack;
           const videoElem = document.querySelector('#barcode-camera-view video');
           if (videoElem && videoElem.srcObject) {
             activeStreamRef.current = videoElem.srcObject;
           }
-          const caps = track.getCapabilities ? track.getCapabilities() : {};
+          const caps = newTrack.getCapabilities ? newTrack.getCapabilities() : {};
           setCameraCapabilities({
             hasTorch: Boolean(caps.torch),
             hasZoom: Boolean(caps.zoom),
             minZoom: caps.zoom?.min || 1,
             maxZoom: caps.zoom?.max || 4
           });
-          track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-          applyZoom(track, zoomLevel);
+          newTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+          applyZoom(newTrack, zoomLevel);
 
           const currentSettings = getStoredCameraSettings();
           if (currentSettings.torch && caps.torch) {
             setIsTorchOn(true);
-            await applyTorch(track, true);
+            await applyTorch(newTrack, true);
           } else {
             setIsTorchOn(false);
           }
@@ -880,6 +896,21 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
       }, 150);
     } catch (e) {
       console.warn('Error alternando cámara:', e);
+      setIsStarting(false);
+      try {
+        if (scannerRef.current && !scannerRef.current.isScanning) {
+          await scannerRef.current.start(
+            { facingMode: 'environment' },
+            { fps: 10 },
+            (decodedText) => {
+              if (onDetectedRef.current) onDetectedRef.current(decodedText);
+            },
+            () => {}
+          );
+        }
+      } catch (_) {}
+    } finally {
+      isSwitchingCameraRef.current = false;
       setIsStarting(false);
     }
   };
@@ -969,22 +1000,52 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   };
 
   const handleSelectItem = (item) => {
-    forceStopHardware();
-    animateClose();
-    onDetected(item.codigo, item);
-    setTimeout(() => {
-      resetAll();
-    }, 200);
+    resetInactivityTimer();
+    isInternalPausedRef.current = true;
+    const track = activeTrackRef.current || getVideoTrack();
+    if (isTorchOn && track) {
+      applyTorch(track, false);
+    }
+    if (track) {
+      track.enabled = true;
+    }
+    const video = document.querySelector('#barcode-camera-view video');
+    if (video && video.paused) {
+      video.play().catch(() => {});
+    }
+    setActiveMode('camera');
+    activeModeRef.current = 'camera';
+    setSearchQuery('');
+    setSearchResults([]);
+    setHasSearched(false);
+    if (onDetectedRef.current) {
+      onDetectedRef.current(item.codigo, item);
+    }
   };
 
   const handleSelectNewCode = (code) => {
+    resetInactivityTimer();
     const clean = String(code || '').trim();
-    forceStopHardware();
-    animateClose();
-    onDetected(clean);
-    setTimeout(() => {
-      resetAll();
-    }, 200);
+    isInternalPausedRef.current = true;
+    const track = activeTrackRef.current || getVideoTrack();
+    if (isTorchOn && track) {
+      applyTorch(track, false);
+    }
+    if (track) {
+      track.enabled = true;
+    }
+    const video = document.querySelector('#barcode-camera-view video');
+    if (video && video.paused) {
+      video.play().catch(() => {});
+    }
+    setActiveMode('camera');
+    activeModeRef.current = 'camera';
+    setSearchQuery('');
+    setSearchResults([]);
+    setHasSearched(false);
+    if (onDetectedRef.current) {
+      onDetectedRef.current(clean);
+    }
   };
 
   const handleExecuteSearch = async (e) => {
@@ -1021,7 +1082,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, handleClose)}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -1044,7 +1105,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               </div>
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-slate-900 leading-tight">Escanear Código</h3>
-                <p className="text-[11px] text-slate-500 leading-tight truncate">Apunta el código de barras con la cámara</p>
+                <p className="text-[11px] text-slate-500 leading-tight">Apunta el código de barras con la cámara</p>
               </div>
             </div>
 
@@ -1091,6 +1152,12 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
             >
               <div id="barcode-camera-view" className="w-full h-full object-cover"></div>
 
+              {!isStarting && !scannerError && !isCameraSuspended && activeMode === 'camera' && (
+                <div className="absolute inset-x-12 top-1/2 -translate-y-1/2 pointer-events-none z-10 flex items-center justify-center">
+                  <div className="w-full h-[2px] bg-red-500/85 shadow-[0_0_8px_rgba(239,68,68,0.7)] animate-pulse rounded-full" />
+                </div>
+              )}
+
               {focusIndicator.visible && activeMode === 'camera' && (
                 <div
                   className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-300 animate-in zoom-in-75"
@@ -1110,7 +1177,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                   <button
                     type="button"
                     onClick={handleTriggerFocus}
-                    className="px-3 py-1.5 text-xs bg-black/60 hover:bg-black/80 active:scale-95 backdrop-blur-md text-white rounded-full font-semibold flex items-center gap-1.5 shadow-md transition-all cursor-pointer border border-white/20"
+                    className="px-3 py-1.5 text-xs bg-black/75 hover:bg-black/90 active:scale-95 text-white rounded-full font-semibold flex items-center gap-1.5 shadow-md transition-all cursor-pointer border border-white/20"
                     title="Re-enfocar la cámara"
                   >
                     <Focus className={`w-3.5 h-3.5 ${isFocusing ? 'text-amber-400 animate-spin' : 'text-white'}`} />
@@ -1122,7 +1189,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                       <button
                         type="button"
                         onClick={handleSwitchCamera}
-                        className="px-2.5 py-1.5 text-xs bg-black/60 hover:bg-black/80 active:scale-95 backdrop-blur-md text-white rounded-full font-semibold flex items-center gap-1 shadow-md transition-all cursor-pointer border border-white/20"
+                        className="px-2.5 py-1.5 text-xs bg-black/75 hover:bg-black/90 active:scale-95 text-white rounded-full font-semibold flex items-center gap-1 shadow-md transition-all cursor-pointer border border-white/20"
                         title={`Cambiar lente (actual: ${cameraLabel})`}
                       >
                         <SwitchCamera className="w-3.5 h-3.5 text-blue-400" />
@@ -1135,10 +1202,10 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                     <button
                       type="button"
                       onClick={handleToggleTorch}
-                      className={`px-3 py-1.5 text-xs active:scale-95 backdrop-blur-md rounded-full font-bold flex items-center gap-1.5 shadow-md transition-all cursor-pointer border ${
+                      className={`px-3 py-1.5 text-xs active:scale-95 rounded-full font-bold flex items-center gap-1.5 shadow-md transition-all cursor-pointer border ${
                         isTorchOn
                           ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-amber-400/30'
-                          : 'bg-black/60 hover:bg-black/80 text-white border-white/20'
+                          : 'bg-black/75 hover:bg-black/90 text-white border-white/20'
                       }`}
                       title={isTorchOn ? 'Apagar flash' : 'Encender flash'}
                     >
@@ -1163,7 +1230,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                   <div className="relative flex items-center justify-center">
                     <div className="absolute w-24 h-24 rounded-full border-2 border-blue-400/80 animate-ping pointer-events-none" />
                     <div className="absolute w-32 h-32 rounded-full border border-blue-400/30 animate-pulse pointer-events-none" />
-                    <div className="relative px-3.5 py-1.5 rounded-2xl bg-slate-950/85 backdrop-blur-md border border-white/25 text-white font-mono text-sm font-bold flex items-center gap-1.5 shadow-2xl scale-110 animate-in zoom-in-75 duration-200">
+                    <div className="relative px-3.5 py-1.5 rounded-2xl bg-slate-950/90 border border-white/25 text-white font-mono text-sm font-bold flex items-center gap-1.5 shadow-2xl scale-110 animate-in zoom-in-75 duration-200">
                       <ZoomIn className="w-4 h-4 text-blue-400" />
                       <span>Zoom {zoomFeedback.level}x</span>
                     </div>
@@ -1176,7 +1243,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
                   onClick={(e) => e.stopPropagation()}
                   className="absolute bottom-2.5 inset-x-2.5 z-20 flex items-center justify-center pointer-events-auto"
                 >
-                  <div className="bg-black/65 backdrop-blur-md border border-white/20 p-1 rounded-2xl flex items-center gap-1 shadow-lg">
+                  <div className="bg-black/80 border border-white/20 p-1 rounded-2xl flex items-center gap-1 shadow-lg">
                     <div className="pl-2 pr-1 text-[10px] font-bold text-white/70 uppercase tracking-wider flex items-center gap-1">
                       <ZoomIn className="w-3 h-3 text-white/80" />
                       <span>Zoom:</span>
@@ -1206,7 +1273,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected }) {
               {isCameraSuspended && activeMode === 'camera' && (
                 <div
                   onClick={handleResumeCamera}
-                  className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-center cursor-pointer transition-all animate-in fade-in duration-200"
+                  className="absolute inset-0 z-30 bg-slate-950/90 flex flex-col items-center justify-center p-4 text-center cursor-pointer transition-all animate-in fade-in duration-200"
                 >
                   <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/40 text-blue-400 flex items-center justify-center mb-2.5 shadow-lg hover:scale-105 active:scale-95 transition-transform">
                     <Camera className="w-6 h-6" />

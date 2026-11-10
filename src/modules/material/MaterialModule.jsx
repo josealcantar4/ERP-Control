@@ -31,7 +31,7 @@ import { MaterialPersonalModal } from './MaterialPersonalModal';
 import { playCheckSound, playSuccessSound, MarqueeSearchInput } from '../../shared';
 import { ModalDialog } from '../../shared/ModalDialog';
 
-export function MaterialModule({ currentUser, onBack, onRefresh }) {
+export const MaterialModule = React.memo(function MaterialModule({ currentUser, onBack, onRefresh }) {
   const [materiales, setMateriales] = useState(() => materialService.getLocalMateriales());
   const [tipos, setTipos] = useState(() => materialService.getLocalTipos());
   const [personalList, setPersonalList] = useState(() => materialService.getLocalPersonal());
@@ -243,8 +243,8 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
   return (
     <div className="max-w-4xl mx-auto space-y-5 pb-20 select-none animate-fade-in font-sans">
       
-      <div className="sticky top-16 z-30 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6 transition-all">
-        <div className="flex items-center justify-between vt-module-header gap-2">
+      <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6">
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={onBack}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all cursor-pointer shrink-0"
@@ -618,4 +618,4 @@ export function MaterialModule({ currentUser, onBack, onRefresh }) {
 
     </div>
   );
-}
+});

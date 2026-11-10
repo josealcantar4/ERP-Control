@@ -809,6 +809,62 @@ export function canUserReceive(transfer, currentUser) {
   return true;
 }
 
+export function canUserViewInRecibirHistory(transfer, currentUser) {
+  if (!currentUser || !transfer) return false;
+  const isReceived = transfer.estado === 'recibida' ||
+                     transfer.estado === 'recibida_incompleta' ||
+                     transfer.estado === 'cerrada_con_faltantes';
+  if (!isReceived) return false;
+
+  const username = (currentUser.username || '').toLowerCase().trim();
+  const isRootAdmin = username === 'administrador';
+  if (isRootAdmin) return true;
+
+  if (currentUser.excluirDestinatario) {
+    return false;
+  }
+
+  if (currentUser.area && isAreaExcludedFromTransfers(currentUser.area)) {
+    return false;
+  }
+
+  const uRoles = currentUser.roles || [];
+  const hasReceiveRole = uRoles.includes('solicitar') || uRoles.includes('recibir');
+  if (!hasReceiveRole) {
+    return false;
+  }
+
+  const receptor = (transfer.usuarioReceptor || transfer.usuarioRecepcion || transfer.reporteDiscrepancias?.usuarioReceptor || '').toLowerCase().trim();
+  if (receptor && receptor === username) {
+    return true;
+  }
+
+  const { recipientSede, recipientArea, recipientUser } = getTransferParticipants(transfer);
+  if (recipientUser && recipientUser.toLowerCase().trim() === username) {
+    return true;
+  }
+
+  if (receptor && receptor !== 'sucursal' && receptor !== username) {
+    return false;
+  }
+
+  const userSede = (currentUser.sede || '').toLowerCase().trim();
+  const userArea = (currentUser.area || '').toLowerCase().trim();
+  const rSede = (recipientSede || '').toLowerCase().trim();
+  const rArea = (recipientArea || '').toLowerCase().trim();
+
+  if (!userSede || rSede !== userSede) {
+    return false;
+  }
+
+  if (rArea) {
+    if (!userArea) return false;
+    return rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea);
+  }
+
+  return true;
+}
+
 function getActiveUserForNotifications() {
   try {
     const raw = localStorage.getItem('erp_current_user');
@@ -1793,7 +1849,7 @@ export const transferService = {
     return true;
   },
 
-  async receiveSolicitud(solicitudId, faltantes = [], itemsActualizados = null) {
+  async receiveSolicitud(solicitudId, faltantes = [], itemsActualizados = null, usuarioReceptor = '') {
     if (!solicitudId) return false;
     const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
     const list = getLocalSolicitudes();
@@ -1812,6 +1868,7 @@ export const transferService = {
       estado,
       reporteFaltantes: faltantes,
       fechaRecepcion: new Date().toISOString(),
+      usuarioReceptor: usuarioReceptor || existing?.usuarioReceptor || '',
       ...(finalItems ? { items: finalItems } : {})
     };
     const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
@@ -2328,6 +2385,7 @@ export const transferService = {
   canUserViewInSolicitar,
   canUserDispatch,
   canUserReceive,
+  canUserViewInRecibirHistory,
   getTransferParticipants,
 
   playNotificationSound,

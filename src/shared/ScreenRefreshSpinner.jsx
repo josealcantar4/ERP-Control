@@ -14,7 +14,7 @@ export function ScreenRefreshSpinner({ isRefreshing }) {
       role="status"
       aria-live="polite"
     >
-      <div className="bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-full shadow-2xl border border-slate-200/90 flex items-center gap-2 ring-1 ring-black/5">
+      <div className="bg-white dark:bg-slate-800 px-3.5 py-1.5 rounded-full shadow-2xl border border-slate-200/90 dark:border-slate-700 flex items-center gap-2 ring-1 ring-black/5">
         <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0"></div>
         <span className="text-[11px] font-semibold text-slate-700 tracking-tight">Actualizando...</span>
       </div>

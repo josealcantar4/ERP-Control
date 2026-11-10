@@ -27,7 +27,7 @@ export function CatalogSyncModal({
   const percent = progress?.percent || 0;
 
   const modalContent = (
-    <div className={`fixed inset-0 z-[9999] bg-slate-900/60 dark:bg-black/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
+    <div className={`fixed inset-0 z-[9999] bg-slate-900/70 dark:bg-black/80 flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
       <div
         ref={cardRef}
         style={cardStyle}

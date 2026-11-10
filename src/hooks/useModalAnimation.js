@@ -2,26 +2,8 @@
  * Hook para controlar animaciones de apertura, cierre y ciclo de vida de montaje de componentes modales.
  */
 
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useBodyScrollLock } from './useBodyScrollLock';
-
-let lastClickPoint = null;
-
-if (typeof window !== 'undefined') {
-  const recordPoint = (e) => {
-    const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
-    if (touch && touch.clientX != null && touch.clientY != null) {
-      lastClickPoint = {
-        x: touch.clientX,
-        y: touch.clientY,
-        time: Date.now()
-      };
-    }
-  };
-  window.addEventListener('pointerdown', recordPoint, { capture: true, passive: true });
-  window.addEventListener('touchstart', recordPoint, { capture: true, passive: true });
-  window.addEventListener('mousedown', recordPoint, { capture: true, passive: true });
-}
 
 export function useModalAnimation({
   isOpen,
@@ -49,27 +31,6 @@ export function useModalAnimation({
   }
 
   useBodyScrollLock(shouldRender);
-
-  useLayoutEffect(() => {
-    if (isOpen && shouldRender && !isClosing) {
-      if (!centerOrigin && cardRef.current && lastClickPoint && (Date.now() - lastClickPoint.time < 5000)) {
-        const rect = cardRef.current.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          const pctX = Math.round(((lastClickPoint.x - rect.left) / rect.width) * 100);
-          const pctY = Math.round(((lastClickPoint.y - rect.top) / rect.height) * 100);
-          const clampedX = Math.max(0, Math.min(100, pctX));
-          const clampedY = Math.max(0, Math.min(100, pctY));
-          originLockedRef.current = `${clampedX}% ${clampedY}%`;
-          cardRef.current.style.transformOrigin = originLockedRef.current;
-          return;
-        }
-      }
-      originLockedRef.current = '50% 50%';
-      if (cardRef.current) {
-        cardRef.current.style.transformOrigin = '50% 50%';
-      }
-    }
-  }, [isOpen, shouldRender, isClosing, centerOrigin]);
 
   useEffect(() => {
     const wasOpen = prevIsOpenRef.current;
@@ -122,83 +83,8 @@ export function useModalAnimation({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [shouldRender, isClosing, handleClose]);
 
-  const isPointerDownInsideCardRef = useRef(false);
-  const isPointerUpInsideCardRef = useRef(false);
-  const pointerDownPosRef = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    if (!shouldRender || isClosing) return;
-
-    const handleGlobalPointerDown = (e) => {
-      const touch = (e.touches && e.touches.length > 0) ? e.touches[0] : e;
-      if (touch && touch.clientX != null && touch.clientY != null) {
-        pointerDownPosRef.current = { x: touch.clientX, y: touch.clientY };
-      }
-
-      const target = e.target;
-      if (cardRef.current && (cardRef.current === target || cardRef.current.contains(target))) {
-        isPointerDownInsideCardRef.current = true;
-      } else {
-        isPointerDownInsideCardRef.current = false;
-      }
-    };
-
-    const handleGlobalPointerUp = (e) => {
-      const target = e.target;
-      if (cardRef.current && (cardRef.current === target || cardRef.current.contains(target))) {
-        isPointerUpInsideCardRef.current = true;
-      } else {
-        isPointerUpInsideCardRef.current = false;
-      }
-    };
-
-    window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true, passive: true });
-    window.addEventListener('mousedown', handleGlobalPointerDown, { capture: true, passive: true });
-    window.addEventListener('touchstart', handleGlobalPointerDown, { capture: true, passive: true });
-
-    window.addEventListener('pointerup', handleGlobalPointerUp, { capture: true, passive: true });
-    window.addEventListener('mouseup', handleGlobalPointerUp, { capture: true, passive: true });
-    window.addEventListener('touchend', handleGlobalPointerUp, { capture: true, passive: true });
-
-    return () => {
-      window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true });
-      window.removeEventListener('mousedown', handleGlobalPointerDown, { capture: true });
-      window.removeEventListener('touchstart', handleGlobalPointerDown, { capture: true });
-
-      window.removeEventListener('pointerup', handleGlobalPointerUp, { capture: true });
-      window.removeEventListener('mouseup', handleGlobalPointerUp, { capture: true });
-      window.removeEventListener('touchend', handleGlobalPointerUp, { capture: true });
-    };
-  }, [shouldRender, isClosing, cardRef]);
-
   const handleBackdropClick = useCallback((e, conditionOrAction = true) => {
     if (e.target !== e.currentTarget) return false;
-
-    if (e.clientX > e.currentTarget.clientWidth || e.clientY > e.currentTarget.clientHeight) {
-      return false;
-    }
-
-    if (isPointerDownInsideCardRef.current) {
-      isPointerDownInsideCardRef.current = false;
-      return false;
-    }
-
-    if (isPointerUpInsideCardRef.current) {
-      isPointerUpInsideCardRef.current = false;
-      return false;
-    }
-
-    if (pointerDownPosRef.current && (pointerDownPosRef.current.x !== 0 || pointerDownPosRef.current.y !== 0)) {
-      if (e.clientX != null && (e.clientX !== 0 || e.clientY !== 0)) {
-        const dist = Math.hypot(
-          e.clientX - pointerDownPosRef.current.x,
-          e.clientY - pointerDownPosRef.current.y
-        );
-        if (dist > 20) {
-          return false;
-        }
-      }
-    }
 
     if (typeof conditionOrAction === 'function') {
       conditionOrAction();

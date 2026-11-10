@@ -20,7 +20,7 @@ export function AppleNavbar({
   const isAdmin = currentUser?.username?.toLowerCase() === 'administrador' || currentUser?.roles?.includes('admin');
 
   return (
-    <header className="sticky top-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800 transition-colors vt-navbar">
+    <header className="sticky top-0 z-50 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 transition-colors">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         
         <div

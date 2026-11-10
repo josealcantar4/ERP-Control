@@ -272,14 +272,10 @@ export default function App() {
       if (screen === 'solicitar') {
         await Promise.all([
           transferService.refreshSolicitudes(),
-          userService.getMatrizDestinatarios(),
-          catalogService.syncCleanCatalogFromFirestore()
+          userService.getMatrizDestinatarios()
         ]);
       } else if (screen === 'despachar' || screen === 'recibir') {
-        await Promise.all([
-          transferService.refreshSolicitudes(),
-          catalogService.syncCleanCatalogFromFirestore()
-        ]);
+        await transferService.refreshSolicitudes();
       } else if (screen === 'admin') {
         await Promise.all([
           userService.refreshUsers(),
@@ -294,8 +290,7 @@ export default function App() {
         await Promise.all([
           transferService.refreshSolicitudes(),
           userService.getMatrizDestinatarios(),
-          materialService.refreshAll(),
-          catalogService.syncCleanCatalogFromFirestore()
+          materialService.refreshAll()
         ]);
       }
     } catch (err) {
@@ -355,7 +350,9 @@ export default function App() {
       localStorage.setItem('currentScreen', screen);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }, { direction });
-    performScreenRefresh(screen);
+    setTimeout(() => {
+      performScreenRefresh(screen);
+    }, 120);
   };
   useEffect(() => {
     if (currentUser && currentScreen) {
@@ -560,7 +557,7 @@ export default function App() {
 
       <ScreenRefreshSpinner isRefreshing={isScreenUpdating} />
 
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16 vt-main">
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16">
         <div key={currentScreen} className="ios-page-transition">
           {currentScreen === 'dashboard' && (
             <DashboardScreen
@@ -613,7 +610,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="py-4 text-center text-[11px] text-slate-400 dark:text-slate-500 vt-footer">
+      <footer className="py-4 text-center text-[11px] text-slate-400 dark:text-slate-500">
         ERP Control &bull; {currentUser.sede}
       </footer>
       <ReloadPrompt />

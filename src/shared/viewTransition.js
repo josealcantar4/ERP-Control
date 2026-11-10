@@ -1,35 +1,10 @@
 /**
- * Utilidad para transiciones suaves de vista utilizando la API View Transitions del navegador con degradación elegante.
+ * Ejecutor directo e instantáneo de cambios de vista sin bloqueos de renderizado.
  */
 
-import { flushSync } from 'react-dom';
-
-export function transitionView(updateFn, { direction = 'forward', type = null } = {}) {
-  if (typeof document === 'undefined' || !document.startViewTransition) {
+export function transitionView(updateFn) {
+  if (typeof updateFn === 'function') {
     updateFn();
-    return;
-  }
-
-  document.documentElement.dataset.transitionDirection = direction;
-  if (type) {
-    document.documentElement.dataset.transitionType = type;
-  }
-
-  try {
-    const transition = document.startViewTransition(() => {
-      flushSync(() => {
-        updateFn();
-      });
-    });
-
-    transition.finished.finally(() => {
-      delete document.documentElement.dataset.transitionDirection;
-      delete document.documentElement.dataset.transitionType;
-    });
-  } catch (err) {
-    console.warn('Fallback de View Transition:', err);
-    updateFn();
-    delete document.documentElement.dataset.transitionDirection;
-    delete document.documentElement.dataset.transitionType;
   }
 }
+

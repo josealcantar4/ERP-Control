@@ -16,6 +16,7 @@ export {
   canUserViewInSolicitar,
   canUserDispatch,
   canUserReceive,
+  canUserViewInRecibirHistory,
   getTransferParticipants,
   isAreaExcludedFromTransfers
 } from './transferService';

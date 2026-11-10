@@ -17,11 +17,23 @@ import {
   AlertCircle,
   FileText
 } from 'lucide-react';
-import { formatTransferFolio, dismissNotification } from './transferService';
+import { formatTransferFolio, dismissNotification, formatOrderRequestedBy } from './transferService';
+import { userService } from '../usuarios/userService';
 import { useModalAnimation } from '../../hooks';
 import { MarqueeText } from '../../shared/MarqueeText';
 
 export function TransferDetailModal({ isOpen, solicitud, onClose }) {
+  const [usersList, setUsersList] = React.useState([]);
+
+  React.useEffect(() => {
+    const unsub = userService.subscribeUsers((list) => {
+      setUsersList(list);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
   const lastSolicitudRef = useRef(solicitud);
   if (solicitud) lastSolicitudRef.current = solicitud;
   const currentSolicitud = solicitud || lastSolicitudRef.current;
@@ -62,6 +74,12 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
   const isFaltantesDespachados = currentSolicitud.estado === 'faltantes_despachados';
   const isCerradaConFaltantes = currentSolicitud.estado === 'cerrada_con_faltantes';
   const hasFaltantesReport = Boolean(currentSolicitud.reporteFaltantes && currentSolicitud.reporteFaltantes.length > 0);
+
+  const isSolicitada = Boolean(currentSolicitud.solicitada || currentSolicitud.solicitado || (currentSolicitud.estado && currentSolicitud.estado !== 'borrador'));
+  const isDespachada = Boolean(currentSolicitud.despachada || currentSolicitud.despachado || currentSolicitud.atendida || currentSolicitud.atendido || isCompleted || isReceived || isIncomplete || isFaltantesDespachados || isCerradaConFaltantes);
+  const isRecibida = Boolean(currentSolicitud.recibida || currentSolicitud.recibido || isReceived || isIncomplete || isCerradaConFaltantes);
+  const isEnTransito = Boolean(currentSolicitud.enTransito || (isDespachada && !isRecibida));
+  const isDirect = Boolean(currentSolicitud.esDespachoDirecto || currentSolicitud.sinSolicitud);
 
   const formattedDate = currentSolicitud.fecha
     ? new Date(currentSolicitud.fecha).toLocaleString('es-MX', {
@@ -162,6 +180,10 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               <Clock className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
               <span>{formattedDate}</span>
             </div>
+
+            <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 pt-0.5">
+              {formatOrderRequestedBy(currentSolicitud, usersList)}
+            </p>
           </div>
 
           <button
@@ -174,6 +196,62 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/60 dark:border-slate-800">
+            <div className="grid grid-cols-3 gap-2">
+              <div className={`p-2 rounded-xl border text-center transition-all ${
+                isSolicitada
+                  ? 'bg-emerald-50/60 dark:bg-transparent border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-amber-50/60 dark:bg-transparent border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400'
+              }`}>
+                <div className="flex items-center justify-center gap-1 text-[11px] font-bold">
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>1. Solicitar</span>
+                </div>
+                <p className="text-[10px] font-medium opacity-80 mt-0.5">
+                  {isSolicitada ? 'Solicitado' : 'Borrador'}
+                </p>
+              </div>
+
+              <div className={`p-2 rounded-xl border text-center transition-all ${
+                isDespachada
+                  ? 'bg-emerald-50/60 dark:bg-transparent border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                  : currentSolicitud.estado === 'en_despacho'
+                  ? 'bg-blue-50/60 dark:bg-transparent border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-400'
+                  : 'bg-slate-100/60 dark:bg-transparent border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-1 text-[11px] font-bold">
+                  {isDespachada ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <Clock className="w-3.5 h-3.5 shrink-0" />}
+                  <span>2. Despachar</span>
+                </div>
+                <p className="text-[10px] font-medium opacity-80 mt-0.5 truncate">
+                  {isDespachada ? 'Atendido' : currentSolicitud.estado === 'en_despacho' ? 'En proceso' : 'Pendiente'}
+                </p>
+              </div>
+
+              <div className={`p-2 rounded-xl border text-center transition-all ${
+                isRecibida
+                  ? 'bg-emerald-50/60 dark:bg-transparent border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                  : isEnTransito
+                  ? 'bg-blue-50/60 dark:bg-transparent border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-400'
+                  : 'bg-slate-100/60 dark:bg-transparent border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-1 text-[11px] font-bold">
+                  {isRecibida ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  ) : isEnTransito ? (
+                    <Truck className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span>3. Recibir</span>
+                </div>
+                <p className="text-[10px] font-medium opacity-80 mt-0.5 truncate">
+                  {isRecibida ? (isIncomplete ? 'Incompleto' : 'Recibido') : isEnTransito ? 'En tránsito' : 'Pendiente'}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50/80 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 text-xs">
           <div className="bg-white dark:bg-slate-800/80 p-3 rounded-2xl border border-slate-200/60 dark:border-slate-700/60 space-y-0.5">
             <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider flex items-center gap-1">
@@ -184,7 +262,9 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               {currentSolicitud.sucursalOrigen || 'Sucursal'}{currentSolicitud.areaOrigen ? ` (${currentSolicitud.areaOrigen})` : ''}
             </p>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-              Por: {currentSolicitud.usuarioSolicitante || 'N/A'}
+              {isDirect
+                ? `Despachó: ${currentSolicitud.usuarioDespacho || currentSolicitud.usuarioSolicitante || 'Bodega'}`
+                : `Por: ${currentSolicitud.usuarioSolicitante || 'N/A'}`}
             </p>
           </div>
 
@@ -197,19 +277,33 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               {currentSolicitud.sucursalDestino || (currentSolicitud.areaDestino ? 'Matriz' : 'Bodega Central')}{currentSolicitud.areaDestino ? ` (${currentSolicitud.areaDestino})` : ''}
             </p>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-              {currentSolicitud.usuarioDespacho ? `Despachado: ${currentSolicitud.usuarioDespacho}` : `Para: ${currentSolicitud.usuarioDestino || 'General'}`}
+              {currentSolicitud.usuarioReceptor
+                ? `Recibió: ${currentSolicitud.usuarioReceptor}`
+                : `Destinatario: ${currentSolicitud.usuarioDestino || 'General'}`}
             </p>
           </div>
         </div>
 
-        {currentSolicitud.observaciones && (
+        {(currentSolicitud.observaciones || currentSolicitud.motivo || currentSolicitud.notas) && (
           <div className="p-3.5 bg-amber-50/90 dark:bg-transparent border-b border-amber-200/70 dark:border-slate-800 text-xs space-y-1">
             <div className="flex items-center gap-1.5 font-bold text-amber-900 dark:text-amber-400">
               <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
               <span>Observaciones del Pedido:</span>
             </div>
             <p className="text-amber-800 dark:text-amber-300 font-medium pl-5 leading-relaxed">
-              {currentSolicitud.observaciones}
+              {currentSolicitud.observaciones || currentSolicitud.motivo || currentSolicitud.notas}
+            </p>
+          </div>
+        )}
+
+        {!hasFaltantesReport && (currentSolicitud.observacionesRecepcion || currentSolicitud.reporteDiscrepancias?.observaciones) && (
+          <div className="p-3.5 bg-emerald-50/90 dark:bg-transparent border-b border-emerald-200/70 dark:border-slate-800 text-xs space-y-1">
+            <div className="flex items-center gap-1.5 font-bold text-emerald-900 dark:text-emerald-400">
+              <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>Observaciones de Recepción en Sucursal:</span>
+            </div>
+            <p className="text-emerald-800 dark:text-emerald-300 font-medium pl-5 leading-relaxed italic">
+              &ldquo;{currentSolicitud.observacionesRecepcion || currentSolicitud.reporteDiscrepancias?.observaciones}&rdquo;
             </p>
           </div>
         )}

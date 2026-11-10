@@ -26,7 +26,7 @@ import {
   Layers,
   Info
 } from 'lucide-react';
-import { organizationService } from '../usuarios/organizationService';
+import { organizationService, normalizeStr } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
 import { CleanProductModal } from '../catalogo/CleanProductModal';
 import { transferService, canUserDispatch, playOrderSuccessSound } from '../transferencias';
@@ -70,6 +70,7 @@ export function DespachoDirectoModal({
   const [areasList, setAreasList] = useState([]);
   const [selectedSede, setSelectedSede] = useState('');
   const [selectedArea, setSelectedArea] = useState('');
+  const [selectedAreaId, setSelectedAreaId] = useState('');
 
   const [folioDigits, setFolioDigits] = useState('');
 
@@ -177,27 +178,30 @@ export function DespachoDirectoModal({
   }, [isOpen, currentUser]);
 
   const availableDirectSedes = sedesList.filter(s => {
-    const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
+    const isOwnSede = normalizeStr(s.nombre) === normalizeStr(currentUser?.sede);
     if (!isOwnSede) return true;
     const areas = Array.isArray(s.areas) ? s.areas : [];
     const operativeAreas = areas.filter(ar => {
-      const aObj = areasList.find(a => a.nombre?.toLowerCase() === ar.toLowerCase());
+      const aObj = areasList.find(a => a.id === ar || normalizeStr(a.nombre) === normalizeStr(ar));
       return !aObj?.excluirTransferencias;
     });
     return operativeAreas.length >= 2;
   });
 
-  const targetDirectSedeObj = sedesList.find(s => s.nombre === selectedSede);
+  const targetDirectSedeObj = sedesList.find(s => normalizeStr(s.nombre) === normalizeStr(selectedSede) || s.id === selectedSede);
   const targetDirectAllAreas = Array.isArray(targetDirectSedeObj?.areas) ? targetDirectSedeObj.areas : [];
-  const isTargetDirectOwnSede = (selectedSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
+  const isTargetDirectOwnSede = normalizeStr(selectedSede) === normalizeStr(currentUser?.sede);
 
-  const operativeDirectAreas = targetDirectAllAreas.filter(areaName => {
-    const aObj = areasList.find(a => a.nombre?.toLowerCase() === areaName.toLowerCase());
-    return !aObj?.excluirTransferencias;
+  const operativeDirectAreas = targetDirectAllAreas.map(ar => {
+    const aObj = areasList.find(a => a.id === ar || normalizeStr(a.nombre) === normalizeStr(ar));
+    return aObj ? { id: aObj.id, nombre: aObj.nombre } : { id: ar, nombre: ar };
+  }).filter(aObj => {
+    const fullObj = areasList.find(a => a.id === aObj.id || normalizeStr(a.nombre) === normalizeStr(aObj.nombre));
+    return !fullObj?.excluirTransferencias;
   });
 
   const availableDirectAreas = isTargetDirectOwnSede
-    ? operativeDirectAreas.filter(a => a.toLowerCase() !== (currentUser?.area || '').toLowerCase())
+    ? operativeDirectAreas.filter(a => normalizeStr(a.nombre) !== normalizeStr(currentUser?.area) && a.id !== currentUser?.areaId)
     : operativeDirectAreas;
 
   const targetDirectHasAreas = operativeDirectAreas.length > 0;
@@ -207,6 +211,7 @@ export function DespachoDirectoModal({
     setCurrentDraftId(null);
     setSelectedSede('');
     setSelectedArea('');
+    setSelectedAreaId('');
     setFolioDigits('');
     setNotasAdicionales('');
     setPackedItems([]);
@@ -254,8 +259,9 @@ export function DespachoDirectoModal({
   const handleLoadDraft = (draft) => {
     isFormLoadingRef.current = true;
     setCurrentDraftId(draft.id);
-    setSelectedSede(draft.sucursalReceptora || draft.sucursalOrigen || '');
-    setSelectedArea(draft.areaReceptora || draft.areaDestino || draft.areaOrigen || '');
+    setSelectedSede(draft.sucursalReceptora || draft.sucursalDestino || '');
+    setSelectedArea(draft.areaReceptora || draft.areaDestino || '');
+    setSelectedAreaId(draft.areaReceptoraId || draft.areaDestinoId || '');
     const cleanDigits = (draft.folio || '').replace(/^TR/i, '');
     setFolioDigits(cleanDigits);
 
@@ -338,18 +344,30 @@ export function DespachoDirectoModal({
       const saved = await transferService.saveDirectDispatchDraft({
         id: currentDraftId,
         folio: fullFolio,
-        sucursalOrigen: selectedSede.trim(),
-        areaOrigen: selectedArea ? selectedArea.trim() : '',
+        sucursalOrigen: currentUser?.sede || 'Bodega',
+        sucursalOrigenId: currentUser?.sedeId || '',
+        areaOrigen: currentUser?.area || '',
+        areaOrigenId: currentUser?.areaId || '',
         sucursalReceptora: selectedSede.trim(),
+        sucursalReceptoraId: targetDirectSedeObj?.id || '',
         areaReceptora: selectedArea ? selectedArea.trim() : '',
-        sucursalDestino: currentUser?.sede || 'Bodega',
-        areaDestino: currentUser?.area || '',
+        areaReceptoraId: selectedAreaId || '',
+        sucursalDestino: selectedSede.trim(),
+        sucursalDestinoId: targetDirectSedeObj?.id || '',
+        areaDestino: selectedArea ? selectedArea.trim() : '',
+        areaDestinoId: selectedAreaId || '',
         sucursalDespachadora: currentUser?.sede || 'Bodega',
+        sucursalDespachadoraId: currentUser?.sedeId || '',
         areaDespachadora: currentUser?.area || '',
+        areaDespachadoraId: currentUser?.areaId || '',
         esTransferenciaInterna: (selectedSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase(),
-        usuarioSolicitante: selectedSede.trim() || 'Despacho Directo',
+        usuarioSolicitante: currentUser?.username || 'Bodega',
+        solicitanteNombre: currentUser?.nombre || currentUser?.username || 'Bodega',
         usuarioDespacho: currentUser?.username || 'Bodega',
+        usuarioAtencion: currentUser?.username || 'Bodega',
         observaciones: observacionFinal,
+        motivo: notasAdicionales.trim(),
+        notas: notasAdicionales.trim(),
         items: packedItems
       });
 
@@ -361,7 +379,7 @@ export function DespachoDirectoModal({
       console.error('Error en autoguardado de borrador directo:', err);
       setSavingStatus('saved');
     }
-  }, [packedItems, selectedSede, selectedArea, folioDigits, notasAdicionales, currentDraftId, currentUser]);
+  }, [packedItems, selectedSede, selectedArea, selectedAreaId, targetDirectSedeObj, folioDigits, notasAdicionales, currentDraftId, currentUser]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -586,18 +604,30 @@ export function DespachoDirectoModal({
       const newDispatch = await transferService.createDirectDispatch({
         id: currentDraftId,
         folio: fullFolio,
-        sucursalOrigen: selectedSede.trim(),
-        areaOrigen: selectedArea ? selectedArea.trim() : '',
+        sucursalOrigen: currentUser?.sede || 'Bodega',
+        sucursalOrigenId: currentUser?.sedeId || '',
+        areaOrigen: currentUser?.area || '',
+        areaOrigenId: currentUser?.areaId || '',
         sucursalReceptora: selectedSede.trim(),
+        sucursalReceptoraId: targetDirectSedeObj?.id || '',
         areaReceptora: selectedArea ? selectedArea.trim() : '',
-        sucursalDestino: currentUser?.sede || 'Bodega',
-        areaDestino: currentUser?.area || '',
+        areaReceptoraId: selectedAreaId || '',
+        sucursalDestino: selectedSede.trim(),
+        sucursalDestinoId: targetDirectSedeObj?.id || '',
+        areaDestino: selectedArea ? selectedArea.trim() : '',
+        areaDestinoId: selectedAreaId || '',
         sucursalDespachadora: currentUser?.sede || 'Bodega',
+        sucursalDespachadoraId: currentUser?.sedeId || '',
         areaDespachadora: currentUser?.area || '',
-        usuarioSolicitante: selectedSede.trim(),
+        areaDespachadoraId: currentUser?.areaId || '',
+        usuarioSolicitante: currentUser?.username || 'Bodega',
+        solicitanteNombre: currentUser?.nombre || currentUser?.username || 'Bodega',
         usuarioDespacho: currentUser?.username || 'Bodega',
+        usuarioAtencion: currentUser?.username || 'Bodega',
         esTransferenciaInterna: isTargetDirectOwnSede,
         observaciones: observacionFinal,
+        motivo: notasAdicionales.trim(),
+        notas: notasAdicionales.trim(),
         items: packedItems
       });
       playOrderSuccessSound();
@@ -762,19 +792,33 @@ export function DespachoDirectoModal({
                 </label>
                 {targetDirectHasAreas ? (
                   <select
-                    value={selectedArea}
-                    onChange={(e) => setSelectedArea(e.target.value)}
+                    value={selectedAreaId || selectedArea}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const found = areasList.find(a => a.id === val || normalizeStr(a.nombre) === normalizeStr(val));
+                      if (found) {
+                        setSelectedArea(found.nombre);
+                        setSelectedAreaId(found.id);
+                      } else {
+                        setSelectedArea(val);
+                        setSelectedAreaId(val);
+                      }
+                    }}
                     disabled={isSubmitting}
                     className={`w-full bg-slate-50 border rounded-2xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${
                       !selectedArea ? 'text-slate-400 border-slate-300' : 'text-slate-800 border-slate-200'
                     }`}
                   >
                     <option value="">-- Selecciona un área de destino --</option>
-                    {availableDirectAreas.map((ar, idx) => (
-                      <option key={idx} value={ar} className="text-slate-800">
-                        {ar}
-                      </option>
-                    ))}
+                    {availableDirectAreas.map((ar, idx) => {
+                      const val = ar.id || ar.nombre;
+                      const label = ar.nombre || ar.id;
+                      return (
+                        <option key={ar.id || idx} value={val} className="text-slate-800">
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                 ) : (
                   <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-500 text-xs flex items-center gap-1.5">

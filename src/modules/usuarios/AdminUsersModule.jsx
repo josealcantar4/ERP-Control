@@ -28,7 +28,7 @@ import {
   Database
 } from 'lucide-react';
 import { userService } from './userService';
-import { organizationService } from './organizationService';
+import { organizationService, resolveAreaObj, normalizeStr } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { transitionView, FloatingInput, MarqueeSearchInput, playSuccessSound } from '../../shared';
 import { useModalAnimation } from '../../hooks';
@@ -123,7 +123,9 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       confirmPassword: '',
       nombre: '',
       sede: '',
+      sedeId: '',
       area: '',
+      areaId: '',
       roles: ['solicitar'],
       excluirDestinatario: false
     });
@@ -135,7 +137,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
   const handleOpenEditUser = (user) => {
     setEditingUser(user);
-    const sedeObj = sedesList.find(s => s.nombre === user.sede);
+    const sedeObj = sedesList.find(s => s.nombre === user.sede || s.id === user.sedeId);
     const sedeAreas = sedeObj?.areas || [];
 
     const isRootAdmin = user.username?.toLowerCase() === 'administrador';
@@ -145,13 +147,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       if (!userRoles.includes('catalogo')) userRoles = [...userRoles, 'catalogo'];
     }
 
+    const currentAreaObj = resolveAreaObj(user.areaId || user.area, areasList);
+
     setUserForm({
       username: user.username,
       password: user.password || '',
       confirmPassword: user.password || '',
       nombre: user.nombre,
       sede: user.sede || '',
-      area: user.area || '',
+      sedeId: user.sedeId || sedeObj?.id || '',
+      area: currentAreaObj?.nombre || user.area || '',
+      areaId: currentAreaObj?.id || user.areaId || '',
       roles: userRoles,
       excluirDestinatario: Boolean(user.excluirDestinatario)
     });
@@ -163,24 +169,30 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
   const handleSedeChange = (sedeNombre) => {
     if (!sedeNombre) {
-      setUserForm(prev => ({ ...prev, sede: '', area: '' }));
+      setUserForm(prev => ({ ...prev, sede: '', sedeId: '', area: '', areaId: '' }));
       return;
     }
-    const sedeObj = sedesList.find(s => s.nombre === sedeNombre);
+    const sedeObj = sedesList.find(s => s.nombre === sedeNombre || s.id === sedeNombre);
     const sedeAreas = sedeObj?.areas || [];
 
     setUserForm(prev => {
       const currentArea = prev?.area || '';
-      const areaObj = areasList.find(a => a.nombre?.toLowerCase() === currentArea.toLowerCase());
+      const currentAreaId = prev?.areaId || '';
+      const areaObj = resolveAreaObj(currentAreaId || currentArea, areasList);
       const isExcluded = Boolean(areaObj?.excluirTransferencias);
-      const isSedeArea = sedeAreas.some(sa => sa.toLowerCase() === currentArea.toLowerCase());
+      const isSedeArea = sedeAreas.some(sa => {
+        const saObj = resolveAreaObj(sa, areasList);
+        return saObj?.id === areaObj?.id || normalizeStr(saObj?.nombre) === normalizeStr(currentArea);
+      });
 
       const isValidArea = Boolean(currentArea && (isExcluded || isSedeArea));
 
       return {
         ...prev,
-        sede: sedeNombre,
-        area: isValidArea ? currentArea : ''
+        sede: sedeObj?.nombre || sedeNombre,
+        sedeId: sedeObj?.id || '',
+        area: isValidArea ? (areaObj?.nombre || currentArea) : '',
+        areaId: isValidArea ? (areaObj?.id || currentAreaId) : ''
       };
     });
   };
@@ -213,7 +225,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
-    const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+    const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede || s.id === userForm.sedeId);
     const sedeAreas = selectedSedeObj?.areas || [];
 
     const hasTransferRoles = userForm.roles.some(r => r === 'solicitar' || r === 'despachar');
@@ -229,7 +241,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
     setIsProcessing(true);
     const finalArea = (userForm.area || '').trim();
-    const selectedAreaObj = areasList.find(a => a.nombre?.toLowerCase() === finalArea.toLowerCase());
+    const selectedAreaObj = resolveAreaObj(userForm.areaId || finalArea, areasList);
     const isAreaExcluded = Boolean(selectedAreaObj?.excluirTransferencias);
     const finalExcluirDestinatario = isAreaExcluded ? true : Boolean(userForm.excluirDestinatario);
 
@@ -237,8 +249,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       username: userForm.username,
       password: userForm.password,
       nombre: userForm.nombre,
-      sede: userForm.sede,
-      area: finalArea,
+      sede: selectedSedeObj?.nombre || userForm.sede,
+      sedeId: selectedSedeObj?.id || userForm.sedeId || '',
+      area: selectedAreaObj?.nombre || finalArea,
+      areaId: selectedAreaObj?.id || userForm.areaId || '',
       roles: userForm.roles,
       excluirDestinatario: finalExcluirDestinatario
     };
@@ -320,29 +334,39 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     setIsSedeModalOpen(true);
   };
 
-  const handleAddAreaToSedeForm = (areaName = null) => {
-    const clean = (areaName || selectedAreaToAdd || '').trim();
+  const handleAddAreaToSedeForm = (areaIdOrName = null) => {
+    const clean = (areaIdOrName || selectedAreaToAdd || '').trim();
     if (!clean) return;
-    if (sedeForm.areas.includes(clean)) {
+    const aObj = resolveAreaObj(clean, areasList);
+    const idToAdd = aObj?.id || clean;
+    const isAlready = sedeForm.areas.some(a => {
+      const match = resolveAreaObj(a, areasList);
+      return (match?.id && match.id === idToAdd) || a === clean || a === idToAdd;
+    });
+    if (isAlready) {
       setDialog({
         isOpen: true,
         type: 'alert',
         title: 'Área duplicada',
-        message: `El área "${clean}" ya está asociada a esta sede.`,
+        message: `El área "${aObj?.nombre || clean}" ya está asociada a esta sede.`,
         variant: 'primary',
         confirmText: 'Entendido',
         onConfirm: closeDialog
       });
       return;
     }
-    setSedeForm(prev => ({ ...prev, areas: [...prev.areas, clean] }));
+    setSedeForm(prev => ({ ...prev, areas: [...prev.areas, idToAdd] }));
     setSelectedAreaToAdd('');
   };
 
   const handleRemoveAreaFromSedeForm = (areaToRemove) => {
     setSedeForm(prev => ({
       ...prev,
-      areas: prev.areas.filter(a => a !== areaToRemove)
+      areas: prev.areas.filter(a => {
+        if (a === areaToRemove) return false;
+        const match = resolveAreaObj(a, areasList);
+        return match?.id !== areaToRemove && match?.nombre !== areaToRemove;
+      })
     }));
   };
 
@@ -774,12 +798,15 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                     {areas.length > 0 ? (
                       <>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Áreas ({areas.length}):</span>
-                        {areas.map((ar, idx) => (
-                          <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium border border-slate-200/60">
-                            <Layers className="w-2.5 h-2.5 text-blue-500" />
-                            {ar}
-                          </span>
-                        ))}
+                        {areas.map((ar, idx) => {
+                          const aObj = resolveAreaObj(ar, areasList);
+                          return (
+                            <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium border border-slate-200/60">
+                              <Layers className="w-2.5 h-2.5 text-blue-500" />
+                              {aObj?.nombre || ar}
+                            </span>
+                          );
+                        })}
                       </>
                     ) : (
                       <span className="text-[11px] text-slate-400 italic flex items-center gap-1">
@@ -799,7 +826,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
           <div className="flex items-center justify-between bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Áreas y Departamentos</h3>
-              <p className="text-xs text-slate-400">Patente, Genérico, Piso, Naturista, etc.</p>
+              <p className="text-xs text-slate-400">Patente, Genérico, Piso, Naturista, etc. Gestionadas por ID automático de Firebase.</p>
             </div>
             <button onClick={handleOpenCreateArea} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
               <Plus className="w-4 h-4" /><span>Nueva Área</span>
@@ -818,6 +845,9 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h4 className="text-sm font-bold text-slate-900 truncate">{area.nombre}</h4>
+                      <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-semibold border border-slate-200/60" title={`ID único de Firebase: ${area.id}`}>
+                        ID: {area.id}
+                      </span>
                       {area.excluirTransferencias ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                           Excluida de transferencias
@@ -925,17 +955,17 @@ function AdminUserModal({
 
   if (!shouldRender) return null;
 
-  const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede);
+  const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede || s.id === userForm.sedeId);
   const sedeSpecificAreas = selectedSedeObj?.areas || [];
 
-  const operativeSedeAreas = sedeSpecificAreas.filter(sa => {
-    const aObj = areasList.find(a => a.nombre?.toLowerCase() === sa.toLowerCase());
-    return !aObj?.excluirTransferencias;
-  });
+  const operativeSedeAreas = sedeSpecificAreas
+    .map(sa => resolveAreaObj(sa, areasList))
+    .filter(Boolean)
+    .filter(aObj => !aObj.excluirTransferencias);
 
   const excludedAdminAreas = areasList.filter(a => a.excluirTransferencias);
 
-  const selectedAreaObj = areasList.find(a => a.nombre?.toLowerCase() === userForm.area?.toLowerCase());
+  const selectedAreaObj = resolveAreaObj(userForm.areaId || userForm.area, areasList);
   const isSelectedAreaExcluded = Boolean(selectedAreaObj?.excluirTransferencias);
 
   const content = (
@@ -1080,11 +1110,12 @@ function AdminUserModal({
                 disabled={!userForm.sede}
                 onChange={(e) => {
                   const val = e.target.value;
-                  const areaObj = areasList.find(item => item.nombre?.toLowerCase() === val.toLowerCase());
+                  const areaObj = resolveAreaObj(val, areasList);
                   const isAreaExcluded = Boolean(areaObj?.excluirTransferencias);
                   setUserForm(prev => ({
                     ...prev,
-                    area: val,
+                    area: areaObj?.nombre || val,
+                    areaId: areaObj?.id || '',
                     excluirDestinatario: isAreaExcluded ? true : prev.excluirDestinatario
                   }));
                 }}
@@ -1100,9 +1131,9 @@ function AdminUserModal({
 
                     {operativeSedeAreas.length > 0 && (
                       <optgroup label={`Áreas operativas de ${userForm.sede}`}>
-                        {operativeSedeAreas.map((a, idx) => (
-                          <option key={`op-${idx}`} value={a}>
-                            {a}
+                        {operativeSedeAreas.map((aObj) => (
+                          <option key={`op-${aObj.id}`} value={aObj.nombre}>
+                            {aObj.nombre}
                           </option>
                         ))}
                       </optgroup>
@@ -1347,9 +1378,9 @@ function AdminSedeModal({
                 >
                   <option value="">-- Seleccionar área a asociar --</option>
                   {areasList
-                    .filter(a => !sedeForm.areas.includes(a.nombre))
+                    .filter(a => !sedeForm.areas.some(sa => sa === a.id || sa === a.nombre || normalizeStr(sa) === normalizeStr(a.nombre)))
                     .map((a) => (
-                      <option key={a.id} value={a.nombre}>
+                      <option key={a.id} value={a.id}>
                         {a.nombre} {a.excluirTransferencias ? '(Excluida de transferencias)' : ''}
                       </option>
                     ))}
@@ -1373,7 +1404,7 @@ function AdminSedeModal({
                 </span>
               ) : (
                 sedeForm.areas.map((ar, idx) => {
-                  const areaObj = areasList.find(a => a.nombre === ar);
+                  const areaObj = resolveAreaObj(ar, areasList);
                   const isExcluded = Boolean(areaObj?.excluirTransferencias);
                   return (
                     <span
@@ -1385,7 +1416,8 @@ function AdminSedeModal({
                       }`}
                     >
                       <Layers className={`w-3 h-3 ${isExcluded ? 'text-amber-500' : 'text-blue-500'}`} />
-                      <span>{ar}</span>
+                      <span>{areaObj?.nombre || ar}</span>
+                      <span className="font-mono text-[9px] text-slate-400 bg-slate-100 px-1 py-0.2 rounded">ID: {areaObj?.id || ar}</span>
                       {isExcluded && (
                         <span className="text-[9px] font-bold text-amber-700 bg-amber-100/70 px-1.5 py-0.2 rounded">
                           No transferible
@@ -1460,6 +1492,25 @@ function AdminAreaModal({
         </div>
         <form onSubmit={handleSaveArea} className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
+            {editingArea?.id ? (
+              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">ID de Firebase</span>
+                  <span className="font-mono text-xs font-bold text-slate-800 select-all">{editingArea.id}</span>
+                </div>
+                <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded-full">
+                  Autogenerado
+                </span>
+              </div>
+            ) : (
+              <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-2xl flex items-center gap-2 text-blue-700">
+                <Info className="w-4 h-4 shrink-0 text-blue-500" />
+                <span className="text-[11px] leading-tight">
+                  Se generará un ID único de Firebase automáticamente para esta nueva área.
+                </span>
+              </div>
+            )}
+
             <FloatingInput
               label="Nombre del Área"
               required

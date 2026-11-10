@@ -57,7 +57,9 @@ export const userService = {
             password: data.password,
             nombre: data.nombre || data.username || d.id,
             sede: data.sede || 'Sin sede',
+            sedeId: data.sedeId || '',
             area: data.area || 'Sin área',
+            areaId: data.areaId || '',
             roles: Array.isArray(userRoles) ? userRoles : [userRoles],
             excluirDestinatario: Boolean(data.excluirDestinatario)
           };
@@ -82,7 +84,9 @@ export const userService = {
           password: data.password,
           nombre: data.nombre || data.username || d.id,
           sede: data.sede || 'Sin sede',
+          sedeId: data.sedeId || '',
           area: data.area || 'Sin área',
+          areaId: data.areaId || '',
           roles: Array.isArray(userRoles) ? userRoles : [userRoles],
           excluirDestinatario: Boolean(data.excluirDestinatario)
         };
@@ -122,7 +126,9 @@ export const userService = {
           username: data.username,
           nombre: data.nombre || data.username,
           sede: data.sede || 'Matriz Centro',
+          sedeId: data.sedeId || '',
           area: data.area || 'General',
+          areaId: data.areaId || '',
           roles: Array.isArray(roles) ? roles : [roles],
           excluirDestinatario: Boolean(data.excluirDestinatario)
         };
@@ -166,7 +172,9 @@ export const userService = {
       password,
       nombre,
       sede,
+      sedeId: userData.sedeId?.trim() || '',
       area,
+      areaId: userData.areaId?.trim() || '',
       roles: Array.isArray(roles) ? roles : [roles],
       excluirDestinatario,
       createdAt: new Date().toISOString()
@@ -249,7 +257,9 @@ export const userService = {
         username: updated.username,
         nombre: updated.nombre || existing.nombre,
         sede: updated.sede || existing.sede,
+        sedeId: updated.sedeId || existing.sedeId || '',
         area: updated.area || existing.area,
+        areaId: updated.areaId || existing.areaId || '',
         roles: updated.roles,
         excluirDestinatario: updated.excluirDestinatario
       };

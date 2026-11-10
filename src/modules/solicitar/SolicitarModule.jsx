@@ -5,11 +5,12 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ScanBarcode, Send, Trash2, CheckCircle2, ArrowLeft, History, ChevronRight, Plus, Minus,
-  Building2, Layers, Info, Search, X, Loader2, ChevronDown, Clock
+  Building2, Layers, Info, Search, X, Loader2, ChevronDown, Clock, FileText
 } from 'lucide-react';
-import { organizationService } from '../usuarios/organizationService';
+import { organizationService, normalizeStr } from '../usuarios/organizationService';
+import { userService } from '../usuarios/userService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService, formatTransferFolio, canUserViewInSolicitar, playOrderSuccessSound } from '../transferencias';
+import { transferService, formatTransferFolio, canUserViewInSolicitar, playOrderSuccessSound, formatOrderRequestedBy } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { BulkOrderWarningModal } from './BulkOrderWarningModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
@@ -22,8 +23,20 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
   const [sedesList, setSedesList] = useState([]);
   const [areasList, setAreasList] = useState([]);
   const [selectedDestSede, setSelectedDestSede] = useState('');
+  const [selectedDestSedeId, setSelectedDestSedeId] = useState('');
   const [selectedDestArea, setSelectedDestArea] = useState('');
+  const [selectedDestAreaId, setSelectedDestAreaId] = useState('');
   const [detailSolicitud, setDetailSolicitud] = useState(null);
+  const [usersList, setUsersList] = useState([]);
+
+  useEffect(() => {
+    const unsub = userService.subscribeUsers((list) => {
+      setUsersList(list);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
 
   const [currentDraft, setCurrentDraft] = useState({
     id: 'sol-' + Date.now(),
@@ -32,7 +45,10 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
     sucursalDestino: '',
     areaDestino: '',
     usuarioSolicitante: currentUser?.username,
+    solicitanteNombre: currentUser?.nombre || currentUser?.username,
     usuarioDestino: '',
+    observaciones: '',
+    motivo: '',
     estado: 'borrador',
     fecha: new Date().toISOString(),
     items: []
@@ -152,8 +168,14 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       if (draft && draft.items && draft.items.length > 0) {
         setCurrentDraft(prev => {
           if (prev.items && prev.items.length > 0) return prev;
-          if (draft.sucursalDestino) setSelectedDestSede(draft.sucursalDestino);
-          if (draft.areaDestino) setSelectedDestArea(draft.areaDestino);
+          if (draft.sucursalDestino) {
+            setSelectedDestSede(draft.sucursalDestino);
+            setSelectedDestSedeId(draft.sucursalDestinoId || '');
+          }
+          if (draft.areaDestino) {
+            setSelectedDestArea(draft.areaDestino);
+            setSelectedDestAreaId(draft.areaDestinoId || '');
+          }
           return draft;
         });
       }
@@ -197,14 +219,21 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
     }
   };
 
-  const handleDestSedeChange = (destSedeName) => {
-    setSelectedDestSede(destSedeName);
+  const handleDestSedeChange = (destSedeVal) => {
+    const sObj = sedesList.find(s => s.id === destSedeVal || normalizeStr(s.nombre) === normalizeStr(destSedeVal));
+    const sName = sObj?.nombre || destSedeVal;
+    const sId = sObj?.id || '';
+    setSelectedDestSede(sName);
+    setSelectedDestSedeId(sId);
     setSelectedDestArea('');
+    setSelectedDestAreaId('');
     const updated = {
       ...currentDraft,
-      sucursalDestino: destSedeName,
+      sucursalDestino: sName,
+      sucursalDestinoId: sId,
       areaDestino: '',
-      esTransferenciaInterna: (currentUser?.sede || '').toLowerCase() === (destSedeName || '').toLowerCase()
+      areaDestinoId: '',
+      esTransferenciaInterna: normalizeStr(currentUser?.sede) === normalizeStr(sName)
     };
     setCurrentDraft(updated);
     if (updated.items && updated.items.length > 0) {
@@ -212,11 +241,16 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
     }
   };
 
-  const handleDestAreaChange = (areaName) => {
-    setSelectedDestArea(areaName);
+  const handleDestAreaChange = (areaVal) => {
+    const aObj = areasList.find(a => a.id === areaVal || normalizeStr(a.nombre) === normalizeStr(areaVal));
+    const aName = aObj?.nombre || areaVal;
+    const aId = aObj?.id || '';
+    setSelectedDestArea(aName);
+    setSelectedDestAreaId(aId);
     const updated = {
       ...currentDraft,
-      areaDestino: areaName
+      areaDestino: aName,
+      areaDestinoId: aId
     };
     setCurrentDraft(updated);
     if (updated.items && updated.items.length > 0) {
@@ -275,11 +309,15 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       });
     }
 
-    const isTargetOwnSede = (selectedDestSede || currentDraft.sucursalDestino || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
+    const targetSedeMatch = sedesList.find(s => s.id === selectedDestSedeId || normalizeStr(s.nombre) === normalizeStr(selectedDestSede || currentDraft.sucursalDestino));
+    const targetAreaMatch = areasList.find(a => a.id === selectedDestAreaId || normalizeStr(a.nombre) === normalizeStr(selectedDestArea || currentDraft.areaDestino));
+    const isTargetOwnSede = normalizeStr(selectedDestSede || currentDraft.sucursalDestino) === normalizeStr(currentUser?.sede);
     const updated = {
       ...currentDraft,
       sucursalDestino: selectedDestSede || currentDraft.sucursalDestino || '',
+      sucursalDestinoId: targetSedeMatch?.id || selectedDestSedeId || currentDraft.sucursalDestinoId || '',
       areaDestino: selectedDestArea || currentDraft.areaDestino || '',
+      areaDestinoId: targetAreaMatch?.id || selectedDestAreaId || currentDraft.areaDestinoId || '',
       esTransferenciaInterna: isTargetOwnSede,
       items: newItems
     };
@@ -344,32 +382,35 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
 
   const isCurrentUserAreaExcluded = Boolean(
     currentUser?.area &&
-    areasList.find(a => a.nombre?.toLowerCase() === currentUser.area?.toLowerCase())?.excluirTransferencias
+    areasList.find(a => a.id === currentUser?.areaId || normalizeStr(a.nombre) === normalizeStr(currentUser?.area))?.excluirTransferencias
   );
 
   const availableDestSedes = sedesList.filter(s => {
     if (s.esDestino === false) return false;
-    const isOwnSede = (s.nombre || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
+    const isOwnSede = normalizeStr(s.nombre) === normalizeStr(currentUser?.sede);
     if (!isOwnSede) return true;
     const areas = Array.isArray(s.areas) ? s.areas : [];
     const operativeAreas = areas.filter(ar => {
-      const aObj = areasList.find(a => a.nombre?.toLowerCase() === ar.toLowerCase());
+      const aObj = areasList.find(a => a.id === ar || normalizeStr(a.nombre) === normalizeStr(ar));
       return !aObj?.excluirTransferencias;
     });
     return operativeAreas.length >= 2;
   });
 
-  const targetSedeObj = sedesList.find(s => s.nombre === selectedDestSede);
+  const targetSedeObj = sedesList.find(s => normalizeStr(s.nombre) === normalizeStr(selectedDestSede) || s.id === selectedDestSede);
   const targetAllAreas = Array.isArray(targetSedeObj?.areas) ? targetSedeObj.areas : [];
-  const isTargetOwnSede = (selectedDestSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase();
+  const isTargetOwnSede = normalizeStr(selectedDestSede) === normalizeStr(currentUser?.sede);
 
-  const operativeTargetAreas = targetAllAreas.filter(areaName => {
-    const aObj = areasList.find(a => a.nombre?.toLowerCase() === areaName.toLowerCase());
-    return !aObj?.excluirTransferencias;
+  const operativeTargetAreas = targetAllAreas.map(ar => {
+    const aObj = areasList.find(a => a.id === ar || normalizeStr(a.nombre) === normalizeStr(ar));
+    return aObj ? { id: aObj.id, nombre: aObj.nombre } : { id: ar, nombre: ar };
+  }).filter(aObj => {
+    const fullObj = areasList.find(a => a.id === aObj.id || normalizeStr(a.nombre) === normalizeStr(aObj.nombre));
+    return !fullObj?.excluirTransferencias;
   });
 
   const availableDestAreas = isTargetOwnSede
-    ? operativeTargetAreas.filter(a => a.toLowerCase() !== (currentUser?.area || '').toLowerCase())
+    ? operativeTargetAreas.filter(a => normalizeStr(a.nombre) !== normalizeStr(currentUser?.area) && a.id !== currentUser?.areaId)
     : operativeTargetAreas;
 
   const targetHasAreas = operativeTargetAreas.length > 0;
@@ -474,15 +515,25 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
 
   const executeSendOrder = async () => {
     try {
+      const targetSedeMatch = sedesList.find(s => s.id === selectedDestSedeId || normalizeStr(s.nombre) === normalizeStr(selectedDestSede));
+      const targetAreaMatch = areasList.find(a => a.id === selectedDestAreaId || normalizeStr(a.nombre) === normalizeStr(selectedDestArea));
       const finalized = {
         ...currentDraft,
         folio: currentDraft.folio || '',
         sucursalOrigen: currentUser?.sede || 'Sucursal',
+        sucursalOrigenId: currentUser?.sedeId || '',
         areaOrigen: currentUser?.area || '',
+        areaOrigenId: currentUser?.areaId || '',
         sucursalDestino: selectedDestSede,
+        sucursalDestinoId: targetSedeMatch?.id || selectedDestSedeId || '',
         areaDestino: selectedDestArea || '',
+        areaDestinoId: targetAreaMatch?.id || selectedDestAreaId || '',
         usuarioSolicitante: currentUser?.username,
+        solicitanteNombre: currentUser?.nombre || currentUser?.username,
         esTransferenciaInterna: isTargetOwnSede,
+        observaciones: currentDraft.observaciones || currentDraft.motivo || '',
+        motivo: currentDraft.motivo || currentDraft.observaciones || '',
+        notas: currentDraft.observaciones || currentDraft.motivo || '',
         fecha: new Date().toISOString()
       };
 
@@ -493,16 +544,26 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       setCurrentDraft({
         id: newDraftId,
         sucursalOrigen: currentUser?.sede || 'Sucursal',
+        sucursalOrigenId: currentUser?.sedeId || '',
         areaOrigen: currentUser?.area || '',
+        areaOrigenId: currentUser?.areaId || '',
         sucursalDestino: '',
+        sucursalDestinoId: '',
         areaDestino: '',
+        areaDestinoId: '',
         usuarioSolicitante: currentUser?.username,
+        solicitanteNombre: currentUser?.nombre || currentUser?.username,
         usuarioDestino: '',
+        observaciones: '',
+        motivo: '',
         estado: 'borrador',
         fecha: new Date().toISOString(),
         items: []
       });
       setSelectedDestSede('');
+      setSelectedDestSedeId('');
+      setSelectedDestArea('');
+      setSelectedDestAreaId('');
       setSelectedDestArea('');
       setSavingStatus('saved');
 
@@ -690,11 +751,15 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                     className="w-full bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-500 transition-colors"
                   >
                     <option value="">-- Seleccionar Área --</option>
-                    {availableDestAreas.map((areaName, idx) => (
-                      <option key={idx} value={areaName}>
-                        {areaName}
-                      </option>
-                    ))}
+                    {availableDestAreas.map((a, idx) => {
+                      const aName = a.nombre || a;
+                      const aId = a.id || aName;
+                      return (
+                        <option key={aId || idx} value={aName}>
+                          {aName}
+                        </option>
+                      );
+                    })}
                   </select>
                 ) : (
                   <div className="w-full bg-slate-100/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-slate-500 dark:text-slate-400 text-xs flex items-center gap-1.5">
@@ -772,6 +837,19 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                 ))}
               </div>
             )}
+
+            <div className="p-4 bg-slate-50/50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                Observaciones / Motivo (opcional)
+              </label>
+              <input
+                type="text"
+                value={currentDraft.observaciones || ''}
+                onChange={(e) => setCurrentDraft(prev => ({ ...prev, observaciones: e.target.value, motivo: e.target.value, notas: e.target.value }))}
+                placeholder="Ej. Surtido urgente para fin de semana, reposición de faltantes..."
+                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
 
             {currentDraft.items && currentDraft.items.length > 0 && (
               <div className="p-4 bg-slate-50/80 dark:bg-slate-800/60 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -916,6 +994,17 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                           <ChevronRight className="w-3.5 h-3.5" />
                         </span>
                       </div>
+
+                      <p className="text-xs text-slate-500 font-medium">
+                        {formatOrderRequestedBy(sol, usersList)}
+                      </p>
+
+                      {(sol.observaciones || sol.motivo || sol.notas) && (
+                        <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-3 py-1.5 rounded-xl border border-amber-200/80 dark:border-amber-500/20">
+                          <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                          <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

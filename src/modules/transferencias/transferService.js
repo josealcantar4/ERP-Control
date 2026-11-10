@@ -53,6 +53,99 @@ let cachedSolicitudesList = null;
 let cachedActiveUser = null;
 const knownDocStates = new Map();
 
+let cachedUsersMap = new Map();
+let usersSubscribed = false;
+
+function ensureUsersSubscription() {
+  if (usersSubscribed || !isFirebaseConfigured) return;
+  usersSubscribed = true;
+  try {
+    onSnapshot(collection(db, 'usuarios'), (snap) => {
+      const map = new Map();
+      snap.docs.forEach(d => {
+        const data = d.data() || {};
+        const username = (data.username || d.id || '').toLowerCase().trim();
+        if (username) {
+          map.set(username, {
+            nombre: data.nombre || data.username || '',
+            sede: data.sede || '',
+            area: data.area || ''
+          });
+        }
+      });
+      cachedUsersMap = map;
+    }, () => {});
+  } catch (_) {}
+}
+
+export function normalizeStr(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+export function formatOrderRequestedBy(transfer, externalUsersList = null) {
+  if (!transfer) return '';
+
+  ensureUsersSubscription();
+
+  const isDirect = Boolean(transfer.esDespachoDirecto || transfer.sinSolicitud);
+
+  let sede = '';
+  if (isDirect) {
+    sede = transfer.sucursalDespachadora || transfer.sucursalOrigen || transfer.sucursalDestino || 'Bodega';
+  } else {
+    sede = transfer.sucursalOrigen || transfer.sucursalReceptora || 'Sucursal';
+  }
+
+  const rawUser = (
+    transfer.solicitanteNombre ||
+    transfer.usuarioSolicitante ||
+    (isDirect ? (transfer.usuarioDespacho || transfer.usuarioAtencion) : '') ||
+    ''
+  ).trim();
+
+  let primerNombre = '';
+
+  if (Array.isArray(externalUsersList) && externalUsersList.length > 0 && rawUser) {
+    const found = externalUsersList.find(u =>
+      (u.username && u.username.toLowerCase() === rawUser.toLowerCase()) ||
+      (u.nombre && u.nombre.toLowerCase() === rawUser.toLowerCase()) ||
+      (u.id && u.id.toLowerCase() === rawUser.toLowerCase())
+    );
+    if (found?.nombre) {
+      const parts = found.nombre.trim().split(/\s+/);
+      if (parts[0]) primerNombre = parts[0];
+    }
+  }
+
+  if (!primerNombre && rawUser && cachedUsersMap.size > 0) {
+    const found = cachedUsersMap.get(rawUser.toLowerCase());
+    if (found?.nombre) {
+      const parts = found.nombre.trim().split(/\s+/);
+      if (parts[0]) primerNombre = parts[0];
+    }
+  }
+
+  if (!primerNombre && rawUser) {
+    const parts = rawUser.split(/\s+/);
+    if (parts.length > 1) {
+      primerNombre = parts[0];
+    } else {
+      primerNombre = rawUser.charAt(0).toUpperCase() + rawUser.slice(1);
+    }
+  }
+
+  if (!primerNombre) {
+    primerNombre = 'Personal';
+  }
+
+  return `Pedido por: ${sede} - ${primerNombre}`;
+}
+
 const STATUS_WEIGHT = {
   'borrador': 1,
   'enviada': 2,
@@ -613,9 +706,11 @@ export function getTransferParticipants(transfer) {
     return {
       recipientSede: '',
       recipientArea: '',
+      recipientAreaId: '',
       recipientUser: '',
       dispatchSede: '',
       dispatchArea: '',
+      dispatchAreaId: '',
       dispatchUser: '',
       isDirect: false
     };
@@ -624,42 +719,54 @@ export function getTransferParticipants(transfer) {
   const isDirect = Boolean(transfer.esDespachoDirecto || transfer.sinSolicitud);
 
   if (isDirect) {
-    const recipientSede = (transfer.sucursalReceptora || transfer.sucursalOrigen || '').trim();
-    const recipientArea = (transfer.areaReceptora !== undefined && transfer.areaReceptora !== null
-      ? transfer.areaReceptora
-      : (transfer.areaOrigen || '')).trim();
+    const recipientSede = (transfer.sucursalReceptora || transfer.sucursalDestino || '').trim();
+    const recipientArea = (
+      transfer.areaReceptora !== undefined && transfer.areaReceptora !== null && transfer.areaReceptora !== ''
+        ? transfer.areaReceptora
+        : (transfer.areaDestino || '')
+    ).trim();
+    const recipientAreaId = (transfer.areaReceptoraId || transfer.areaDestinoId || '').trim();
     const recipientUser = (transfer.usuarioDestino || '').trim();
 
-    const dispatchSede = (transfer.sucursalDespachadora || transfer.sucursalDestino || '').trim();
-    const dispatchArea = (transfer.areaDespachadora !== undefined && transfer.areaDespachadora !== null
-      ? transfer.areaDespachadora
-      : (transfer.areaDestino || '')).trim();
-    const dispatchUser = (transfer.usuarioDespacho || '').trim();
+    const dispatchSede = (transfer.sucursalDespachadora || transfer.sucursalOrigen || '').trim();
+    const dispatchArea = (
+      transfer.areaDespachadora !== undefined && transfer.areaDespachadora !== null && transfer.areaDespachadora !== ''
+        ? transfer.areaDespachadora
+        : (transfer.areaOrigen || '')
+    ).trim();
+    const dispatchAreaId = (transfer.areaDespachadoraId || transfer.areaOrigenId || '').trim();
+    const dispatchUser = (transfer.usuarioDespacho || transfer.usuarioAtencion || '').trim();
 
     return {
       recipientSede,
       recipientArea,
+      recipientAreaId,
       recipientUser,
       dispatchSede,
       dispatchArea,
+      dispatchAreaId,
       dispatchUser,
       isDirect: true
     };
   } else {
     const recipientSede = (transfer.sucursalOrigen || '').trim();
     const recipientArea = (transfer.areaOrigen || '').trim();
+    const recipientAreaId = (transfer.areaOrigenId || '').trim();
     const recipientUser = (transfer.usuarioSolicitante || '').trim();
 
     const dispatchSede = (transfer.sucursalDestino || '').trim();
     const dispatchArea = (transfer.areaDestino || '').trim();
+    const dispatchAreaId = (transfer.areaDestinoId || '').trim();
     const dispatchUser = (transfer.usuarioDestino || transfer.usuarioDespacho || '').trim();
 
     return {
       recipientSede,
       recipientArea,
+      recipientAreaId,
       recipientUser,
       dispatchSede,
       dispatchArea,
+      dispatchAreaId,
       dispatchUser,
       isDirect: false
     };
@@ -687,24 +794,23 @@ export function canUserViewInSolicitar(transfer, currentUser) {
     return transfer.usuarioSolicitante && transfer.usuarioSolicitante.toLowerCase() === username;
   }
 
-  const userSede = (currentUser.sede || '').toLowerCase().trim();
-  const userArea = (currentUser.area || '').toLowerCase().trim();
+  const userSede = normalizeStr(currentUser.sede);
+  const userArea = normalizeStr(currentUser.area);
 
   const { recipientSede, recipientArea } = getTransferParticipants(transfer);
-  const solSede = recipientSede.toLowerCase();
-  const solArea = recipientArea.toLowerCase();
+  const solSede = normalizeStr(recipientSede);
+  const solArea = normalizeStr(recipientArea);
 
   if (!userSede || solSede !== userSede) {
     if (isRootAdmin && !userSede) return true;
     return false;
   }
 
-  if (solArea) {
-    if (!userArea) return false;
+  if (solArea && userArea) {
     return solArea === userArea || solArea.includes(userArea) || userArea.includes(solArea);
   }
 
-  return !userArea;
+  return true;
 }
 
 export function canUserDispatch(transfer, currentUser) {
@@ -719,10 +825,10 @@ export function canUserDispatch(transfer, currentUser) {
   const uRoles = currentUser.roles || [];
   if (!uRoles.includes('despachar') && !isRootAdmin) return false;
 
-  const userSede = (currentUser.sede || '').toLowerCase().trim();
-  const userArea = (currentUser.area || '').toLowerCase().trim();
+  const userSede = normalizeStr(currentUser.sede);
+  const userArea = normalizeStr(currentUser.area);
   const isPatente = userArea.includes('patente');
-  const isGenerico = userArea.includes('generic') || userArea.includes('genéric');
+  const isGenerico = userArea.includes('generic') || userArea.includes('generic');
 
   const { dispatchSede, dispatchArea, dispatchUser } = getTransferParticipants(transfer);
 
@@ -734,8 +840,8 @@ export function canUserDispatch(transfer, currentUser) {
     return true;
   }
 
-  const dSede = dispatchSede.toLowerCase();
-  const dArea = dispatchArea.toLowerCase();
+  const dSede = normalizeStr(dispatchSede);
+  const dArea = normalizeStr(dispatchArea);
 
   const matchesSede = !dSede
     ? (userSede.includes('matriz') || userSede === '' || isRootAdmin)
@@ -746,13 +852,9 @@ export function canUserDispatch(transfer, currentUser) {
     return false;
   }
 
-  if (dArea) {
-    if (!userArea) {
-      if (isRootAdmin) return true;
-      return false;
-    }
+  if (dArea && userArea) {
     if (isPatente) return dArea.includes('patente');
-    if (isGenerico) return dArea.includes('generic') || dArea.includes('genéric');
+    if (isGenerico) return dArea.includes('generic') || dArea.includes('generic');
     return dArea === userArea || dArea.includes(userArea) || userArea.includes(dArea);
   }
 
@@ -782,31 +884,72 @@ export function canUserReceive(transfer, currentUser) {
     return false;
   }
 
-  const userSede = (currentUser.sede || '').toLowerCase().trim();
-  const userArea = (currentUser.area || '').toLowerCase().trim();
+  const userSede = normalizeStr(currentUser.sede);
+  const userArea = normalizeStr(currentUser.area);
+  const userAreaId = (currentUser.areaId || '').trim();
 
-  const { recipientSede, recipientArea, recipientUser } = getTransferParticipants(transfer);
-  const rSede = recipientSede.toLowerCase();
-  const rArea = recipientArea.toLowerCase();
+  const {
+    recipientSede,
+    recipientArea,
+    recipientAreaId,
+    recipientUser,
+    dispatchSede,
+    dispatchArea,
+    isDirect
+  } = getTransferParticipants(transfer);
+
+  const rSede = normalizeStr(recipientSede);
+  const rArea = normalizeStr(recipientArea);
 
   if (recipientUser && recipientUser.toLowerCase() === username) {
     return true;
   }
 
-  if (!userSede || rSede !== userSede) {
+  const isSedeMatch = (userSede && rSede === userSede) ||
+    (isDirect && userSede && (
+      normalizeStr(transfer.sucursalDestino) === userSede ||
+      normalizeStr(transfer.sucursalReceptora) === userSede
+    ));
+
+  if (!isSedeMatch) {
     if (isRootAdmin && !userSede) return true;
     return false;
   }
 
-  if (rArea) {
-    if (!userArea) {
-      if (isRootAdmin) return true;
-      return false;
-    }
-    return rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea);
+  const isErroneousSenderAreaFallback = Boolean(
+    isDirect &&
+    dispatchArea &&
+    (
+      rArea === normalizeStr(dispatchArea) ||
+      rArea.includes(normalizeStr(dispatchArea)) ||
+      normalizeStr(dispatchArea).includes(rArea)
+    ) &&
+    rSede !== normalizeStr(dispatchSede)
+  );
+
+  if (!rArea || !recipientArea || isErroneousSenderAreaFallback) {
+    return true;
   }
 
-  return true;
+  if (recipientAreaId && userAreaId && recipientAreaId === userAreaId) {
+    return true;
+  }
+
+  if (rArea && userArea) {
+    if (rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea)) {
+      return true;
+    }
+  }
+
+  if (!userArea) {
+    return true;
+  }
+
+  if (isDirect && rSede && userSede === rSede && normalizeStr(dispatchSede) !== rSede) {
+    return true;
+  }
+
+  return false;
 }
 
 export function canUserViewInRecibirHistory(transfer, currentUser) {
@@ -848,17 +991,16 @@ export function canUserViewInRecibirHistory(transfer, currentUser) {
     return false;
   }
 
-  const userSede = (currentUser.sede || '').toLowerCase().trim();
-  const userArea = (currentUser.area || '').toLowerCase().trim();
-  const rSede = (recipientSede || '').toLowerCase().trim();
-  const rArea = (recipientArea || '').toLowerCase().trim();
+  const userSede = normalizeStr(currentUser.sede);
+  const userArea = normalizeStr(currentUser.area);
+  const rSede = normalizeStr(recipientSede);
+  const rArea = normalizeStr(recipientArea);
 
   if (!userSede || rSede !== userSede) {
     return false;
   }
 
-  if (rArea) {
-    if (!userArea) return false;
+  if (rArea && userArea) {
     return rArea === userArea || rArea.includes(userArea) || userArea.includes(rArea);
   }
 
@@ -1026,7 +1168,18 @@ function ensureGlobalSolicitudesSubscription() {
           const remoteWeight = STATUS_WEIGHT[remoteItem.estado] || 0;
 
           if (localWeight > remoteWeight) {
-            const merged = { ...remoteItem, ...localItem };
+            const merged = {
+              ...remoteItem,
+              ...localItem,
+              solicitada: Boolean(localItem.solicitada || remoteItem.solicitada),
+              solicitado: Boolean(localItem.solicitado || remoteItem.solicitado),
+              atendida: Boolean(localItem.atendida || remoteItem.atendida),
+              atendido: Boolean(localItem.atendido || remoteItem.atendido),
+              despachada: Boolean(localItem.despachada || remoteItem.despachada),
+              despachado: Boolean(localItem.despachado || remoteItem.despachado),
+              recibida: Boolean(localItem.recibida || remoteItem.recibida),
+              recibido: Boolean(localItem.recibido || remoteItem.recibido)
+            };
             validItems.push(merged);
             if (isFirebaseConfigured) {
               setDoc(doc(db, 'solicitudes', id), cleanForFirestore(merged), { merge: true })
@@ -1042,7 +1195,9 @@ function ensureGlobalSolicitudesSubscription() {
               if (!lItem) return rItem;
               return {
                 ...rItem,
+                solicitado: lItem.solicitado !== undefined ? (lItem.solicitado || rItem.solicitado) : rItem.solicitado,
                 atendido: lItem.atendido !== undefined ? (lItem.atendido || rItem.atendido) : rItem.atendido,
+                despachado: lItem.despachado !== undefined ? (lItem.despachado || rItem.despachado) : rItem.despachado,
                 recibido: lItem.recibido !== undefined ? (lItem.recibido || rItem.recibido) : rItem.recibido,
                 cantidadRecibida: lItem.cantidadRecibida !== undefined ? lItem.cantidadRecibida : rItem.cantidadRecibida,
                 cantidadDespachada: lItem.cantidadDespachada !== undefined ? lItem.cantidadDespachada : rItem.cantidadDespachada,
@@ -1052,6 +1207,15 @@ function ensureGlobalSolicitudesSubscription() {
 
             const merged = {
               ...remoteItem,
+              solicitada: localItem.solicitada !== undefined ? (localItem.solicitada || remoteItem.solicitada) : remoteItem.solicitada,
+              solicitado: localItem.solicitado !== undefined ? (localItem.solicitado || remoteItem.solicitado) : remoteItem.solicitado,
+              atendida: localItem.atendida !== undefined ? (localItem.atendida || remoteItem.atendida) : remoteItem.atendida,
+              atendido: localItem.atendido !== undefined ? (localItem.atendido || remoteItem.atendido) : remoteItem.atendido,
+              despachada: localItem.despachada !== undefined ? (localItem.despachada || remoteItem.despachada) : remoteItem.despachada,
+              despachado: localItem.despachado !== undefined ? (localItem.despachado || remoteItem.despachado) : remoteItem.despachado,
+              recibida: localItem.recibida !== undefined ? (localItem.recibida || remoteItem.recibida) : remoteItem.recibida,
+              recibido: localItem.recibido !== undefined ? (localItem.recibido || remoteItem.recibido) : remoteItem.recibido,
+              enTransito: localItem.enTransito !== undefined ? localItem.enTransito : remoteItem.enTransito,
               items: mergedItems,
               recepcionProgreso: keepLocalRecepcion ? localItem.recepcionProgreso : (remoteItem.recepcionProgreso || localItem.recepcionProgreso)
             };
@@ -1287,13 +1451,29 @@ export const transferService = {
       id: solicitud.id,
       folio: solicitud.folio || '',
       sucursalOrigen: solicitud.sucursalOrigen || '',
+      sucursalOrigenId: solicitud.sucursalOrigenId || '',
       areaOrigen: solicitud.areaOrigen || '',
+      areaOrigenId: solicitud.areaOrigenId || '',
       sucursalDestino: solicitud.sucursalDestino || '',
+      sucursalDestinoId: solicitud.sucursalDestinoId || '',
       areaDestino: solicitud.areaDestino || '',
+      areaDestinoId: solicitud.areaDestinoId || '',
       usuarioSolicitante: solicitud.usuarioSolicitante || '',
       usuarioDestino: solicitud.usuarioDestino || '',
       esTransferenciaInterna: Boolean(solicitud.esTransferenciaInterna || (solicitud.sucursalOrigen && solicitud.sucursalOrigen === solicitud.sucursalDestino)),
       estado: 'borrador',
+      solicitada: false,
+      solicitado: false,
+      estadoSolicitud: 'borrador',
+      despachada: false,
+      despachado: false,
+      atendida: false,
+      atendido: false,
+      estadoDespacho: 'pendiente',
+      recibida: false,
+      recibido: false,
+      enTransito: false,
+      estadoRecepcion: 'pendiente',
       fecha: solicitud.fecha || new Date().toISOString(),
       items: solicitud.items || []
     };
@@ -1337,19 +1517,53 @@ export const transferService = {
       id: solicitudId,
       folio: solicitud.folio || '',
       sucursalOrigen: solicitud.sucursalOrigen || '',
+      sucursalOrigenId: solicitud.sucursalOrigenId || '',
       areaOrigen: solicitud.areaOrigen || '',
+      areaOrigenId: solicitud.areaOrigenId || '',
       sucursalDestino: solicitud.sucursalDestino || '',
+      sucursalDestinoId: solicitud.sucursalDestinoId || '',
       areaDestino: solicitud.areaDestino || '',
+      areaDestinoId: solicitud.areaDestinoId || '',
       usuarioSolicitante: solicitud.usuarioSolicitante || '',
+      solicitanteNombre: solicitud.solicitanteNombre || solicitud.usuarioSolicitante || '',
       usuarioDestino: solicitud.usuarioDestino || '',
       esTransferenciaInterna: Boolean(
         solicitud.esTransferenciaInterna ||
         (solicitud.sucursalOrigen && solicitud.sucursalDestino && solicitud.sucursalOrigen.toLowerCase() === solicitud.sucursalDestino.toLowerCase())
       ),
       estado: 'enviada',
+      solicitada: true,
+      solicitado: true,
+      estadoSolicitud: 'solicitada',
+      fechaSolicitud: now,
+      despachada: false,
+      despachado: false,
+      estadoDespacho: 'pendiente',
+      fechaDespacho: null,
+      usuarioDespacho: null,
+      atendida: false,
+      atendido: false,
+      estadoAtencion: 'pendiente',
+      fechaAtencion: null,
+      usuarioAtencion: null,
+      recibida: false,
+      recibido: false,
+      enTransito: false,
+      estadoRecepcion: 'pendiente',
+      fechaRecepcion: null,
+      usuarioRecepcion: null,
+      observaciones: solicitud.observaciones || solicitud.motivo || '',
+      motivo: solicitud.motivo || solicitud.observaciones || '',
+      notas: solicitud.notas || solicitud.observaciones || '',
       fecha: solicitud.fecha || now,
       fechaEnvio: now,
-      items: solicitud.items || []
+      items: (solicitud.items || []).map(item => ({
+        ...item,
+        solicitado: true,
+        despachado: false,
+        atendido: false,
+        recibido: false
+      }))
     };
 
     const list = getLocalSolicitudes();
@@ -1380,10 +1594,11 @@ export const transferService = {
     playOrderSuccessSound();
 
     if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(docData), { merge: true })
-        .catch(err => {
-          console.warn('[Offline Mode] Solicitud guardada localmente, se sincronizará con Firebase al reconectar:', err);
-        });
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(docData), { merge: true });
+      } catch (err) {
+        console.warn('[Offline Mode] Solicitud guardada localmente, se sincronizará con Firebase al reconectar:', err);
+      }
     }
 
     return docData;
@@ -1393,7 +1608,25 @@ export const transferService = {
     if (!solicitudId) return false;
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
-    const updateData = { estado: 'enviada', fechaEnvio: new Date().toISOString() };
+    const nowIso = new Date().toISOString();
+    const updateData = {
+      estado: 'enviada',
+      solicitada: true,
+      solicitado: true,
+      estadoSolicitud: 'solicitada',
+      fechaSolicitud: existing?.fechaSolicitud || nowIso,
+      despachada: false,
+      despachado: false,
+      estadoDespacho: 'pendiente',
+      atendida: false,
+      atendido: false,
+      estadoAtencion: 'pendiente',
+      recibida: false,
+      recibido: false,
+      enTransito: false,
+      estadoRecepcion: 'pendiente',
+      fechaEnvio: nowIso
+    };
     const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
 
     const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
@@ -1407,8 +1640,11 @@ export const transferService = {
     playOrderSuccessSound();
 
     if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('[Firebase Sync Error] Envío encolado localmente:', err));
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+      } catch (err) {
+        console.warn('[Firebase Sync Error] Envío encolado localmente:', err);
+      }
     }
     return true;
   },
@@ -1594,17 +1830,37 @@ export const transferService = {
 
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
+    const nowIso = new Date().toISOString();
 
     const updateData = {
       estado: 'completada',
-      fechaDespacho: new Date().toISOString()
+      solicitada: true,
+      solicitado: true,
+      despachada: true,
+      despachado: true,
+      estadoDespacho: 'despachada',
+      atendida: true,
+      atendido: true,
+      estadoAtencion: 'atendida',
+      fechaAtencion: nowIso,
+      fechaDespacho: nowIso,
+      enTransito: true,
+      recibida: false,
+      recibido: false,
+      estadoRecepcion: 'pendiente'
     };
     if (folio) {
       updateData.folio = folio;
     }
     if (dispatchDetails) {
       if (dispatchDetails.items) {
-        updateData.items = dispatchDetails.items;
+        updateData.items = dispatchDetails.items.map(it => ({
+          ...it,
+          solicitado: true,
+          atendido: true,
+          despachado: true,
+          recibido: false
+        }));
       }
       if (dispatchDetails.ajustesDespacho) {
         updateData.ajustesDespacho = dispatchDetails.ajustesDespacho;
@@ -1612,9 +1868,11 @@ export const transferService = {
       if (dispatchDetails.usuarioDespachador) {
         updateData.usuarioDespachador = dispatchDetails.usuarioDespachador;
         updateData.usuarioDespacho = dispatchDetails.usuarioDespachador;
+        updateData.usuarioAtencion = dispatchDetails.usuarioDespachador;
       }
       if (dispatchDetails.observacionesDespacho) {
         updateData.observaciones = dispatchDetails.observacionesDespacho;
+        updateData.motivo = dispatchDetails.observacionesDespacho;
       }
     }
 
@@ -1630,13 +1888,12 @@ export const transferService = {
 
     if (isFirebaseConfigured) {
       const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .then(() => {
-          console.log(`[Firebase Sync] Solicitud ${solicitudId} completada y sincronizada exitosamente en Firestore.`);
-        })
-        .catch(err => {
-          console.warn('[Firebase Sync Offline] Despacho guardado localmente, pendiente de sincronizar en Firestore:', err);
-        });
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+        console.log(`[Firebase Sync] Solicitud ${solicitudId} completada y sincronizada exitosamente en Firestore.`);
+      } catch (err) {
+        console.warn('[Firebase Sync Offline] Despacho guardado localmente, pendiente de sincronizar en Firestore:', err);
+      }
     }
     return true;
   },
@@ -1645,36 +1902,69 @@ export const transferService = {
     if (dispatchData.id) {
       unmarkSolicitudAsDeleted(dispatchData.id);
     }
+    const nowIso = new Date().toISOString();
     const docData = {
       id: dispatchData.id || ('disp-' + Date.now()),
       folio: dispatchData.folio || '',
       sucursalOrigen: dispatchData.sucursalOrigen || '',
+      sucursalOrigenId: dispatchData.sucursalOrigenId || '',
       areaOrigen: dispatchData.areaOrigen || '',
-      sucursalDestino: dispatchData.sucursalDestino || '',
-      areaDestino: dispatchData.areaDestino || '',
-      sucursalReceptora: dispatchData.sucursalReceptora || dispatchData.sucursalOrigen || '',
-      areaReceptora: dispatchData.areaReceptora || dispatchData.areaOrigen || '',
-      sucursalDespachadora: dispatchData.sucursalDespachadora || dispatchData.sucursalDestino || '',
-      areaDespachadora: dispatchData.areaDespachadora || dispatchData.areaDestino || '',
-      usuarioSolicitante: dispatchData.usuarioSolicitante || dispatchData.sucursalOrigen || 'Despacho Directo',
+      areaOrigenId: dispatchData.areaOrigenId || '',
+      sucursalDestino: dispatchData.sucursalDestino || dispatchData.sucursalReceptora || '',
+      sucursalDestinoId: dispatchData.sucursalDestinoId || dispatchData.sucursalReceptoraId || '',
+      areaDestino: dispatchData.areaDestino || dispatchData.areaReceptora || '',
+      areaDestinoId: dispatchData.areaDestinoId || dispatchData.areaReceptoraId || '',
+      sucursalReceptora: dispatchData.sucursalReceptora || dispatchData.sucursalDestino || '',
+      sucursalReceptoraId: dispatchData.sucursalReceptoraId || dispatchData.sucursalDestinoId || '',
+      areaReceptora: dispatchData.areaReceptora || dispatchData.areaDestino || '',
+      areaReceptoraId: dispatchData.areaReceptoraId || dispatchData.areaDestinoId || '',
+      sucursalDespachadora: dispatchData.sucursalDespachadora || dispatchData.sucursalOrigen || '',
+      sucursalDespachadoraId: dispatchData.sucursalDespachadoraId || dispatchData.sucursalOrigenId || '',
+      areaDespachadora: dispatchData.areaDespachadora || dispatchData.areaOrigen || '',
+      areaDespachadoraId: dispatchData.areaDespachadoraId || dispatchData.areaOrigenId || '',
+      usuarioSolicitante: dispatchData.usuarioSolicitante || dispatchData.usuarioDespacho || 'Despacho Directo',
+      solicitanteNombre: dispatchData.solicitanteNombre || dispatchData.usuarioSolicitante || dispatchData.usuarioDespacho || 'Despacho Directo',
       usuarioDestino: dispatchData.usuarioDestino || '',
       usuarioDespacho: dispatchData.usuarioDespacho || '',
+      usuarioAtencion: dispatchData.usuarioDespacho || '',
       esTransferenciaInterna: Boolean(
         dispatchData.esTransferenciaInterna ||
         (dispatchData.sucursalOrigen && dispatchData.sucursalDestino && dispatchData.sucursalOrigen === dispatchData.sucursalDestino)
       ),
       estado: 'completada',
+      solicitada: true,
+      solicitado: true,
+      estadoSolicitud: 'solicitada',
+      fechaSolicitud: nowIso,
+      despachada: true,
+      despachado: true,
+      estadoDespacho: 'despachada',
+      atendida: true,
+      atendido: true,
+      estadoAtencion: 'atendida',
+      fechaAtencion: nowIso,
+      enTransito: true,
+      recibida: false,
+      recibido: false,
+      estadoRecepcion: 'pendiente',
+      fechaRecepcion: null,
+      usuarioRecepcion: null,
       sinSolicitud: true,
       esDespachoDirecto: true,
       observaciones: dispatchData.observaciones || 'Pedido despachado sin haber sido solicitado',
-      fecha: new Date().toISOString(),
-      fechaDespacho: new Date().toISOString(),
+      motivo: dispatchData.motivo || dispatchData.observaciones || '',
+      notas: dispatchData.notas || '',
+      fecha: nowIso,
+      fechaDespacho: nowIso,
       items: (dispatchData.items || []).map(item => ({
         codigo: item.codigo,
         descripcion: item.descripcion,
         cantidadSolicitada: 0,
         cantidadDespachada: Number(item.cantidad || item.cantidadDespachada || 1),
+        solicitado: true,
         atendido: true,
+        despachado: true,
+        recibido: false,
         esExtra: false
       }))
     };
@@ -1702,13 +1992,12 @@ export const transferService = {
     }
 
     if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
-        .then(() => {
-          console.log(`[Firebase Sync] Despacho directo ${docData.id} guardado en Firestore.`);
-        })
-        .catch(err => {
-          console.warn('Despacho directo guardado localmente (offline):', err);
-        });
+      try {
+        await setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true });
+        console.log(`[Firebase Sync] Despacho directo ${docData.id} guardado en Firestore.`);
+      } catch (err) {
+        console.warn('Despacho directo guardado localmente (offline):', err);
+      }
     }
 
     return docData;
@@ -1730,13 +2019,21 @@ export const transferService = {
       id: draft.id || ('disp-draft-' + Date.now()),
       folio: draft.folio || '',
       sucursalOrigen: draft.sucursalOrigen || '',
+      sucursalOrigenId: draft.sucursalOrigenId || '',
       areaOrigen: draft.areaOrigen || '',
-      sucursalDestino: draft.sucursalDestino || '',
-      areaDestino: draft.areaDestino || '',
-      sucursalReceptora: draft.sucursalReceptora || draft.sucursalOrigen || '',
-      areaReceptora: draft.areaReceptora || draft.areaOrigen || '',
-      sucursalDespachadora: draft.sucursalDespachadora || draft.sucursalDestino || '',
-      areaDespachadora: draft.areaDespachadora || draft.areaDestino || '',
+      areaOrigenId: draft.areaOrigenId || '',
+      sucursalDestino: draft.sucursalDestino || draft.sucursalReceptora || '',
+      sucursalDestinoId: draft.sucursalDestinoId || draft.sucursalReceptoraId || '',
+      areaDestino: draft.areaDestino || draft.areaReceptora || '',
+      areaDestinoId: draft.areaDestinoId || draft.areaReceptoraId || '',
+      sucursalReceptora: draft.sucursalReceptora || draft.sucursalDestino || '',
+      sucursalReceptoraId: draft.sucursalReceptoraId || draft.sucursalDestinoId || '',
+      areaReceptora: draft.areaReceptora || draft.areaDestino || '',
+      areaReceptoraId: draft.areaReceptoraId || draft.areaDestinoId || '',
+      sucursalDespachadora: draft.sucursalDespachadora || draft.sucursalOrigen || '',
+      sucursalDespachadoraId: draft.sucursalDespachadoraId || draft.sucursalOrigenId || '',
+      areaDespachadora: draft.areaDespachadora || draft.areaOrigen || '',
+      areaDespachadoraId: draft.areaDespachadoraId || draft.areaOrigenId || '',
       usuarioSolicitante: draft.usuarioSolicitante || draft.sucursalOrigen || 'Despacho Directo',
       usuarioDestino: draft.usuarioDestino || '',
       usuarioDespacho: draft.usuarioDespacho || '',
@@ -1854,21 +2151,30 @@ export const transferService = {
     const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
+    const nowIso = new Date().toISOString();
     
     let finalItems = itemsActualizados;
     if (!finalItems && existing?.items) {
       finalItems = existing.items.map(it => ({
         ...it,
         recibido: true,
+        atendido: true,
         cantidadRecibida: it.cantidadDespachada ?? it.cantidadSolicitada ?? 1
       }));
     }
 
     const updateData = {
       estado,
+      atendida: true,
+      atendido: true,
+      recibida: true,
+      recibido: true,
+      enTransito: false,
+      estadoRecepcion: estado,
       reporteFaltantes: faltantes,
-      fechaRecepcion: new Date().toISOString(),
+      fechaRecepcion: nowIso,
       usuarioReceptor: usuarioReceptor || existing?.usuarioReceptor || '',
+      usuarioRecepcion: usuarioReceptor || existing?.usuarioReceptor || '',
       ...(finalItems ? { items: finalItems } : {})
     };
     const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
@@ -1890,8 +2196,11 @@ export const transferService = {
 
     if (isFirebaseConfigured) {
       const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Recepción guardada localmente (offline):', err));
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+      } catch (err) {
+        console.warn('Recepción guardada localmente (offline):', err);
+      }
     }
     return true;
   },
@@ -1934,12 +2243,23 @@ export const transferService = {
       }));
 
     const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
+    const nowIso = new Date().toISOString();
 
     const updatePayload = {
       estado,
+      atendida: true,
+      atendido: true,
+      recibida: true,
+      recibido: true,
+      enTransito: false,
+      estadoRecepcion: estado,
+      fechaRecepcion: nowIso,
+      usuarioReceptor: usuarioReceptor || '',
+      usuarioRecepcion: usuarioReceptor || '',
+      observacionesRecepcion: observaciones || '',
       reporteFaltantes: faltantes,
       reporteDiscrepancias: {
-        fecha: new Date().toISOString(),
+        fecha: nowIso,
         usuarioReceptor: usuarioReceptor || '',
         observaciones: observaciones || '',
         discrepancias: discrepancias.map(d => ({
@@ -1951,11 +2271,15 @@ export const transferService = {
         totalExtras: extras.reduce((sum, e) => sum + (e.cantidadExtra || 0), 0),
         resuelto: false
       },
-      fechaReporteFaltantes: new Date().toISOString()
+      fechaReporteFaltantes: nowIso
     };
 
     if (Array.isArray(itemsActualizados) && itemsActualizados.length > 0) {
-      updatePayload.items = itemsActualizados;
+      updatePayload.items = itemsActualizados.map(it => ({
+        ...it,
+        recibido: true,
+        atendido: true
+      }));
     }
 
     const list = getLocalSolicitudes();
@@ -1977,8 +2301,11 @@ export const transferService = {
 
     if (isFirebaseConfigured) {
       const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Discrepancias guardadas localmente (offline):', err));
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+      } catch (err) {
+        console.warn('Discrepancias guardadas localmente (offline):', err);
+      }
     }
     return true;
   },
@@ -1994,6 +2321,10 @@ export const transferService = {
 
     const updatePayload = {
       estado: nuevoEstado,
+      enTransito: Boolean(hasDispatchedItems),
+      recibida: !hasDispatchedItems,
+      recibido: !hasDispatchedItems,
+      estadoRecepcion: hasDispatchedItems ? 'pendiente' : 'cerrada_con_faltantes',
       resolucionFaltantes: {
         fechaResolucion: new Date().toISOString(),
         usuarioResolucion: resolutionData.usuarioResolucion || '',
@@ -2026,8 +2357,11 @@ export const transferService = {
 
     if (isFirebaseConfigured) {
       const fullPayload = currentSol ? { ...currentSol, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Resolución de faltantes guardada localmente (offline):', err));
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+      } catch (err) {
+        console.warn('Resolución de faltantes guardada localmente (offline):', err);
+      }
     }
 
     dismissNotification(`tr-falt-${solicitudId}`);
@@ -2045,6 +2379,7 @@ export const transferService = {
 
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
+    const nowIso = new Date().toISOString();
 
     const updatedItems = (existing?.items || []).map(it => {
       const recItem = receptionData.itemsRecibidos?.find(r => r.codigo && it.codigo && String(r.codigo) === String(it.codigo));
@@ -2058,6 +2393,7 @@ export const transferService = {
       return {
         ...it,
         recibido: true,
+        atendido: true,
         cantidadRecibida: recItem !== undefined ? totalRec : it.cantidadRecibida,
         observacionRecepcion: obs || it.observacionRecepcion || ''
       };
@@ -2065,6 +2401,13 @@ export const transferService = {
 
     const updatePayload = {
       estado: nuevoEstado,
+      atendida: true,
+      atendido: true,
+      recibida: true,
+      recibido: true,
+      enTransito: false,
+      estadoRecepcion: nuevoEstado,
+      fechaRecepcion: nowIso,
       items: updatedItems
     };
 
@@ -2093,11 +2436,11 @@ export const transferService = {
       updatePayload.resolucionesPrevias = resolucionesPrevias;
       updatePayload.resolucionFaltantes = null;
       updatePayload.reporteFaltantes = nuevoReporteFaltantes;
-      updatePayload.fechaReporteFaltantes = new Date().toISOString();
+      updatePayload.fechaReporteFaltantes = nowIso;
       updatePayload.observacionesRecepcion = notasSucursal;
       updatePayload.reporteDiscrepancias = {
         ...(existing?.reporteDiscrepancias || {}),
-        fechaReporte: new Date().toISOString(),
+        fechaReporte: nowIso,
         usuarioReceptor: receptionData.usuarioRecepcion || existing?.reporteDiscrepancias?.usuarioReceptor || 'sucursal',
         observaciones: notasSucursal,
         resuelto: false
@@ -2108,7 +2451,7 @@ export const transferService = {
       dismissNotification(`tr-falt-env-${solicitudId}`);
     } else {
       updatePayload.recepcionFaltantes = {
-        fechaRecepcion: new Date().toISOString(),
+        fechaRecepcion: nowIso,
         usuarioRecepcion: receptionData.usuarioRecepcion || '',
         itemsRecibidos: receptionData.itemsRecibidos || [],
         itemsAunFaltantes: itemsAunFaltantes,
@@ -2133,8 +2476,11 @@ export const transferService = {
 
     if (isFirebaseConfigured) {
       const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Recepción de faltantes guardada localmente (offline):', err));
+      try {
+        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
+      } catch (err) {
+        console.warn('Recepción de faltantes guardada localmente (offline):', err);
+      }
     }
 
     window.dispatchEvent(new Event('erp_notifications_updated'));
@@ -2387,6 +2733,7 @@ export const transferService = {
   canUserReceive,
   canUserViewInRecibirHistory,
   getTransferParticipants,
+  formatOrderRequestedBy,
 
   playNotificationSound,
   playCheckSound,

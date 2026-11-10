@@ -24,10 +24,12 @@ import {
   formatTransferFolio,
   canUserReceive,
   canUserViewInRecibirHistory,
+  formatOrderRequestedBy,
   TransferDetailModal,
   playCheckSound,
   playOrderSuccessSound
 } from '../transferencias';
+import { userService } from '../usuarios/userService';
 import {
   transitionView,
   QuantityStepper,
@@ -157,6 +159,16 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
   const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
   const [detailSolicitud, setDetailSolicitud] = useState(null);
+  const [usersList, setUsersList] = useState([]);
+
+  useEffect(() => {
+    const unsub = userService.subscribeUsers((list) => {
+      setUsersList(list);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('erp_recibir_active_tab', activeTab);
@@ -1050,6 +1062,15 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                             </span>
                           )}
                         </div>
+                        <p className="text-xs text-slate-500 font-medium">
+                          {formatOrderRequestedBy(sol, usersList)}
+                        </p>
+                        {(sol.observaciones || sol.motivo || sol.notas) && (
+                          <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
+                            <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                            <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
+                          </div>
+                        )}
                         <p className="text-xs text-slate-500">
                           {isFaltante
                             ? 'Faltantes despachados en camino'
@@ -1194,9 +1215,18 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                             )}
                           </div>
 
+                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                            {formatOrderRequestedBy(sol, usersList)}
+                          </p>
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             Enviado desde: <strong className="text-slate-700 dark:text-slate-200 font-semibold">{origenText}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}</strong>
                           </p>
+                          {(sol.observacionesRecepcion || sol.observaciones || sol.motivo || sol.notas) && (
+                            <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
+                              <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                              <span className="italic line-clamp-2">&ldquo;{sol.observacionesRecepcion || sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500 flex-wrap">
                             <span>Recibió: <strong className="text-slate-600 dark:text-slate-300 font-medium">{receptorText}</strong></span>
                             <span>&bull;</span>

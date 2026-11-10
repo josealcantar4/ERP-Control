@@ -75,6 +75,46 @@ function generateCleanId(prefix, text) {
   return `${prefix}-${slug || Date.now()}`;
 }
 
+export function normalizeStr(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function generateAutoAreaId() {
+  if (isFirebaseConfigured) {
+    try {
+      return doc(collection(db, 'areas')).id;
+    } catch (_) {}
+  }
+  return 'ar_' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+}
+
+export function resolveAreaObj(areaRef, areasList = []) {
+  if (!areaRef) return null;
+  if (typeof areaRef === 'object' && areaRef !== null) {
+    if (areaRef.id || areaRef.nombre) {
+      const match = (areasList || []).find(a => (areaRef.id && a.id === areaRef.id) || (areaRef.nombre && normalizeStr(a.nombre) === normalizeStr(areaRef.nombre)));
+      return match || areaRef;
+    }
+  }
+  const str = String(areaRef).trim();
+  if (!str) return null;
+
+  const list = Array.isArray(areasList) ? areasList : [];
+  const byId = list.find(a => a.id === str);
+  if (byId) return byId;
+
+  const norm = normalizeStr(str);
+  const byName = list.find(a => normalizeStr(a.nombre) === norm);
+  if (byName) return byName;
+
+  return { id: str, nombre: str, excluirTransferencias: false };
+}
+
 export const organizationService = {
   subscribeSedes(onUpdate) {
     const initialLocal = getLocalSedes();
@@ -248,8 +288,9 @@ export const organizationService = {
   getSedeAreas(sedeNombreOrId) {
     if (!sedeNombreOrId) return [];
     const sedes = getLocalSedes();
+    const norm = normalizeStr(sedeNombreOrId);
     const found = sedes.find(
-      s => s.id === sedeNombreOrId || (s.nombre || '').toLowerCase() === String(sedeNombreOrId).toLowerCase()
+      s => s.id === sedeNombreOrId || normalizeStr(s.nombre) === norm
     );
     return Array.isArray(found?.areas) ? found.areas : [];
   },
@@ -309,7 +350,7 @@ export const organizationService = {
     const cleanNombre = nombre.trim();
     if (!cleanNombre) throw new Error('El nombre del área es obligatorio.');
 
-    const id = generateCleanId('area', cleanNombre);
+    const id = generateAutoAreaId();
     const docData = {
       id,
       nombre: cleanNombre,

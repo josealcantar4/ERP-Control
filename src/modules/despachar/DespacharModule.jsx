@@ -24,7 +24,8 @@ import {
   History,
   ChevronDown
 } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserDispatch, playCheckSound, playOrderSuccessSound } from '../transferencias';
+import { transferService, formatTransferFolio, canUserDispatch, playCheckSound, playOrderSuccessSound, formatOrderRequestedBy } from '../transferencias';
+import { userService } from '../usuarios/userService';
 import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
@@ -57,6 +58,16 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
   const [historyLimit, setHistoryLimit] = useState(15);
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
   const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
+  const [usersList, setUsersList] = useState([]);
+
+  useEffect(() => {
+    const unsub = userService.subscribeUsers((list) => {
+      setUsersList(list);
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
   const sentinelRef = useRef(null);
 
   const handleSwitchTab = (newTab) => {
@@ -1127,9 +1138,15 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                               {sol.estado === 'en_despacho' ? 'En Surtido' : 'Nueva Solicitud'}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-500">
-                            Origen: <strong className="text-slate-700">{sol.sucursalOrigen}{sol.areaOrigen ? ` (${sol.areaOrigen})` : ''}</strong> &bull; Solicitante: <strong className="text-slate-700">{sol.usuarioSolicitante}</strong>
+                          <p className="text-xs text-slate-500 font-medium">
+                            {formatOrderRequestedBy(sol, usersList)}
                           </p>
+                          {(sol.observaciones || sol.motivo || sol.notas) && (
+                            <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
+                              <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                              <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-transparent text-blue-600 dark:text-blue-400 border border-transparent dark:border-blue-500/30 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
@@ -1188,7 +1205,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
             </div>
 
             {inProgressDrafts.length === 0 ? (
-              <div className="bg-slate-100/60 dark:bg-slate-800/40 rounded-3xl p-6 border border-slate-200/60 dark:border-slate-800/80 text-center text-slate-500 dark:text-slate-400 text-xs">
+              <div className="bg-slate-100/70 dark:!bg-slate-900/40 rounded-3xl p-6 border border-slate-200/80 dark:!border-slate-800/80 text-center text-slate-500 dark:!text-slate-400 text-xs shadow-2xs backdrop-blur-xs">
                 No hay sucursales armando borradores en este momento.
               </div>
             ) : (
@@ -1216,7 +1233,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                           )}
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {sol.usuarioSolicitante} está capturando ({sol.items?.length || 0} productos hasta ahora)
+                          {formatOrderRequestedBy(sol, usersList)} &bull; ({sol.items?.length || 0} productos hasta ahora)
                         </p>
                       </div>
 
@@ -1323,10 +1340,16 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                               {sol.usuarioSolicitante && (
                                 <>
                                   <span className="shrink-0">&bull;</span>
-                                  <span className="whitespace-nowrap">Pedido por: {sol.usuarioSolicitante}</span>
+                                  <span className="whitespace-nowrap">{formatOrderRequestedBy(sol, usersList)}</span>
                                 </>
                               )}
                             </div>
+                            {(sol.observaciones || sol.motivo || sol.notas) && (
+                              <div className="flex items-start gap-1.5 text-[11px] text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1.5">
+                                <FileText className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
+                              </div>
+                            )}
                           </div>
                         </div>
 

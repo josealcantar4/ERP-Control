@@ -650,20 +650,20 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       )}
 
       <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
           <button
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
+            className="self-start sm:self-auto inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Volver al Dashboard</span>
           </button>
 
-          <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full flex text-xs font-medium border border-transparent dark:border-slate-700/60 shrink-0">
+          <div className="bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full grid grid-cols-3 sm:flex text-xs font-medium border border-transparent dark:border-slate-700/60 w-full sm:w-auto shrink-0">
             <button
               type="button"
               onClick={() => handleSwitchTab('usuarios')}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+              className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
                 activeTab === 'usuarios'
                   ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
                   : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
@@ -674,7 +674,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             <button
               type="button"
               onClick={() => handleSwitchTab('sedes')}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+              className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
                 activeTab === 'sedes'
                   ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
                   : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
@@ -685,7 +685,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             <button
               type="button"
               onClick={() => handleSwitchTab('areas')}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
+              className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
                 activeTab === 'areas'
                   ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
                   : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'

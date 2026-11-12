@@ -4,13 +4,188 @@
 
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import {
-  collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, getDocs
+  collection, doc, setDoc, getDoc, deleteDoc, onSnapshot, query, orderBy, getDocs
 } from 'firebase/firestore';
 import { catalogService } from '../catalogo/catalogService';
 import { soundSettingsService } from '../../shared/soundSettingsService';
 
 const LOCAL_STORAGE_KEY = 'erp_control_solicitudes';
 const DELETED_SOLICITUDES_STORAGE_KEY = 'erp_deleted_solicitudes_ids';
+const PENDING_SYNC_STORAGE_KEY = 'erp_pending_sync_solicitudes';
+
+const activePendingSyncCallbacks = new Set();
+const inFlightWrites = new Map();
+const IN_FLIGHT_WRITE_TIMEOUT_MS = 10000;
+let cachedPendingSyncMap = null;
+let pendingSyncRetryTimer = null;
+
+function isWriteInFlight(solicitudId, maxAgeMs = IN_FLIGHT_WRITE_TIMEOUT_MS) {
+  if (!solicitudId) return false;
+  const entry = inFlightWrites.get(solicitudId);
+  if (!entry) return false;
+  const startedAt = typeof entry === 'object' ? (entry.startedAt || 0) : Number(entry || 0);
+  if (Date.now() - startedAt > maxAgeMs) {
+    inFlightWrites.delete(solicitudId);
+    return false;
+  }
+  return true;
+}
+
+function loadPendingSyncMap() {
+  if (cachedPendingSyncMap instanceof Map) {
+    return cachedPendingSyncMap;
+  }
+  const map = new Map();
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([id, ts]) => {
+          const num = Number(ts);
+          if (id && !isNaN(num) && num > 0) {
+            map.set(id, num);
+          }
+        });
+      }
+    }
+  } catch (_) {}
+  cachedPendingSyncMap = map;
+  return map;
+}
+
+function savePendingSyncMap(map) {
+  cachedPendingSyncMap = map;
+  try {
+    const obj = {};
+    map.forEach((ts, id) => {
+      obj[id] = ts;
+    });
+    localStorage.setItem(PENDING_SYNC_STORAGE_KEY, JSON.stringify(obj));
+  } catch (e) {
+    console.warn('Error guardando cola de sincronización pendiente:', e);
+  }
+}
+
+function getOperationalPendingSyncMap() {
+  const pendingMap = loadPendingSyncMap();
+  if (pendingMap.size === 0) return new Map();
+
+  const deletedIds = getDeletedSolicitudesIds();
+  const localList = getLocalSolicitudes();
+  const localById = new Map((localList || []).map(s => [s.id, s]));
+  const result = new Map();
+
+  pendingMap.forEach((ts, id) => {
+    if (deletedIds.has(id)) return;
+    const sol = localById.get(id);
+    if (sol && sol.estado && sol.estado !== 'borrador') {
+      result.set(id, ts);
+    }
+  });
+  return result;
+}
+
+function notifyPendingSyncListeners() {
+  const snapshot = new Map(loadPendingSyncMap());
+  const operational = getOperationalPendingSyncMap();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('erp_pending_sync_changed', {
+      detail: {
+        pendingIds: Array.from(operational.keys()),
+        count: operational.size
+      }
+    }));
+  }
+  activePendingSyncCallbacks.forEach(cb => {
+    try {
+      cb(operational, snapshot);
+    } catch (_) {}
+  });
+  ensurePendingSyncRetryLoop();
+}
+
+function markSolicitudPendingSync(id, timestamp = Date.now()) {
+  if (!id) return;
+  const map = loadPendingSyncMap();
+  const prev = map.get(id) || 0;
+  map.set(id, Math.max(prev, timestamp));
+  savePendingSyncMap(map);
+  notifyPendingSyncListeners();
+}
+
+function clearSolicitudPendingSync(id, writeTimestamp = Infinity) {
+  if (!id) return;
+  const map = loadPendingSyncMap();
+  if (!map.has(id)) return;
+  const recordedTs = map.get(id) || 0;
+  if (recordedTs <= writeTimestamp) {
+    map.delete(id);
+    savePendingSyncMap(map);
+    notifyPendingSyncListeners();
+  }
+}
+
+function ensurePendingSyncRetryLoop() {
+  if (typeof window === 'undefined' || !isFirebaseConfigured) return;
+  const pendingMap = loadPendingSyncMap();
+  if (pendingMap.size === 0) {
+    if (pendingSyncRetryTimer) {
+      clearInterval(pendingSyncRetryTimer);
+      pendingSyncRetryTimer = null;
+    }
+    return;
+  }
+  if (!pendingSyncRetryTimer) {
+    pendingSyncRetryTimer = setInterval(() => {
+      const currentPending = loadPendingSyncMap();
+      if (currentPending.size === 0) {
+        clearInterval(pendingSyncRetryTimer);
+        pendingSyncRetryTimer = null;
+        return;
+      }
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        transferService.syncOfflineOrders();
+      }
+    }, 15000);
+  }
+}
+
+function queueFirestoreWrite(solicitudId, payload) {
+  if (!isFirebaseConfigured || !solicitudId || !payload) return;
+
+  const deletedIds = getDeletedSolicitudesIds();
+  if (deletedIds.has(solicitudId)) return;
+
+  const writeTs = Date.now();
+  markSolicitudPendingSync(solicitudId, writeTs);
+  inFlightWrites.set(solicitudId, { ts: writeTs, startedAt: Date.now() });
+
+  try {
+    const sanitized = cleanForFirestore(payload);
+    setDoc(doc(db, 'solicitudes', solicitudId), sanitized, { merge: true })
+      .then(() => {
+        const current = inFlightWrites.get(solicitudId);
+        if (current && current.ts === writeTs) {
+          inFlightWrites.delete(solicitudId);
+        }
+        clearSolicitudPendingSync(solicitudId, writeTs);
+      })
+      .catch((err) => {
+        const current = inFlightWrites.get(solicitudId);
+        if (current && current.ts === writeTs) {
+          inFlightWrites.delete(solicitudId);
+        }
+        console.warn('[Firestore Queue] Operación en cola, se sincronizará al recuperar conexión:', solicitudId, err);
+      });
+  } catch (err) {
+    const current = inFlightWrites.get(solicitudId);
+    if (current && current.ts === writeTs) {
+      inFlightWrites.delete(solicitudId);
+    }
+    console.warn('[Firestore Queue] Error preparando escritura en cola:', solicitudId, err);
+  }
+}
 
 function getDeletedSolicitudesIds() {
   try {
@@ -701,6 +876,14 @@ export function isAreaExcludedFromTransfers(areaName) {
   return false;
 }
 
+export function isDirectDispatch(transfer) {
+  if (!transfer) return false;
+  if (transfer.esDespachoDirecto || transfer.sinSolicitud) return true;
+  if (transfer.tipo === 'despacho_directo') return true;
+  if (typeof transfer.id === 'string' && transfer.id.startsWith('disp-')) return true;
+  return false;
+}
+
 export function getTransferParticipants(transfer) {
   if (!transfer) {
     return {
@@ -784,7 +967,14 @@ export function canUserViewInSolicitar(transfer, currentUser) {
   const uRoles = currentUser.roles || [];
   if (!uRoles.includes('solicitar') && !isRootAdmin) return false;
 
-  if (transfer.esDespachoDirecto || transfer.sinSolicitud) return false;
+  if (isDirectDispatch(transfer)) return false;
+  if (
+    transfer.estado === 'borrador' &&
+    typeof transfer.observaciones === 'string' &&
+    transfer.observaciones.startsWith('Pedido despachado sin haber sido solicitado')
+  ) {
+    return false;
+  }
 
   if (transfer.usuarioSolicitante && transfer.usuarioSolicitante.toLowerCase() === username) {
     return true;
@@ -1155,6 +1345,7 @@ function ensureGlobalSolicitudesSubscription() {
 
         const localList = getLocalSolicitudes();
         const localMap = new Map((localList || []).map(s => [s.id, s]));
+        const pendingSyncMap = loadPendingSyncMap();
 
         remoteMap.forEach((remoteItem, id) => {
           if (deletedIds.has(id)) return;
@@ -1181,9 +1372,18 @@ function ensureGlobalSolicitudesSubscription() {
               recibido: Boolean(localItem.recibido || remoteItem.recibido)
             };
             validItems.push(merged);
-            if (isFirebaseConfigured) {
-              setDoc(doc(db, 'solicitudes', id), cleanForFirestore(merged), { merge: true })
-                .catch(err => console.warn('[Firebase Auto-Sync] Error sincronizando estado avanzado local a Firestore:', err));
+            if (isFirebaseConfigured && !isWriteInFlight(id)) {
+              queueFirestoreWrite(id, merged);
+            }
+          } else if (localWeight === remoteWeight && pendingSyncMap.has(id)) {
+            const mergedPending = {
+              ...remoteItem,
+              ...localItem,
+              ...(Array.isArray(localItem.items) ? { items: localItem.items } : {})
+            };
+            validItems.push(mergedPending);
+            if (isFirebaseConfigured && !isWriteInFlight(id)) {
+              queueFirestoreWrite(id, mergedPending);
             }
           } else if (localWeight === remoteWeight) {
             const localRecTime = new Date(localItem?.recepcionProgreso?.updatedAt || 0).getTime();
@@ -1221,6 +1421,9 @@ function ensureGlobalSolicitudesSubscription() {
             };
             validItems.push(merged);
           } else {
+            if (pendingSyncMap.has(id)) {
+              clearSolicitudPendingSync(id, Infinity);
+            }
             validItems.push(remoteItem);
           }
         });
@@ -1228,11 +1431,10 @@ function ensureGlobalSolicitudesSubscription() {
         localMap.forEach((localItem, id) => {
           if (deletedIds.has(id)) return;
           if (!remoteMap.has(id)) {
-            if (localItem.estado !== 'borrador') {
+            if (localItem.estado !== 'borrador' || pendingSyncMap.has(id)) {
               validItems.push(localItem);
-              if (isFirebaseConfigured) {
-                setDoc(doc(db, 'solicitudes', id), cleanForFirestore(localItem), { merge: true })
-                  .catch(err => console.warn('[Firebase Auto-Sync] Error subiendo orden local faltante a Firestore:', err));
+              if (isFirebaseConfigured && !isWriteInFlight(id)) {
+                queueFirestoreWrite(id, localItem);
               }
             }
           }
@@ -1248,6 +1450,10 @@ function ensureGlobalSolicitudesSubscription() {
             console.warn('Error en callback de solicitudes:', e);
           }
         });
+
+        if (!snap.metadata?.fromCache) {
+          transferService.syncOfflineOrders();
+        }
       },
       (err) => {
         console.warn('Fallback a almacenamiento local de solicitudes en Firebase:', err);
@@ -1259,6 +1465,7 @@ function ensureGlobalSolicitudesSubscription() {
         });
       }
     );
+    transferService.syncOfflineOrders();
   } catch (err) {
     console.warn('Error iniciando suscripción global de solicitudes en Firebase:', err);
   }
@@ -1286,6 +1493,8 @@ export const transferService = {
   async deleteEmptyDraft(solicitudId) {
     if (!solicitudId) return;
     markSolicitudAsDeleted(solicitudId);
+    inFlightWrites.delete(solicitudId);
+    clearSolicitudPendingSync(solicitudId, Infinity);
     const current = getLocalSolicitudes();
     const filtered = current.filter(s => s.id !== solicitudId);
     cachedSolicitudesList = filtered;
@@ -1299,7 +1508,11 @@ export const transferService = {
 
   async purgeEmptyDrafts(ids) {
     if (!ids || ids.length === 0) return;
-    ids.forEach(id => markSolicitudAsDeleted(id));
+    ids.forEach(id => {
+      markSolicitudAsDeleted(id);
+      inFlightWrites.delete(id);
+      clearSolicitudPendingSync(id, Infinity);
+    });
     const current = getLocalSolicitudes();
     const idSet = new Set(ids);
     const filtered = current.filter(s => !idSet.has(s.id));
@@ -1315,11 +1528,19 @@ export const transferService = {
   },
 
   async refreshSolicitudes() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return getLocalSolicitudes();
+    }
+
     if (isFirebaseConfigured) {
+      let timeoutId = null;
       try {
         const deletedIds = getDeletedSolicitudesIds();
         const q = query(collection(db, 'solicitudes'), orderBy('fecha', 'desc'));
-        const snap = await getDocs(q);
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('FIREBASE_REFRESH_TIMEOUT')), 4500);
+        });
+        const snap = await Promise.race([getDocs(q), timeoutPromise]);
         const rawItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
         const remoteMap = new Map();
@@ -1343,6 +1564,7 @@ export const transferService = {
 
         const localList = getLocalSolicitudes();
         const localMap = new Map((localList || []).map(s => [s.id, s]));
+        const pendingSyncMap = loadPendingSyncMap();
 
         remoteMap.forEach((remoteItem, id) => {
           if (deletedIds.has(id)) return;
@@ -1356,10 +1578,32 @@ export const transferService = {
           const remoteWeight = STATUS_WEIGHT[remoteItem.estado] || 0;
 
           if (localWeight > remoteWeight) {
-            const merged = { ...remoteItem, ...localItem };
+            const merged = {
+              ...remoteItem,
+              ...localItem,
+              solicitada: Boolean(localItem.solicitada || remoteItem.solicitada),
+              solicitado: Boolean(localItem.solicitado || remoteItem.solicitado),
+              atendida: Boolean(localItem.atendida || remoteItem.atendida),
+              atendido: Boolean(localItem.atendido || remoteItem.atendido),
+              despachada: Boolean(localItem.despachada || remoteItem.despachada),
+              despachado: Boolean(localItem.despachado || remoteItem.despachado),
+              recibida: Boolean(localItem.recibida || remoteItem.recibida),
+              recibido: Boolean(localItem.recibido || remoteItem.recibido)
+            };
             validItems.push(merged);
-            setDoc(doc(db, 'solicitudes', id), cleanForFirestore(merged), { merge: true })
-              .catch(() => {});
+            if (!isWriteInFlight(id)) {
+              queueFirestoreWrite(id, merged);
+            }
+          } else if (localWeight === remoteWeight && pendingSyncMap.has(id)) {
+            const mergedPending = {
+              ...remoteItem,
+              ...localItem,
+              ...(Array.isArray(localItem.items) ? { items: localItem.items } : {})
+            };
+            validItems.push(mergedPending);
+            if (!isWriteInFlight(id)) {
+              queueFirestoreWrite(id, mergedPending);
+            }
           } else if (localWeight === remoteWeight) {
             const localRecTime = new Date(localItem?.recepcionProgreso?.updatedAt || 0).getTime();
             const remoteRecTime = new Date(remoteItem?.recepcionProgreso?.updatedAt || 0).getTime();
@@ -1370,10 +1614,13 @@ export const transferService = {
               if (!lItem) return rItem;
               return {
                 ...rItem,
+                solicitado: lItem.solicitado !== undefined ? (lItem.solicitado || rItem.solicitado) : rItem.solicitado,
                 atendido: lItem.atendido !== undefined ? (lItem.atendido || rItem.atendido) : rItem.atendido,
+                despachado: lItem.despachado !== undefined ? (lItem.despachado || rItem.despachado) : rItem.despachado,
                 recibido: lItem.recibido !== undefined ? (lItem.recibido || rItem.recibido) : rItem.recibido,
                 cantidadRecibida: lItem.cantidadRecibida !== undefined ? lItem.cantidadRecibida : rItem.cantidadRecibida,
-                cantidadDespachada: lItem.cantidadDespachada !== undefined ? lItem.cantidadDespachada : rItem.cantidadDespachada
+                cantidadDespachada: lItem.cantidadDespachada !== undefined ? lItem.cantidadDespachada : rItem.cantidadDespachada,
+                observacionRecepcion: lItem.observacionRecepcion !== undefined ? lItem.observacionRecepcion : rItem.observacionRecepcion
               };
             });
 
@@ -1384,6 +1631,9 @@ export const transferService = {
             };
             validItems.push(merged);
           } else {
+            if (pendingSyncMap.has(id)) {
+              clearSolicitudPendingSync(id, Infinity);
+            }
             validItems.push(remoteItem);
           }
         });
@@ -1391,19 +1641,27 @@ export const transferService = {
         localMap.forEach((localItem, id) => {
           if (deletedIds.has(id)) return;
           if (!remoteMap.has(id)) {
-            if (localItem.estado !== 'borrador') {
+            if (localItem.estado !== 'borrador' || pendingSyncMap.has(id)) {
               validItems.push(localItem);
-              setDoc(doc(db, 'solicitudes', id), cleanForFirestore(localItem), { merge: true })
-                .catch(() => {});
+              if (!isWriteInFlight(id)) {
+                queueFirestoreWrite(id, localItem);
+              }
             }
           }
         });
 
         cachedSolicitudesList = validItems;
         saveLocalSolicitudes(validItems);
+        if (!snap.metadata?.fromCache) {
+          this.syncOfflineOrders();
+        }
         return validItems;
       } catch (err) {
-        console.warn('Error al verificar nuevas solicitudes en Firebase:', err);
+        if (err?.message !== 'FIREBASE_REFRESH_TIMEOUT') {
+          console.warn('Error al verificar nuevas solicitudes en Firebase:', err);
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
     }
     return getLocalSolicitudes();
@@ -1431,12 +1689,31 @@ export const transferService = {
   },
 
   async getActiveDraft(username) {
+    if (!username) return null;
+    const targetUser = String(username).toLowerCase().trim();
     const list = getLocalSolicitudes();
-    return list.find(s => s.usuarioSolicitante === username && s.estado === 'borrador' && s.items && s.items.length > 0) || null;
+    return list.find(s =>
+      s.estado === 'borrador' &&
+      !isDirectDispatch(s) &&
+      !(typeof s.observaciones === 'string' && s.observaciones.startsWith('Pedido despachado sin haber sido solicitado')) &&
+      (s.usuarioSolicitante || '').toLowerCase().trim() === targetUser &&
+      s.items && s.items.length > 0
+    ) || null;
   },
 
   async saveDraft(solicitud) {
-    if (!solicitud || !solicitud.items || solicitud.items.length === 0) {
+    if (!solicitud || isDirectDispatch(solicitud)) {
+      return null;
+    }
+
+    const existingLocal = solicitud?.id
+      ? getLocalSolicitudes().find(s => s.id === solicitud.id)
+      : null;
+    if (existingLocal && existingLocal.estado && existingLocal.estado !== 'borrador') {
+      return existingLocal;
+    }
+
+    if (!solicitud.items || solicitud.items.length === 0) {
       if (solicitud && solicitud.id) {
         await this.deleteEmptyDraft(solicitud.id);
       }
@@ -1460,6 +1737,9 @@ export const transferService = {
       areaDestinoId: solicitud.areaDestinoId || '',
       usuarioSolicitante: solicitud.usuarioSolicitante || '',
       usuarioDestino: solicitud.usuarioDestino || '',
+      observaciones: solicitud.observaciones || '',
+      motivo: solicitud.motivo || solicitud.observaciones || '',
+      notas: solicitud.notas || solicitud.observaciones || '',
       esTransferenciaInterna: Boolean(solicitud.esTransferenciaInterna || (solicitud.sucursalOrigen && solicitud.sucursalOrigen === solicitud.sucursalDestino)),
       estado: 'borrador',
       solicitada: false,
@@ -1488,16 +1768,12 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
-    cachedSolicitudesList = updated;
 
     if (Array.isArray(docData.items) && docData.items.length > 0) {
       catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
     }
 
-    if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
-        .catch(err => console.warn('Borrador guardado localmente (offline):', err));
-    }
+    queueFirestoreWrite(docData.id, docData);
 
     return docData;
   },
@@ -1576,11 +1852,6 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
-    cachedSolicitudesList = updated;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updated); } catch (_) {}
-    });
 
     undismissNotification(`tr-env-${solicitudId}`);
     if (typeof window !== 'undefined') {
@@ -1593,13 +1864,7 @@ export const transferService = {
 
     playOrderSuccessSound();
 
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(docData), { merge: true });
-      } catch (err) {
-        console.warn('[Offline Mode] Solicitud guardada localmente, se sincronizará con Firebase al reconectar:', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, docData);
 
     return docData;
   },
@@ -1631,21 +1896,10 @@ export const transferService = {
 
     const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('[Firebase Sync Error] Envío encolado localmente:', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
     return true;
   },
 
@@ -1669,17 +1923,11 @@ export const transferService = {
     });
 
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
 
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
-
-    if (isFirebaseConfigured && currentItems) {
+    if (currentItems) {
       const target = updatedList.find(s => s.id === solicitudId);
       const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Item atendido guardado localmente (offline):', err));
+      queueFirestoreWrite(solicitudId, fullPayload);
     }
     return true;
   },
@@ -1698,7 +1946,7 @@ export const transferService = {
             ...items[itemIndex],
             cantidadDespachada,
             atendido: shouldAtendido,
-            ...(motivoAjuste !== undefined ? { motivoAjusteDespacho: motivoAjuste } : {})
+            ...(motivoAjuste !== undefined ? { motivoAjusteDespacho: motivoAjuste, motivo: motivoAjuste } : {})
           };
         }
         currentItems = items;
@@ -1709,17 +1957,11 @@ export const transferService = {
     });
 
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
 
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
-
-    if (isFirebaseConfigured && currentItems) {
+    if (currentItems) {
       const target = updatedList.find(s => s.id === solicitudId);
       const fullPayload = target || { id: solicitudId, items: currentItems, estado: newEstado };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Cantidad de despacho guardada localmente (offline):', err));
+      queueFirestoreWrite(solicitudId, fullPayload);
     }
     return true;
   },
@@ -1749,28 +1991,27 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
 
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
-
-    if (isFirebaseConfigured && target) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
-        .catch(err => console.warn('Producto extra guardado localmente (offline):', err));
+    if (target) {
+      queueFirestoreWrite(solicitudId, target);
     }
     return true;
   },
   
-  async removeExtraItem(solicitudId, itemIndex) {
+  async removeExtraItem(solicitudId, itemIndex, fullItems = null) {
     if (!solicitudId) return false;
     const list = getLocalSolicitudes();
     let target = null;
     const updatedList = list.map(s => {
       if (s.id === solicitudId) {
-        const items = [...(s.items || [])];
-        if (items[itemIndex] && items[itemIndex].esExtra) {
-          items.splice(itemIndex, 1);
+        let items;
+        if (Array.isArray(fullItems)) {
+          items = [...fullItems];
+        } else {
+          items = [...(s.items || [])];
+          if (items[itemIndex] && items[itemIndex].esExtra) {
+            items.splice(itemIndex, 1);
+          }
         }
         target = { ...s, items };
         return target;
@@ -1778,20 +2019,14 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
 
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
-
-    if (isFirebaseConfigured && target) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
-        .catch(err => console.warn('Producto extra eliminado localmente (offline):', err));
+    if (target) {
+      queueFirestoreWrite(solicitudId, target);
     }
     return true;
   },
 
-  async updateExtraItemQty(solicitudId, itemIndex, newQty) {
+  async updateExtraItemQty(solicitudId, itemIndex, newQty, fullItems = null) {
     if (!solicitudId) return false;
     const qty = Number(newQty);
     if (qty <= 0) {
@@ -1802,9 +2037,14 @@ export const transferService = {
     let target = null;
     const updatedList = list.map(s => {
       if (s.id === solicitudId) {
-        const items = [...(s.items || [])];
-        if (items[itemIndex] && items[itemIndex].esExtra) {
-          items[itemIndex] = { ...items[itemIndex], cantidadDespachada: qty };
+        let items;
+        if (Array.isArray(fullItems)) {
+          items = [...fullItems];
+        } else {
+          items = [...(s.items || [])];
+          if (items[itemIndex] && items[itemIndex].esExtra) {
+            items[itemIndex] = { ...items[itemIndex], cantidadDespachada: qty };
+          }
         }
         target = { ...s, items };
         return target;
@@ -1812,15 +2052,9 @@ export const transferService = {
       return s;
     });
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
 
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
-
-    if (isFirebaseConfigured && target) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(target), { merge: true })
-        .catch(err => console.warn('Cantidad extra guardada localmente (offline):', err));
+    if (target) {
+      queueFirestoreWrite(solicitudId, target);
     }
     return true;
   },
@@ -1876,25 +2110,15 @@ export const transferService = {
       }
     }
 
-    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
+    const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+    const updatedList = list.some(s => s.id === solicitudId)
+      ? list.map(s => s.id === solicitudId ? fullPayload : s)
+      : [fullPayload, ...list];
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
-    if (isFirebaseConfigured) {
-      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-        console.log(`[Firebase Sync] Solicitud ${solicitudId} completada y sincronizada exitosamente en Firestore.`);
-      } catch (err) {
-        console.warn('[Firebase Sync Offline] Despacho guardado localmente, pendiente de sincronizar en Firestore:', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
     return true;
   },
 
@@ -1922,8 +2146,9 @@ export const transferService = {
       sucursalDespachadoraId: dispatchData.sucursalDespachadoraId || dispatchData.sucursalOrigenId || '',
       areaDespachadora: dispatchData.areaDespachadora || dispatchData.areaOrigen || '',
       areaDespachadoraId: dispatchData.areaDespachadoraId || dispatchData.areaOrigenId || '',
-      usuarioSolicitante: dispatchData.usuarioSolicitante || dispatchData.usuarioDespacho || 'Despacho Directo',
-      solicitanteNombre: dispatchData.solicitanteNombre || dispatchData.usuarioSolicitante || dispatchData.usuarioDespacho || 'Despacho Directo',
+      tipo: 'despacho_directo',
+      usuarioSolicitante: '',
+      solicitanteNombre: '',
       usuarioDestino: dispatchData.usuarioDestino || '',
       usuarioDespacho: dispatchData.usuarioDespacho || '',
       usuarioAtencion: dispatchData.usuarioDespacho || '',
@@ -1979,11 +2204,6 @@ export const transferService = {
       updated = [docData, ...list];
     }
     saveLocalSolicitudes(updated);
-    cachedSolicitudesList = updated;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updated); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
@@ -1991,19 +2211,19 @@ export const transferService = {
       catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
     }
 
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true });
-        console.log(`[Firebase Sync] Despacho directo ${docData.id} guardado en Firestore.`);
-      } catch (err) {
-        console.warn('Despacho directo guardado localmente (offline):', err);
-      }
-    }
+    queueFirestoreWrite(docData.id, docData);
 
     return docData;
   },
 
   async saveDirectDispatchDraft(draft) {
+    const existingLocal = draft?.id
+      ? getLocalSolicitudes().find(s => s.id === draft.id)
+      : null;
+    if (existingLocal && existingLocal.estado && existingLocal.estado !== 'borrador') {
+      return existingLocal;
+    }
+
     if (!draft || !draft.items || draft.items.length === 0) {
       if (draft && draft.id) {
         await this.deleteEmptyDraft(draft.id);
@@ -2034,7 +2254,9 @@ export const transferService = {
       sucursalDespachadoraId: draft.sucursalDespachadoraId || draft.sucursalOrigenId || '',
       areaDespachadora: draft.areaDespachadora || draft.areaOrigen || '',
       areaDespachadoraId: draft.areaDespachadoraId || draft.areaOrigenId || '',
-      usuarioSolicitante: draft.usuarioSolicitante || draft.sucursalOrigen || 'Despacho Directo',
+      tipo: 'despacho_directo',
+      usuarioSolicitante: '',
+      solicitanteNombre: '',
       usuarioDestino: draft.usuarioDestino || '',
       usuarioDespacho: draft.usuarioDespacho || '',
       esTransferenciaInterna: Boolean(
@@ -2045,6 +2267,7 @@ export const transferService = {
       sinSolicitud: true,
       esDespachoDirecto: true,
       observaciones: draft.observaciones || 'Pedido despachado sin haber sido solicitado',
+      notas: draft.notas || '',
       fecha: draft.fecha || new Date().toISOString(),
       items: (draft.items || []).map(item => ({
         codigo: item.codigo,
@@ -2057,7 +2280,7 @@ export const transferService = {
     };
 
     if (Array.isArray(docData.items) && docData.items.length > 0) {
-      catalogService.saveBatchToCleanCatalog(docData.items);
+      catalogService.saveBatchToCleanCatalog(docData.items).catch(() => {});
     }
 
     const list = getLocalSolicitudes();
@@ -2071,10 +2294,7 @@ export const transferService = {
     }
     saveLocalSolicitudes(updated);
 
-    if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', docData.id), cleanForFirestore(docData), { merge: true })
-        .catch(err => console.warn('Error guardando borrador de despacho directo en Firebase (offline):', err));
-    }
+    queueFirestoreWrite(docData.id, docData);
 
     return docData;
   },
@@ -2082,16 +2302,13 @@ export const transferService = {
   async updateFolio(solicitudId, folio) {
     if (!solicitudId) return;
     const updateData = { folio: folio || '' };
-    
+
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
     saveLocalSolicitudes(list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s));
 
-    if (isFirebaseConfigured) {
-      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true })
-        .catch(err => console.warn('Error actualizando folio en Firebase (offline):', err));
-    }
+    const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+    queueFirestoreWrite(solicitudId, fullPayload);
     return true;
   },
 
@@ -2136,13 +2353,9 @@ export const transferService = {
     };
 
     const updatedList = list.map(s => s.id === solicitudId ? updatedOrder : s);
-    cachedSolicitudesList = updatedList;
     saveLocalSolicitudes(updatedList);
 
-    if (isFirebaseConfigured) {
-      setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(updatedOrder), { merge: true })
-        .catch(err => console.warn('Error sincronizando progreso de recepción en Firebase (offline):', err));
-    }
+    queueFirestoreWrite(solicitudId, updatedOrder);
     return true;
   },
 
@@ -2152,7 +2365,7 @@ export const transferService = {
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
     const nowIso = new Date().toISOString();
-    
+
     let finalItems = itemsActualizados;
     if (!finalItems && existing?.items) {
       finalItems = existing.items.map(it => ({
@@ -2177,13 +2390,11 @@ export const transferService = {
       usuarioRecepcion: usuarioReceptor || existing?.usuarioReceptor || '',
       ...(finalItems ? { items: finalItems } : {})
     };
-    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updateData } : s);
+    const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
+    const updatedList = list.some(s => s.id === solicitudId)
+      ? list.map(s => s.id === solicitudId ? fullPayload : s)
+      : [fullPayload, ...list];
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
@@ -2194,14 +2405,7 @@ export const transferService = {
       }
     }
 
-    if (isFirebaseConfigured) {
-      const fullPayload = existing ? { ...existing, ...updateData } : { id: solicitudId, ...updateData };
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Recepción guardada localmente (offline):', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
     return true;
   },
 
@@ -2284,13 +2488,11 @@ export const transferService = {
 
     const list = getLocalSolicitudes();
     const existing = list.find(s => s.id === solicitudId);
-    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
+    const updatedList = list.some(s => s.id === solicitudId)
+      ? list.map(s => s.id === solicitudId ? fullPayload : s)
+      : [fullPayload, ...list];
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
@@ -2299,14 +2501,7 @@ export const transferService = {
       window.dispatchEvent(new CustomEvent('erp_notifications_updated'));
     }
 
-    if (isFirebaseConfigured) {
-      const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Discrepancias guardadas localmente (offline):', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
     return true;
   },
 
@@ -2345,24 +2540,15 @@ export const transferService = {
     }
 
     const list = getLocalSolicitudes();
-    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    const fullPayload = currentSol ? { ...currentSol, ...updatePayload } : { id: solicitudId, ...updatePayload };
+    const updatedList = list.some(s => s.id === solicitudId)
+      ? list.map(s => s.id === solicitudId ? fullPayload : s)
+      : [fullPayload, ...list];
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
-    if (isFirebaseConfigured) {
-      const fullPayload = currentSol ? { ...currentSol, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Resolución de faltantes guardada localmente (offline):', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
 
     dismissNotification(`tr-falt-${solicitudId}`);
 
@@ -2464,26 +2650,19 @@ export const transferService = {
 
     dismissNotification(`tr-comp-${solicitudId}`);
 
-    const updatedList = list.map(s => s.id === solicitudId ? { ...s, ...updatePayload } : s);
+    const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
+    const updatedList = list.some(s => s.id === solicitudId)
+      ? list.map(s => s.id === solicitudId ? fullPayload : s)
+      : [fullPayload, ...list];
     saveLocalSolicitudes(updatedList);
-    cachedSolicitudesList = updatedList;
-
-    activeSolicitudesCallbacks.forEach(cb => {
-      try { cb(updatedList); } catch (_) {}
-    });
 
     playOrderSuccessSound();
 
-    if (isFirebaseConfigured) {
-      const fullPayload = existing ? { ...existing, ...updatePayload } : { id: solicitudId, ...updatePayload };
-      try {
-        await setDoc(doc(db, 'solicitudes', solicitudId), cleanForFirestore(fullPayload), { merge: true });
-      } catch (err) {
-        console.warn('Recepción de faltantes guardada localmente (offline):', err);
-      }
-    }
+    queueFirestoreWrite(solicitudId, fullPayload);
 
-    window.dispatchEvent(new Event('erp_notifications_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('erp_notifications_updated'));
+    }
 
     return true;
   },
@@ -2495,14 +2674,22 @@ export const transferService = {
     const list = getLocalSolicitudes();
     solicitud = list.find(s => s.id === solicitudId);
 
-    if (!solicitud && isFirebaseConfigured) {
+    if (!solicitud && isFirebaseConfigured && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+      let timeoutId = null;
       try {
-        const snap = await getDoc(doc(db, 'solicitudes', solicitudId));
-        if (snap.exists()) {
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('FIREBASE_GET_TIMEOUT')), 1500);
+        });
+        const snap = await Promise.race([getDoc(doc(db, 'solicitudes', solicitudId)), timeoutPromise]);
+        if (snap && snap.exists()) {
           solicitud = snap.data();
         }
       } catch (e) {
-        console.warn('Error leyendo solicitud para eliminación:', e);
+        if (e?.message !== 'FIREBASE_GET_TIMEOUT') {
+          console.warn('Error leyendo solicitud para eliminación:', e);
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
     }
 
@@ -2517,7 +2704,11 @@ export const transferService = {
       const isAdmin =
         currentUserName === 'administrador' ||
         currentRoles.some(r => adminRoles.includes(r));
-      const solOwner = (solicitud.usuarioSolicitante || '').toLowerCase().trim();
+      const solOwner = (
+        isDirectDispatch(solicitud)
+          ? (solicitud.usuarioDespacho || solicitud.usuarioSolicitante || '')
+          : (solicitud.usuarioSolicitante || '')
+      ).toLowerCase().trim();
       const isOwner = solOwner === currentUserName;
 
       if (!isAdmin && !isOwner) {
@@ -2526,6 +2717,8 @@ export const transferService = {
     }
 
     markSolicitudAsDeleted(solicitudId);
+    inFlightWrites.delete(solicitudId);
+    clearSolicitudPendingSync(solicitudId, Infinity);
 
     const currentList = getLocalSolicitudes();
     const updatedList = currentList.filter(s => s.id !== solicitudId);
@@ -2713,19 +2906,65 @@ export const transferService = {
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   },
 
-  async syncOfflineOrders() {
+  async syncOfflineOrders(options = {}) {
     if (!isFirebaseConfigured) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const force = Boolean(options?.force);
+    const inFlightWindowMs = force ? 1200 : IN_FLIGHT_WRITE_TIMEOUT_MS;
     try {
       const localList = getLocalSolicitudes();
+      const localById = new Map((localList || []).map(s => [s.id, s]));
       const deletedIds = getDeletedSolicitudesIds();
-      const operationalOrders = localList.filter(s => s && s.id && s.estado !== 'borrador' && !deletedIds.has(s.id));
-      for (const order of operationalOrders) {
-        setDoc(doc(db, 'solicitudes', order.id), cleanForFirestore(order), { merge: true })
-          .catch(err => console.warn('[Sync Offline] Error sincronizando orden pendiente:', order.id, err));
-      }
+      const pendingMap = loadPendingSyncMap();
+
+      pendingMap.forEach((_, id) => {
+        if (deletedIds.has(id)) {
+          clearSolicitudPendingSync(id, Infinity);
+          return;
+        }
+        const order = localById.get(id);
+        if (!order) {
+          clearSolicitudPendingSync(id, Infinity);
+          return;
+        }
+        if (order.estado === 'borrador' && (!Array.isArray(order.items) || order.items.length === 0)) {
+          clearSolicitudPendingSync(id, Infinity);
+          return;
+        }
+        if (!isWriteInFlight(id, inFlightWindowMs)) {
+          queueFirestoreWrite(id, order);
+        }
+      });
+
+      ensurePendingSyncRetryLoop();
     } catch (err) {
       console.warn('[Sync Offline] Error en syncOfflineOrders:', err);
     }
+  },
+
+  subscribePendingSync(onUpdate) {
+    if (typeof onUpdate !== 'function') return () => {};
+    activePendingSyncCallbacks.add(onUpdate);
+    try {
+      onUpdate(getOperationalPendingSyncMap(), new Map(loadPendingSyncMap()));
+    } catch (_) {}
+    ensurePendingSyncRetryLoop();
+    return () => {
+      activePendingSyncCallbacks.delete(onUpdate);
+    };
+  },
+
+  getOperationalPendingSyncMap() {
+    return getOperationalPendingSyncMap();
+  },
+
+  getPendingSyncIds() {
+    return Array.from(getOperationalPendingSyncMap().keys());
+  },
+
+  isPendingSync(solicitudId) {
+    if (!solicitudId) return false;
+    return getOperationalPendingSyncMap().has(solicitudId);
   },
 
   canUserViewInSolicitar,
@@ -2734,6 +2973,7 @@ export const transferService = {
   canUserViewInRecibirHistory,
   getTransferParticipants,
   formatOrderRequestedBy,
+  isDirectDispatch,
 
   playNotificationSound,
   playCheckSound,
@@ -2746,10 +2986,28 @@ export const transferService = {
 };
 
 if (typeof window !== 'undefined') {
+  const triggerPendingSync = (force = false) => {
+    transferService.syncOfflineOrders({ force });
+  };
+
   window.addEventListener('online', () => {
     console.log('[ERP Control] Conexión recuperada. Sincronizando órdenes locales...');
-    transferService.syncOfflineOrders();
+    triggerPendingSync(true);
   });
+
+  window.addEventListener('focus', () => triggerPendingSync(false));
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        triggerPendingSync(false);
+      }
+    });
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.connection && typeof navigator.connection.addEventListener === 'function') {
+    navigator.connection.addEventListener('change', () => triggerPendingSync(true));
+  }
 }
 
 export function formatTransferFolio(solicitud) {

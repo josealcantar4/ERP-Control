@@ -17,7 +17,7 @@
 
     <!-- PWA / Web App Capabilities -->
     <meta name="theme-color" content="#ffffff" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -36,11 +36,24 @@
         try {
           var t = localStorage.getItem('erp_theme') || 'sistema';
           var isDark = t === 'oscuro' || t === 'dark' || ((t === 'sistema' || t === 'system') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          var metaTheme = document.querySelector('meta[name="theme-color"]');
+          var metaScheme = document.querySelector('meta[name="color-scheme"]');
+          var metaAppleBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
           if (isDark) {
-            document.documentElement.classList.add('dark');
-            document.documentElement.style.colorScheme = 'dark';
-            var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute('content', '#0b1120');
+            root.classList.add('dark');
+            root.style.colorScheme = 'dark';
+            root.style.backgroundColor = '#0f172a';
+            if (metaTheme) metaTheme.setAttribute('content', '#0f172a');
+            if (metaScheme) metaScheme.setAttribute('content', 'dark');
+            if (metaAppleBar) metaAppleBar.setAttribute('content', 'black-translucent');
+          } else {
+            root.classList.remove('dark');
+            root.style.colorScheme = 'light';
+            root.style.backgroundColor = '#f8fafc';
+            if (metaTheme) metaTheme.setAttribute('content', '#ffffff');
+            if (metaScheme) metaScheme.setAttribute('content', 'light');
+            if (metaAppleBar) metaAppleBar.setAttribute('content', 'default');
           }
         } catch(e) {}
       })();

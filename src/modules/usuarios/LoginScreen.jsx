@@ -30,7 +30,7 @@ export function LoginScreen({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-8">
+    <div className="min-h-dvh bg-slate-50 dark:bg-slate-900 flex flex-col justify-center items-center px-4 py-8 animate-fade-in">
       
       <div className="text-center mb-6 space-y-1.5">
         <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-sky-500 to-teal-600 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20 overflow-hidden">

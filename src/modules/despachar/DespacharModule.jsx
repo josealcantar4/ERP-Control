@@ -21,10 +21,11 @@ import {
   Minus,
   FileText,
   AlertTriangle,
+  AlertCircle,
   History,
   ChevronDown
 } from 'lucide-react';
-import { transferService, formatTransferFolio, canUserDispatch, playCheckSound, playOrderSuccessSound, formatOrderRequestedBy } from '../transferencias';
+import { transferService, formatTransferFolio, canUserDispatch, playCheckSound, playOrderSuccessSound, formatOrderRequestedBy, isDirectDispatch } from '../transferencias';
 import { userService } from '../usuarios/userService';
 import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
@@ -36,7 +37,7 @@ import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 import { DespachoDirectoModal } from './DespachoDirectoModal';
 import { transitionView, QuantityStepper, MarqueeSearchInput, FloatingInput } from '../../shared';
-import { useModalAnimation } from '../../hooks';
+import { useModalAnimation, usePendingSync } from '../../hooks';
 
 export const DespacharModule = React.memo(function DespacharModule({ currentUser, onBack, onRefresh }) {
   const [solicitudes, setSolicitudes] = useState(() => {
@@ -89,8 +90,18 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
   }, [activeTab]);
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const isSubmittingRef = useRef(false);
+  const { pendingSyncIds } = usePendingSync();
 
   const [dispatchFolioDigits, setDispatchFolioDigits] = useState('');
+  const selectedSolicitudRef = useRef(selectedSolicitud);
+  const dispatchFolioDigitsRef = useRef(dispatchFolioDigits);
+  useEffect(() => {
+    selectedSolicitudRef.current = selectedSolicitud;
+  }, [selectedSolicitud]);
+  useEffect(() => {
+    dispatchFolioDigitsRef.current = dispatchFolioDigits;
+  }, [dispatchFolioDigits]);
   const folioDebounceRef = useRef(null);
   const justificationDebounceRef = useRef({});
 
@@ -112,18 +123,22 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     }, 300);
   };
 
-  const flushPendingJustifications = (orderId = selectedSolicitud?.id) => {
+  const flushPendingJustifications = (orderId = (selectedSolicitudRef.current || selectedSolicitud)?.id) => {
     if (!orderId) return;
     const pendingIndexes = Object.keys(justificationDebounceRef.current);
     if (pendingIndexes.length === 0) return;
 
+    const currentSol = selectedSolicitudRef.current || selectedSolicitud;
     pendingIndexes.forEach((idxStr) => {
       clearTimeout(justificationDebounceRef.current[idxStr]);
       const idx = Number(idxStr);
-      const it = selectedSolicitud?.items?.[idx];
+      const it = currentSol?.items?.[idx];
       if (it) {
-        const qtyDesp = it.cantidadDespachada !== undefined ? it.cantidadDespachada : it.cantidadSolicitada;
-        transferService.updateItemDespachoQty(orderId, idx, qtyDesp, it.motivoAjusteDespacho, selectedSolicitud.items);
+        const qtyDesp = it.cantidadDespachada !== undefined
+          ? it.cantidadDespachada
+          : (it.esExtra ? Number(it.cantidad || 1) : it.cantidadSolicitada);
+        const motivoVal = it.motivoAjusteDespacho !== undefined ? it.motivoAjusteDespacho : (it.motivo || '');
+        transferService.updateItemDespachoQty(orderId, idx, qtyDesp, motivoVal, currentSol.items);
       }
     });
     justificationDebounceRef.current = {};
@@ -147,7 +162,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
       setSelectedSolicitud(latestSol);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
       if (latestSol) {
-        const initialDigits = latestSol.folio ? String(latestSol.folio).replace(/^TR/i, '') : '';
+        const initialDigits = latestSol.folio ? String(latestSol.folio).replace(/^TR/i, '').replace(/\D/g, '').slice(0, 12) : '';
         setDispatchFolioDigits(initialDigits);
         if (latestSol.id) {
           sessionStorage.setItem('erp_despachar_solicitud_id', latestSol.id);
@@ -163,6 +178,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
   const [extraResults, setExtraResults] = useState([]);
   const [selectedExtraItem, setSelectedExtraItem] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasSearchedExtra, setHasSearchedExtra] = useState(false);
 
   const [dialog, setDialog] = useState({
     isOpen: false,
@@ -273,18 +289,25 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                 items: (refreshed.items || []).map((it, idx) => {
                   const localIt = prev.items?.[idx];
                   if (!localIt) return it;
+                  if (it.codigo && localIt.codigo && String(it.codigo) !== String(localIt.codigo)) {
+                    return it;
+                  }
+                  if (Boolean(it.esExtra) !== Boolean(localIt.esExtra)) {
+                    return it;
+                  }
                   return {
                     ...it,
                     atendido: localIt.atendido !== undefined ? localIt.atendido : it.atendido,
                     cantidadDespachada: localIt.cantidadDespachada !== undefined ? localIt.cantidadDespachada : it.cantidadDespachada,
-                    motivoAjusteDespacho: localIt.motivoAjusteDespacho !== undefined ? localIt.motivoAjusteDespacho : it.motivoAjusteDespacho
+                    motivoAjusteDespacho: localIt.motivoAjusteDespacho !== undefined ? localIt.motivoAjusteDespacho : it.motivoAjusteDespacho,
+                    motivo: localIt.motivo !== undefined ? localIt.motivo : it.motivo
                   };
                 })
               };
             });
             setDispatchFolioDigits(prev => {
               if (prev) return prev;
-              return refreshed.folio ? String(refreshed.folio).replace(/^TR/i, '') : '';
+              return refreshed.folio ? String(refreshed.folio).replace(/^TR/i, '').replace(/\D/g, '').slice(0, 12) : '';
             });
           }
         } else if (!filtered.some(s => s.id === targetId)) {
@@ -298,7 +321,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
 
   const handleDeleteDraft = (e, sol) => {
     e.stopPropagation();
-    const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
+    const canDelete = isAdmin || (isDirectDispatch(sol) ? sol.usuarioDespacho === currentUser?.username : sol.usuarioSolicitante === currentUser?.username);
 
     if (!canDelete) {
       setDialog({
@@ -350,7 +373,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
       s.estado === 'recibida_incompleta' ||
       (s.reporteFaltantes && s.reporteFaltantes.length > 0 && !s.resolucionFaltantes && s.estado !== 'cerrada_con_faltantes' && s.estado !== 'faltantes_despachados')
   );
-  const inProgressDrafts = solicitudes.filter(s => s.estado === 'borrador');
+  const inProgressDrafts = solicitudes.filter(s => s.estado === 'borrador' && !isDirectDispatch(s));
   const completedSolicitudes = solicitudes.filter(
     s =>
       s.estado === 'completada' ||
@@ -420,8 +443,9 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
   }, [activeTab, hasMoreHistory, isLoadingMoreHistory, handleLoadMoreHistory]);
 
   const handleConfirmFaltantesResolution = async (resolutionData) => {
-    if (!selectedFaltanteSolicitud) return;
+    if (!selectedFaltanteSolicitud || isSubmittingRef.current) return;
 
+    isSubmittingRef.current = true;
     setIsProcessing(true);
     try {
       await transferService.resolveReporteFaltantes(selectedFaltanteSolicitud.id, {
@@ -455,6 +479,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
         onConfirm: closeDialog
       });
     } finally {
+      isSubmittingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -465,6 +490,10 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     const willBeChecked = !item?.atendido;
     if (willBeChecked) {
       playCheckSound();
+    }
+    if (justificationDebounceRef.current[index]) {
+      clearTimeout(justificationDebounceRef.current[index]);
+      delete justificationDebounceRef.current[index];
     }
 
     const updatedItems = (selectedSolicitud.items || []).map((it, idx) => {
@@ -491,6 +520,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     setIsQtyModalOpen(false);
     setExtraQuery('');
     setExtraResults([]);
+    setHasSearchedExtra(false);
     setSelectedExtraItem(null);
   };
 
@@ -500,10 +530,12 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     
     if (!query) {
       setExtraResults([]);
+      setHasSearchedExtra(false);
       return;
     }
 
     setIsSearching(true);
+    setHasSearchedExtra(false);
     try {
       const exactItem = await catalogService.findByBarcode(query);
       if (exactItem) {
@@ -514,9 +546,11 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
 
       const results = await catalogService.searchMedicines(query);
       setExtraResults(results || []);
+      setHasSearchedExtra(true);
     } catch (err) {
       console.error('Error al buscar producto:', err);
       setExtraResults([]);
+      setHasSearchedExtra(true);
     } finally {
       setIsSearching(false);
     }
@@ -526,6 +560,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     setSelectedExtraItem(item);
     setExtraQuery('');
     setExtraResults([]);
+    setHasSearchedExtra(false);
     setIsExtraModalOpen(false);
     setIsQtyModalOpen(true);
   };
@@ -593,11 +628,15 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
         closeDialog();
         setIsProcessing(true);
         try {
+          Object.keys(justificationDebounceRef.current).forEach((k) => {
+            clearTimeout(justificationDebounceRef.current[k]);
+          });
+          justificationDebounceRef.current = {};
           const updatedItems = (selectedSolicitud.items || []).filter((_, i) => i !== index);
           const updatedSol = { ...selectedSolicitud, items: updatedItems };
           setSelectedSolicitud(updatedSol);
           setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
-          await transferService.removeExtraItem(selectedSolicitud.id, index);
+          await transferService.removeExtraItem(selectedSolicitud.id, index, updatedItems);
         } finally {
           setIsProcessing(false);
         }
@@ -614,18 +653,26 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     }
     const item = selectedSolicitud.items?.[index];
     if (!item || !item.esExtra) return;
+    if (justificationDebounceRef.current[index]) {
+      clearTimeout(justificationDebounceRef.current[index]);
+      delete justificationDebounceRef.current[index];
+    }
     const updatedItems = [...selectedSolicitud.items];
     updatedItems[index] = { ...item, cantidadDespachada: newQty };
     const updatedSol = { ...selectedSolicitud, items: updatedItems };
     setSelectedSolicitud(updatedSol);
     setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
-    await transferService.updateExtraItemQty(selectedSolicitud.id, index, newQty);
+    await transferService.updateExtraItemQty(selectedSolicitud.id, index, newQty, updatedItems);
   };
 
   const handleUpdateRequestedItemQty = async (index, newQty) => {
     if (!selectedSolicitud) return;
     const item = selectedSolicitud.items?.[index];
     if (!item) return;
+    if (justificationDebounceRef.current[index]) {
+      clearTimeout(justificationDebounceRef.current[index]);
+      delete justificationDebounceRef.current[index];
+    }
     const maxQty = item.cantidadSolicitada !== undefined ? Number(item.cantidadSolicitada) : 999999;
     const validQty = Math.max(0, Math.min(maxQty, Number(newQty)));
 
@@ -652,13 +699,16 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     const updatedItems = [...selectedSolicitud.items];
     updatedItems[index] = {
       ...item,
-      motivoAjusteDespacho: motivo
+      motivoAjusteDespacho: motivo,
+      motivo
     };
     const updatedSol = { ...selectedSolicitud, items: updatedItems };
     setSelectedSolicitud(updatedSol);
     setSolicitudes(prev => prev.map(s => s.id === updatedSol.id ? updatedSol : s));
 
-    const qtyDesp = item.cantidadDespachada !== undefined ? item.cantidadDespachada : item.cantidadSolicitada;
+    const qtyDesp = item.cantidadDespachada !== undefined
+      ? item.cantidadDespachada
+      : (item.esExtra ? Number(item.cantidad || 1) : item.cantidadSolicitada);
     const currentOrderId = selectedSolicitud.id;
 
     if (justificationDebounceRef.current[index]) {
@@ -678,8 +728,11 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     if (!selectedSolicitud) return;
     const item = selectedSolicitud.items?.[index];
     if (!item) return;
-    const qtyDesp = item.cantidadDespachada !== undefined ? item.cantidadDespachada : item.cantidadSolicitada;
-    transferService.updateItemDespachoQty(selectedSolicitud.id, index, qtyDesp, item.motivoAjusteDespacho, selectedSolicitud.items);
+    const qtyDesp = item.cantidadDespachada !== undefined
+      ? item.cantidadDespachada
+      : (item.esExtra ? Number(item.cantidad || 1) : item.cantidadSolicitada);
+    const motivoVal = item.motivoAjusteDespacho !== undefined ? item.motivoAjusteDespacho : (item.motivo || '');
+    transferService.updateItemDespachoQty(selectedSolicitud.id, index, qtyDesp, motivoVal, selectedSolicitud.items);
   };
 
   const handleExtraScanDetected = async (barcode, itemObject) => {
@@ -697,22 +750,12 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
       } else {
         setDialog({
           isOpen: true,
-          type: 'prompt',
-          title: 'Producto Extra no encontrado',
-          message: `El código "${cleanBarcode}" no se encuentra registrado.\nEscribe el nombre del producto extra:`,
-          inputPlaceholder: 'Ej. Solución Fisiológica 500ml',
-          inputValue: '',
-          confirmText: 'Seleccionar',
-          cancelText: 'Cancelar',
-          onConfirm: async () => {
-            const desc = dialog.inputValue?.trim();
-            closeDialog();
-            if (desc) {
-              const newItem = { codigo: cleanBarcode, descripcion: desc };
-              handleSelectExtraItem(newItem);
-              await catalogService.saveToCleanCatalog(cleanBarcode, desc);
-            }
-          },
+          type: 'alert',
+          variant: 'danger',
+          title: 'Producto no encontrado',
+          message: `El código "${cleanBarcode}" no se encuentra en el catálogo.\n\nComunícate al departamento de Sistemas para recibir una actualización de catálogo.`,
+          confirmText: 'Entendido',
+          onConfirm: closeDialog,
           onCancel: closeDialog
         });
       }
@@ -757,21 +800,54 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
     const allChecked = uninspectedItems.length === 0;
 
     const executeComplete = async () => {
+      if (isSubmittingRef.current) return;
+      isSubmittingRef.current = true;
       closeDialog();
+
+      const currentSol = selectedSolicitudRef.current || selectedSolicitud;
+      if (
+        !currentSol ||
+        currentSol.estado === 'recibida' ||
+        currentSol.estado === 'completada' ||
+        currentSol.estado === 'cerrada_con_faltantes'
+      ) {
+        isSubmittingRef.current = false;
+        return;
+      }
+
+      if (folioDebounceRef.current) {
+        clearTimeout(folioDebounceRef.current);
+        folioDebounceRef.current = null;
+      }
+      flushPendingJustifications(currentSol.id);
+
+      const liveDigits = (dispatchFolioDigitsRef.current || dispatchFolioDigits || '').trim();
+      const finalFolio = liveDigits ? `TR${liveDigits}` : (currentSol.folio || fullFolio);
+
       setIsProcessing(true);
-      const currentSol = selectedSolicitud;
       try {
+        sessionStorage.removeItem('erp_despachar_solicitud_id');
+
         const itemsFinal = (currentSol.items || []).map(item => {
           const despQty = item.cantidadDespachada !== undefined
             ? Number(item.cantidadDespachada)
             : (item.esExtra ? Number(item.cantidad || 1) : Number(item.cantidadSolicitada ?? 1));
-          const motivoClean = item.motivoAjusteDespacho ? String(item.motivoAjusteDespacho).trim() : (item.motivo ? String(item.motivo).trim() : '');
+          const motivoClean = item.motivoAjusteDespacho
+            ? String(item.motivoAjusteDespacho).trim()
+            : (item.motivo ? String(item.motivo).trim() : '');
 
-          return {
+          const nextItem = {
             ...item,
-            cantidadDespachada: despQty,
-            ...(motivoClean ? { motivoAjusteDespacho: motivoClean, motivo: motivoClean } : {})
+            cantidadDespachada: despQty
           };
+          if (motivoClean) {
+            nextItem.motivoAjusteDespacho = motivoClean;
+            nextItem.motivo = motivoClean;
+          } else {
+            delete nextItem.motivoAjusteDespacho;
+            delete nextItem.motivo;
+          }
+          return nextItem;
         });
 
         const ajustesDespacho = itemsFinal
@@ -786,18 +862,36 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
             motivoAjusteDespacho: i.motivoAjusteDespacho || i.motivo || ''
           }));
 
-        await transferService.completeSolicitud(currentSol.id, fullFolio, {
+        await transferService.completeSolicitud(currentSol.id, finalFolio, {
           items: itemsFinal,
           ajustesDespacho,
           usuarioDespachador: currentUser?.username || 'despacho'
         });
-        playOrderSuccessSound();
 
-        setDetailSolicitud({ ...currentSol, estado: 'completada', folio: fullFolio, items: itemsFinal, ajustesDespacho });
+        setDetailSolicitud({
+          ...currentSol,
+          estado: 'completada',
+          folio: finalFolio,
+          fechaDespacho: new Date().toISOString(),
+          usuarioDespacho: currentUser?.username || 'despacho',
+          items: itemsFinal,
+          ajustesDespacho
+        });
         setSelectedSolicitud(null);
         setDispatchFolioDigits('');
-        sessionStorage.removeItem('erp_despachar_solicitud_id');
+      } catch (err) {
+        console.error('Error al completar despacho:', err);
+        setDialog({
+          isOpen: true,
+          type: 'alert',
+          title: 'Error al despachar',
+          message: err.message || 'No se pudo completar el despacho localmente.',
+          variant: 'danger',
+          confirmText: 'Entendido',
+          onConfirm: closeDialog
+        });
       } finally {
+        isSubmittingRef.current = false;
         setIsProcessing(false);
       }
     };
@@ -837,9 +931,10 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                   <div key={idx} className="py-2 first:pt-1 last:pb-1 flex items-center justify-between gap-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-slate-800 truncate block text-xs" title={item.descripcion}>
-                          {item.descripcion}
-                        </span>
+                        <MarqueeText
+                          text={item.descripcion}
+                          className="font-bold text-slate-800 text-xs"
+                        />
                         {item.esExtra && (
                           <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-purple-100 text-purple-700 uppercase">
                             Extra
@@ -948,9 +1043,10 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
         )}
 
         {!selectedSolicitud && activeTab === 'historial' && (
-          <div className="relative pt-0.5">
+          <div className="relative pt-1">
             <MarqueeSearchInput
-              placeholder="Buscar en historial por folio, sucursal, producto o solicitante..."
+              label="Buscar en historial"
+              placeholder="Buscar por folio, sucursal, producto o solicitante..."
               value={historySearch}
               onChange={(e) => handleSearchChange(e.target.value)}
               onClear={() => handleSearchChange('')}
@@ -1012,6 +1108,15 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                           <AlertTriangle className="w-3 h-3" />
                           Faltantes pendientes por despachar
                         </span>
+                        {pendingSyncIds.has(sol.id) && (
+                          <span
+                            title="En cola para sincronizar al recuperar conexión"
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                          >
+                            <Clock className="w-2.5 h-2.5 shrink-0" />
+                            <span>En cola</span>
+                          </span>
+                        )}
                       </div>
                       <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 uppercase">
                         Sucursal: {sol.sucursalOrigen}
@@ -1047,15 +1152,24 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                       })}
                     </ul>
 
-                    {(sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion) && (
-                      <div className="p-2.5 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 flex items-start gap-1.5">
-                        <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <strong className="block text-[11px]">Nota general de sucursal:</strong>
-                          <p className="italic">&ldquo;{sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion}&rdquo;</p>
+                    {(() => {
+                      const rawObs = sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion;
+                      const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                      if (!obs) return null;
+                      return (
+                        <div className="flex items-start gap-1.5 text-xs pt-0.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                          <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                            <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                              Nota general de sucursal:
+                            </span>
+                            <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                              {obs}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="mt-1 pt-2.5 border-t border-red-200/70 flex items-center justify-between gap-2 flex-wrap">
                       <div className="text-[11px] text-red-700 italic">
@@ -1124,7 +1238,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                       className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group ios-card-hover"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
+                        <div className="space-y-1 min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-base font-extrabold text-blue-700 font-mono">
                               {sol.folio ? `${sol.folio} — ${sol.sucursalOrigen}` : `${sol.sucursalOrigen} • Ref: ${formatTransferFolio(sol)}`}
@@ -1137,16 +1251,39 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                             <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30">
                               {sol.estado === 'en_despacho' ? 'En Surtido' : 'Nueva Solicitud'}
                             </span>
+                            {pendingSyncIds.has(sol.id) && (
+                              <span
+                                title="En cola para sincronizar al recuperar conexión"
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                              >
+                                <Clock className="w-2.5 h-2.5 shrink-0" />
+                                <span>En cola</span>
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-slate-500 font-medium">
                             {formatOrderRequestedBy(sol, usersList)}
                           </p>
-                          {(sol.observaciones || sol.motivo || sol.notas) && (
-                            <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
-                              <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                              <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
-                            </div>
-                          )}
+                          {(() => {
+                            const rawObs = sol.observaciones || sol.motivo || sol.notas;
+                            const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                            const isDirect = Boolean(sol.sinSolicitud || sol.esDespachoDirecto);
+                            const isGeneric = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                            if (!obs || isGeneric) return null;
+                            return (
+                              <div className="flex items-start gap-1.5 text-xs mt-1">
+                                <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                                <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                                  <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                    Observaciones:
+                                  </span>
+                                  <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                                    {obs}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <div className="w-8 h-8 rounded-full bg-blue-50 dark:bg-transparent text-blue-600 dark:text-blue-400 border border-transparent dark:border-blue-500/30 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
@@ -1211,7 +1348,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
             ) : (
               <div className="grid grid-cols-1 gap-2.5">
                 {inProgressDrafts.map((sol) => {
-                  const canDelete = isAdmin || sol.usuarioSolicitante === currentUser?.username;
+                  const canDelete = isAdmin || (isDirectDispatch(sol) ? sol.usuarioDespacho === currentUser?.username : sol.usuarioSolicitante === currentUser?.username);
 
                   return (
                     <div
@@ -1337,23 +1474,46 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                                   </span>
                                 </>
                               )}
-                              {sol.usuarioSolicitante && (
+                              {sol.usuarioSolicitante && !isDirectDispatch(sol) && (
                                 <>
                                   <span className="shrink-0">&bull;</span>
                                   <span className="whitespace-nowrap">{formatOrderRequestedBy(sol, usersList)}</span>
                                 </>
                               )}
                             </div>
-                            {(sol.observaciones || sol.motivo || sol.notas) && (
-                              <div className="flex items-start gap-1.5 text-[11px] text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1.5">
-                                <FileText className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                                <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
-                              </div>
-                            )}
+                            {(() => {
+                              const rawObs = sol.observaciones || sol.motivo || sol.notas;
+                              const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                              const isDirect = Boolean(sol.sinSolicitud || sol.esDespachoDirecto);
+                              const isGeneric = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                              if (!obs || isGeneric) return null;
+                              return (
+                                <div className="flex items-start gap-1.5 text-xs mt-1.5">
+                                  <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                                  <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                                    <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                      Observaciones:
+                                    </span>
+                                    <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                                      {obs}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                          {pendingSyncIds.has(sol.id) && (
+                            <span
+                              title="En cola para sincronizar al recuperar conexión"
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>En cola</span>
+                            </span>
+                          )}
                           <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full whitespace-nowrap ${
                             (sol.estado === 'recibida_incompleta' || (sol.reporteFaltantes?.length > 0 && !sol.resolucionFaltantes && sol.estado !== 'cerrada_con_faltantes' && sol.estado !== 'faltantes_despachados'))
                               ? 'bg-red-50 dark:bg-transparent text-red-700 dark:text-red-400 border border-red-200 dark:border-red-500/30'
@@ -1425,15 +1585,46 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
           <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1 space-y-1">
-                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block">
-                  Orden de Despacho & Surtido
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">
+                    Orden de Despacho & Surtido
+                  </span>
+                  {pendingSyncIds.has(selectedSolicitud.id) && (
+                    <span
+                      title="Cambios en cola para sincronizar al recuperar conexión"
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 inline-flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Clock className="w-2.5 h-2.5 shrink-0" />
+                      <span>En cola</span>
+                    </span>
+                  )}
+                </div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 font-mono break-all leading-tight">
                   {selectedSolicitud.folio ? `${selectedSolicitud.folio} - ${selectedSolicitud.sucursalOrigen}` : selectedSolicitud.sucursalOrigen}
                 </h2>
                 <p className="text-xs text-slate-500">
                   Solicitado por: <strong className="text-slate-800">{selectedSolicitud.usuarioSolicitante || 'Sucursal'}</strong>
                 </p>
+                {(() => {
+                  const rawObs = selectedSolicitud.observaciones || selectedSolicitud.motivo || selectedSolicitud.notas;
+                  const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                  const isDirect = Boolean(selectedSolicitud.sinSolicitud || selectedSolicitud.esDespachoDirecto);
+                  const isGeneric = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                  if (!obs || isGeneric) return null;
+                  return (
+                    <div className="flex items-start gap-1.5 text-xs pt-1">
+                      <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                      <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                        <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                          Observaciones del Pedido:
+                        </span>
+                        <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                          {obs}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <button
@@ -1462,6 +1653,8 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                 <input
                   type="text"
                   inputMode="numeric"
+                  pattern="[0-9]*"
+                  autoComplete="off"
                   value={dispatchFolioDigits}
                   placeholder="000123"
                   maxLength={12}
@@ -1539,15 +1732,14 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4
-                            className={`text-sm font-semibold truncate ${
+                          <MarqueeText
+                            text={item.descripcion}
+                            className={`text-sm font-semibold ${
                               item.atendido
                                 ? 'line-through text-slate-400'
                                 : 'text-slate-900 font-bold'
                             }`}
-                          >
-                            {item.descripcion}
-                          </h4>
+                          />
                           {isExtra && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 shrink-0">
                               EXTRA
@@ -1593,18 +1785,22 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                     </div>
                   </div>
 
-                  {hasFaltante && (
+                  {(hasFaltante || isExtra) && (
                     <div
                       className="mt-3 pt-3 border-t border-slate-200 sm:pl-9 transition-opacity duration-200"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <FloatingInput
-                        label="Motivo del ajuste / faltante (Opcional)"
-                        value={item.motivoAjusteDespacho || ''}
+                        label={isExtra ? 'Motivo del producto extra (Opcional)' : 'Motivo del ajuste / faltante (Opcional)'}
+                        value={item.motivoAjusteDespacho ?? item.motivo ?? ''}
                         onChange={(e) => handleUpdateItemJustification(index, e.target.value)}
                         onFocus={handleInputScrollIntoView}
                         onBlur={() => handleJustificationBlur(index)}
-                        placeholder="Ej. Producto dañado en almacén o falta de stock temporal"
+                        placeholder={
+                          isExtra
+                            ? 'Ej. Envío adicional, sustitución o apoyo a sucursal...'
+                            : 'Ej. Producto dañado en almacén o falta de stock temporal'
+                        }
                         icon={FileText}
                       />
                     </div>
@@ -1617,11 +1813,13 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
           {(selectedSolicitud.estado === 'enviada' || selectedSolicitud.estado === 'en_despacho') ? (
             <div className="pt-2">
               <button
+                type="button"
                 onClick={handleFinalizeDispatch}
-                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white font-bold text-sm rounded-3xl shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                disabled={isProcessing}
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-60 text-white font-bold text-sm rounded-3xl shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
                 <Truck className="w-5 h-5" />
-                <span>Finalizar y Enviar Caja a Sucursal</span>
+                <span>Finalizar y Enviar</span>
               </button>
             </div>
           ) : (
@@ -1650,9 +1848,13 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
         onClose={resetExtraModal}
         onOpenScanner={() => setIsScannerOpen(true)}
         extraQuery={extraQuery}
-        setExtraQuery={setExtraQuery}
+        setExtraQuery={(val) => {
+          setExtraQuery(val);
+          if (hasSearchedExtra) setHasSearchedExtra(false);
+        }}
         handleExecuteSearch={handleExecuteSearch}
         isSearching={isSearching}
+        hasSearchedExtra={hasSearchedExtra}
         extraResults={extraResults}
         onSelectExtraItem={handleSelectExtraItem}
       />
@@ -1723,7 +1925,7 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
             type: 'alert',
             variant: 'success',
             title: 'Despacho Realizado',
-            message: `El pedido con folio ${newDispatch.folio} hacia ${newDispatch.sucursalOrigen} ha sido despachado exitosamente con la observación "Pedido despachado sin haber sido solicitado".`,
+            message: `El pedido con folio ${newDispatch.folio} hacia ${newDispatch.sucursalReceptora || newDispatch.sucursalDestino || newDispatch.sucursalOrigen} ha sido despachado exitosamente con la observación "Pedido despachado sin haber sido solicitado".`,
             confirmText: 'Aceptar',
             onConfirm: closeDialog
           });
@@ -1742,6 +1944,7 @@ function ExtraProductModal({
   setExtraQuery,
   handleExecuteSearch,
   isSearching,
+  hasSearchedExtra,
   extraResults,
   onSelectExtraItem
 }) {
@@ -1812,7 +2015,7 @@ function ExtraProductModal({
             </button>
           </form>
 
-          {extraResults.length > 0 && (
+          {extraResults.length > 0 ? (
             <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-2xl">
               {extraResults.map((med) => (
                 <div
@@ -1832,7 +2035,16 @@ function ExtraProductModal({
                 </div>
               ))}
             </div>
-          )}
+          ) : hasSearchedExtra && !isSearching ? (
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200/80 text-center text-xs text-amber-900 space-y-1.5 animate-fade-in">
+              <p className="font-semibold">
+                No se encontraron productos con &quot;{extraQuery.trim()}&quot;
+              </p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Comunícate al departamento de Sistemas para recibir una actualización de catálogo.
+              </p>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

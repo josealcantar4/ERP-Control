@@ -8,8 +8,7 @@ export function MarqueeText({
   text = '',
   className = '',
   containerClassName = '',
-  speed = 40,
-  threshold = 28
+  speed = 32
 }) {
   const containerRef = useRef(null);
   const textRef = useRef(null);
@@ -17,13 +16,16 @@ export function MarqueeText({
   const [distance, setDistance] = useState(0);
 
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
     const checkOverflow = () => {
       if (containerRef.current && textRef.current) {
         const cWidth = containerRef.current.clientWidth;
         const tWidth = textRef.current.scrollWidth;
-        if (tWidth > cWidth + 4) {
+        if (cWidth > 0 && tWidth > cWidth + 4) {
           setIsOverflowing(true);
-          setDistance(tWidth - cWidth);
+          setDistance(Math.ceil(tWidth - cWidth + 12));
         } else {
           setIsOverflowing(false);
           setDistance(0);
@@ -32,47 +34,59 @@ export function MarqueeText({
     };
 
     checkOverflow();
-    window.addEventListener('resize', checkOverflow);
-    return () => window.removeEventListener('resize', checkOverflow);
-  }, [text]);
 
-  const duration = Math.max(3, Math.round(distance / speed) + 2);
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(checkOverflow);
+      resizeObserver.observe(el);
+    } else {
+      window.addEventListener('resize', checkOverflow);
+    }
 
-  if (!isOverflowing) {
-    return (
-      <span ref={containerRef} className={`truncate inline-block max-w-full ${className}`}>
-        <span ref={textRef}>{text}</span>
-      </span>
-    );
-  }
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(checkOverflow).catch(() => {});
+    }
+
+    const t1 = setTimeout(checkOverflow, 60);
+    const t2 = setTimeout(checkOverflow, 250);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener('resize', checkOverflow);
+      }
+    };
+  }, [text, className]);
+
+  const duration = Math.max(3.2, Number((distance / speed + 2).toFixed(2)));
+  const sanitizedClassName = className
+    .replace(/\b(block|inline-block|truncate)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   return (
     <div
       ref={containerRef}
-      className={`overflow-hidden whitespace-nowrap relative group select-text max-w-full ${containerClassName}`}
+      className={`max-w-full overflow-hidden whitespace-nowrap relative select-text ${containerClassName}`}
       title={text}
     >
-      <div
+      <span
         ref={textRef}
-        className={`inline-block whitespace-nowrap group-hover:animate-marquee transition-transform duration-300 ${className}`}
-        style={{
-          '--marquee-dist': `-${distance + 12}px`,
-          animation: `marqueeBounce ${duration}s ease-in-out infinite alternate`
-        }}
+        className={`block w-max whitespace-nowrap ${sanitizedClassName}`}
+        style={
+          isOverflowing && distance > 0
+            ? {
+                '--marquee-dist': `-${distance}px`,
+                animation: `marqueeBounce ${duration}s ease-in-out infinite alternate`
+              }
+            : undefined
+        }
       >
         {text}
-      </div>
-
-      <style jsx="true">{`
-        @keyframes marqueeBounce {
-          0%, 15% {
-            transform: translateX(0);
-          }
-          85%, 100% {
-            transform: translateX(var(--marquee-dist, -40px));
-          }
-        }
-      `}</style>
+      </span>
     </div>
   );
 }

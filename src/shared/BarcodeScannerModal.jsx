@@ -20,8 +20,7 @@ import {
   Play
 } from 'lucide-react';
 import { catalogService } from '../modules/catalogo';
-import { useBodyScrollLock, useModalAnimation } from '../hooks';
-import { AutoScrollInput } from './AutoScrollInput';
+import { useModalAnimation } from '../hooks';
 import { MarqueeText } from './MarqueeText';
 import { MarqueeSearchInput } from './MarqueeSearchInput';
 
@@ -209,156 +208,585 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
   const [activeMode, setActiveMode] = useState('camera');
   const activeModeRef = useRef('camera');
   const onDetectedRef = useRef(onDetected);
-  onDetectedRef.current = onDetected;
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   const lastScanTimeRef = useRef(0);
   const searchInputRef = useRef(null);
   const isPausedRef = useRef(isPaused);
-  isPausedRef.current = isPaused;
   const isInternalPausedRef = useRef(false);
+  const isOpenRef = useRef(isOpen);
+  const isClosingRef = useRef(isClosing);
   const [scannerError, setScannerError] = useState('');
   const [isStarting, setIsStarting] = useState(true);
   const [isCameraSuspended, setIsCameraSuspended] = useState(false);
+  const isCameraSuspendedRef = useRef(isCameraSuspended);
   const [scannerSessionKey, setScannerSessionKey] = useState(0);
   const [zoomFeedback, setZoomFeedback] = useState({ visible: false, level: 1.5 });
   const zoomFeedbackTimeoutRef = useRef(null);
   const inactivityTimerRef = useRef(null);
+  const resumeScanTimerRef = useRef(null);
+  const resumeTorchTimerRef = useRef(null);
+  const detectionRecoveryTimerRef = useRef(null);
+  const focusTimerRef = useRef(null);
+  const torchQueueRef = useRef(Promise.resolve());
+  const autoSuspendedForTorchRef = useRef(false);
   const scannerRef = useRef(null);
   const isSwitchingCameraRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const activeSessionRef = useRef(0);
+  const stopPromiseRef = useRef(null);
+  const mountedRef = useRef(true);
+  const trackedStreamsRef = useRef(new Set());
   const activeStreamRef = useRef(null);
   const activeTrackRef = useRef(null);
+  const prevPausedRef = useRef(isPaused);
   const [availableCameras, setAvailableCameras] = useState([]);
   const [activeCameraId, setActiveCameraId] = useState(null);
   const [cameraLabel, setCameraLabel] = useState('1x Principal');
   const [isTorchOn, setIsTorchOn] = useState(() => getStoredCameraSettings().torch);
+  const isTorchOnRef = useRef(isTorchOn);
+  const [torchNotice, setTorchNotice] = useState('');
+
+  useEffect(() => {
+    onDetectedRef.current = onDetected;
+    onCloseRef.current = onClose;
+    isPausedRef.current = isPaused;
+    isOpenRef.current = isOpen;
+    isClosingRef.current = isClosing;
+    isCameraSuspendedRef.current = isCameraSuspended;
+    isTorchOnRef.current = isTorchOn;
+  }, [onDetected, onClose, isPaused, isOpen, isClosing, isCameraSuspended, isTorchOn]);
+  const torchNoticeTimerRef = useRef(null);
   const [zoomLevel, setZoomLevel] = useState(() => getStoredCameraSettings().zoom);
   const [isFocusing, setIsFocusing] = useState(false);
   const [focusIndicator, setFocusIndicator] = useState({ x: '50%', y: '50%', visible: false });
   const [cameraCapabilities, setCameraCapabilities] = useState({
     hasTorch: false,
     hasZoom: false,
+    hasContinuousFocus: false,
     minZoom: 1,
     maxZoom: 4
   });
+
+  const detachVideoSurface = useCallback((videoElem) => {
+    if (!videoElem) return;
+    try {
+      videoElem.onabort = null;
+      videoElem.onerror = null;
+    } catch {}
+    try {
+      if (!videoElem.paused) {
+        videoElem.pause();
+      }
+    } catch {}
+    try {
+      videoElem.srcObject = null;
+      videoElem.removeAttribute('src');
+    } catch {}
+  }, []);
+
+  const stopMediaStreamTracks = useCallback((stream) => {
+    if (!stream || typeof stream.getTracks !== 'function') return;
+    try {
+      stream.getTracks().forEach((t) => {
+        try { t.onended = null; } catch {}
+        try {
+          if (t.readyState !== 'ended') {
+            t.stop();
+          }
+        } catch {}
+      });
+    } catch {}
+    trackedStreamsRef.current.delete(stream);
+  }, []);
+
+  const enumerateVideoCameras = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return cachedCameraDevices || [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = (devices || [])
+        .filter((d) => d.kind === 'videoinput' && d.deviceId)
+        .map((d, idx) => ({
+          id: d.deviceId,
+          label: d.label || `Cámara ${idx + 1}`
+        }));
+
+      if (videoDevices.length > 0 && devices.some((d) => d.kind === 'videoinput' && Boolean(d.label))) {
+        cachedCameraDevices = videoDevices;
+      }
+      return videoDevices;
+    } catch (err) {
+      console.warn('Error enumerando cámaras sin abrir stream:', err);
+      return cachedCameraDevices || [];
+    }
+  }, []);
 
   const getVideoTrack = useCallback(() => {
     if (activeTrackRef.current && activeTrackRef.current.readyState === 'live') {
       return activeTrackRef.current;
     }
     const videoElem = document.querySelector('#barcode-camera-view video');
-    if (videoElem && videoElem.srcObject) {
+    if (videoElem && videoElem.srcObject && typeof videoElem.srcObject.getVideoTracks === 'function') {
       const tracks = videoElem.srcObject.getVideoTracks();
       if (tracks && tracks.length > 0) {
         activeTrackRef.current = tracks[0];
         activeStreamRef.current = videoElem.srcObject;
+        trackedStreamsRef.current.add(videoElem.srcObject);
         return tracks[0];
       }
     }
     return null;
   }, []);
 
-  const suspendCameraDueInactivity = useCallback(async () => {
-    setIsCameraSuspended(true);
-    setIsTorchOn(false);
-    const track = activeTrackRef.current;
-    if (track) {
-      try {
-        if (track.applyConstraints) await track.applyConstraints({ advanced: [{ torch: false }] });
-      } catch (_) {}
-      try { track.stop(); } catch (_) {}
+  const forceStopHardware = useCallback(async (overrideScanner = null, overrideStream = null, options = {}) => {
+    const preserveTorchPreference = Boolean(options?.preserveTorchPreference);
+    const runStop = async () => {
+      if (mountedRef.current && !preserveTorchPreference) {
+        setIsTorchOn(false);
+      }
+
+      const scannerToStop = overrideScanner || scannerRef.current;
+      if (!overrideScanner) {
+        scannerRef.current = null;
+      }
+
+      const streamsToStop = new Set(trackedStreamsRef.current);
+      if (overrideStream) streamsToStop.add(overrideStream);
+      if (activeStreamRef.current) streamsToStop.add(activeStreamRef.current);
+      if (scannerToStop?.renderedCamera?.mediaStream) {
+        streamsToStop.add(scannerToStop.renderedCamera.mediaStream);
+      }
+
+      const domVideos = Array.from(document.querySelectorAll('#barcode-camera-view video'));
+      domVideos.forEach((v) => {
+        if (v?.srcObject) {
+          streamsToStop.add(v.srcObject);
+        }
+        try {
+          v.onabort = null;
+          v.onerror = null;
+        } catch {}
+      });
+
+      const track = activeTrackRef.current;
+      if (track && track.readyState === 'live' && track.applyConstraints) {
+        try {
+          const caps = track.getCapabilities ? track.getCapabilities() : {};
+          if (caps?.torch) {
+            await track.applyConstraints({ advanced: [{ torch: false }] });
+          }
+        } catch {}
+      }
       activeTrackRef.current = null;
-    }
-    if (activeStreamRef.current) {
-      try {
-        activeStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
-      } catch (_) {}
       activeStreamRef.current = null;
+
+      if (scannerToStop) {
+        try {
+          scannerToStop.shouldScan = false;
+          if (scannerToStop.foreverScanTimeout) {
+            clearTimeout(scannerToStop.foreverScanTimeout);
+            scannerToStop.foreverScanTimeout = null;
+          }
+        } catch {}
+        try {
+          if (scannerToStop.renderedCamera?.surface) {
+            scannerToStop.renderedCamera.surface.onabort = null;
+            scannerToStop.renderedCamera.surface.onerror = null;
+          }
+        } catch {}
+        try {
+          const scannerState = typeof scannerToStop.getState === 'function' ? scannerToStop.getState() : 0;
+          const isRunning = Boolean(scannerToStop.isScanning) || scannerState >= 2;
+          if (isRunning && scannerToStop.renderedCamera) {
+            await Promise.race([
+              scannerToStop.stop().catch(() => {}),
+              new Promise((resolve) => setTimeout(resolve, 1000))
+            ]);
+          }
+        } catch {}
+        try {
+          scannerToStop.clear();
+        } catch {}
+      }
+
+      streamsToStop.forEach((stream) => stopMediaStreamTracks(stream));
+      trackedStreamsRef.current.clear();
+
+      document.querySelectorAll('#barcode-camera-view video').forEach((v) => {
+        detachVideoSurface(v);
+      });
+      const container = document.getElementById('barcode-camera-view');
+      if (container) {
+        try {
+          container.innerHTML = '';
+        } catch {}
+      }
+    };
+
+    const previousStop = stopPromiseRef.current || Promise.resolve();
+    const currentStop = previousStop.catch(() => {}).then(runStop);
+    stopPromiseRef.current = currentStop;
+    try {
+      await currentStop;
+    } finally {
+      if (stopPromiseRef.current === currentStop) {
+        stopPromiseRef.current = null;
+      }
     }
-    const videoElem = document.querySelector('#barcode-camera-view video');
-    if (videoElem) {
-      videoElem.srcObject = null;
-      videoElem.src = '';
+  }, [detachVideoSurface, stopMediaStreamTracks]);
+
+  const suspendCameraDueInactivity = useCallback(async () => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
     }
-    if (scannerRef.current) {
-      try {
-        if (scannerRef.current.isScanning) await scannerRef.current.stop();
-        scannerRef.current.clear();
-      } catch (_) {}
-      scannerRef.current = null;
+    if (resumeTorchTimerRef.current) {
+      clearTimeout(resumeTorchTimerRef.current);
+      resumeTorchTimerRef.current = null;
     }
-  }, []);
+    if (resumeScanTimerRef.current) {
+      clearTimeout(resumeScanTimerRef.current);
+      resumeScanTimerRef.current = null;
+    }
+    activeSessionRef.current += 1;
+    isStartingRef.current = false;
+    isCameraSuspendedRef.current = true;
+    setIsCameraSuspended(true);
+    await forceStopHardware(null, null, { preserveTorchPreference: true });
+  }, [forceStopHardware]);
 
   const resetInactivityTimer = useCallback(() => {
     if (inactivityTimerRef.current) {
       clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = null;
     }
-    if (isOpen && !isCameraSuspended && !isClosing && !isPaused && activeModeRef.current === 'camera') {
+    const canSchedule =
+      isOpenRef.current &&
+      !isCameraSuspendedRef.current &&
+      !isClosingRef.current &&
+      (isPausedRef.current || activeModeRef.current === 'camera');
+
+    if (canSchedule) {
       inactivityTimerRef.current = setTimeout(() => {
         suspendCameraDueInactivity();
       }, 60000);
     }
-  }, [isOpen, isCameraSuspended, isClosing, isPaused, suspendCameraDueInactivity]);
+  }, [suspendCameraDueInactivity]);
+
+  const resetInactivityTimerRef = useRef(resetInactivityTimer);
+  useEffect(() => {
+    resetInactivityTimerRef.current = resetInactivityTimer;
+  }, [resetInactivityTimer]);
+
+  const applyZoom = useCallback(async (track, val) => {
+    const videoElem = document.querySelector('#barcode-camera-view video');
+    let hwApplied = false;
+
+    if (track && track.readyState === 'live' && track.applyConstraints) {
+      try {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps && caps.zoom && typeof caps.zoom.min === 'number' && typeof caps.zoom.max === 'number' && caps.zoom.max > caps.zoom.min) {
+          const minZ = caps.zoom.min || 1;
+          const maxZ = caps.zoom.max || 5;
+          const clamped = Math.min(maxZ, Math.max(minZ, val));
+          await track.applyConstraints({ advanced: [{ zoom: clamped }] });
+          hwApplied = true;
+        }
+      } catch (e) {
+        console.warn('Hardware zoom no disponible:', e);
+      }
+    }
+
+    if (videoElem) {
+      videoElem.style.transition = 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)';
+      if (hwApplied) {
+        videoElem.style.transform = 'none';
+      } else {
+        videoElem.style.transform = val > 1 ? `scale(${val})` : 'none';
+        videoElem.style.transformOrigin = 'center center';
+      }
+    }
+  }, []);
+
+  const applyTorch = useCallback((track, enabled) => {
+    const runTorch = async () => {
+      const targetTrack = track && track.readyState === 'live' ? track : getVideoTrack();
+      if (!targetTrack || targetTrack.readyState !== 'live' || !targetTrack.applyConstraints) {
+        return false;
+      }
+
+      const desired = Boolean(enabled);
+      if (desired && (isPausedRef.current || isCameraSuspendedRef.current || isClosingRef.current || !isOpenRef.current || activeModeRef.current !== 'camera')) {
+        return false;
+      }
+
+      try {
+        const caps = targetTrack.getCapabilities ? targetTrack.getCapabilities() : null;
+        if (!caps || !caps.torch) return false;
+      } catch {
+        return false;
+      }
+
+      let ok = false;
+      try {
+        await targetTrack.applyConstraints({ advanced: [{ torch: desired }] });
+        ok = true;
+      } catch {
+        try {
+          await targetTrack.applyConstraints({ torch: desired });
+          ok = true;
+        } catch {}
+      }
+
+      if (!desired) {
+        try {
+          const settings = targetTrack.getSettings ? targetTrack.getSettings() : null;
+          if (settings && settings.torch === true) {
+            try {
+              await targetTrack.applyConstraints({ torch: false });
+            } catch {}
+            try {
+              await targetTrack.applyConstraints({ advanced: [{ torch: false }] });
+            } catch {}
+          }
+        } catch {}
+      }
+
+      return ok;
+    };
+
+    const next = torchQueueRef.current.catch(() => {}).then(runTorch);
+    torchQueueRef.current = next;
+    return next;
+  }, [getVideoTrack]);
+
+  const triggerFocus = useCallback(async (track, xRatio = 0.5, yRatio = 0.5) => {
+    if (!track || track.readyState !== 'live' || !track.applyConstraints) return;
+    try {
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const supportedFocus = Array.isArray(caps?.focusMode) ? caps.focusMode : [];
+      if (supportedFocus.includes('single-shot')) {
+        await track.applyConstraints({
+          advanced: [
+            {
+              focusMode: 'single-shot',
+              pointsOfInterest: [{ x: xRatio, y: yRatio }]
+            }
+          ]
+        });
+        setTimeout(async () => {
+          if (track.readyState !== 'live') return;
+          try {
+            if (supportedFocus.includes('continuous')) {
+              await track.applyConstraints({
+                advanced: [{ focusMode: 'continuous' }]
+              });
+            }
+          } catch {}
+        }, 300);
+      } else if (supportedFocus.includes('continuous')) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: 'continuous' }]
+        });
+      }
+    } catch {}
+  }, []);
+
+  const attachSafeVideoSurface = useCallback((scannerInstance, mySessionId) => {
+    const videoElem = scannerInstance?.renderedCamera?.surface || document.querySelector('#barcode-camera-view video');
+    if (videoElem) {
+      try {
+        videoElem.onabort = null;
+        videoElem.onerror = () => {
+          if (!mountedRef.current || activeSessionRef.current !== mySessionId) return;
+          console.warn('[Scanner] Error recuperable en superficie de video');
+        };
+        videoElem.muted = true;
+        videoElem.playsInline = true;
+        videoElem.autoplay = true;
+        if (videoElem.paused) {
+          videoElem.play().catch(() => {});
+        }
+      } catch {}
+    }
+    return videoElem;
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeSessionRef.current += 1;
+      if (torchNoticeTimerRef.current) clearTimeout(torchNoticeTimerRef.current);
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      if (resumeScanTimerRef.current) clearTimeout(resumeScanTimerRef.current);
+      if (resumeTorchTimerRef.current) clearTimeout(resumeTorchTimerRef.current);
+      if (detectionRecoveryTimerRef.current) clearTimeout(detectionRecoveryTimerRef.current);
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      if (zoomFeedbackTimeoutRef.current) clearTimeout(zoomFeedbackTimeoutRef.current);
+      forceStopHardware();
+    };
+  }, [forceStopHardware]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+    const wasPaused = prevPausedRef.current;
+    prevPausedRef.current = isPaused;
+    if (isPaused === wasPaused) return;
+
+    if (resumeScanTimerRef.current) {
+      clearTimeout(resumeScanTimerRef.current);
+      resumeScanTimerRef.current = null;
+    }
+    if (resumeTorchTimerRef.current) {
+      clearTimeout(resumeTorchTimerRef.current);
+      resumeTorchTimerRef.current = null;
+    }
+    if (detectionRecoveryTimerRef.current) {
+      clearTimeout(detectionRecoveryTimerRef.current);
+      detectionRecoveryTimerRef.current = null;
+    }
+
     const track = activeTrackRef.current || getVideoTrack();
+
     if (isPaused) {
       isInternalPausedRef.current = true;
-      if (isTorchOn && track) {
-        applyTorch(track, false);
-      }
-    } else {
-      if (!track || track.readyState === 'ended') {
-        if (isOpen && !isCameraSuspended && !isClosing) {
-          setScannerSessionKey(k => k + 1);
+      resetInactivityTimerRef.current();
+
+      const pauseTrackSafely = async () => {
+        if (track && track.readyState === 'live') {
+          await applyTorch(track, false);
+          if (!mountedRef.current || !isPausedRef.current) return;
+
+          try {
+            const settings = track.getSettings ? track.getSettings() : null;
+            if (settings && settings.torch === true) {
+              autoSuspendedForTorchRef.current = true;
+              activeSessionRef.current += 1;
+              isCameraSuspendedRef.current = true;
+              setIsCameraSuspended(true);
+              if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+              inactivityTimerRef.current = setTimeout(() => {
+                autoSuspendedForTorchRef.current = false;
+                inactivityTimerRef.current = null;
+              }, 60000);
+              await forceStopHardware(null, null, { preserveTorchPreference: true });
+              return;
+            }
+          } catch {}
+
+          try {
+            track.enabled = false;
+          } catch {}
+          const video = document.querySelector('#barcode-camera-view video');
+          if (video && !video.paused) {
+            try {
+              video.pause();
+            } catch {}
+          }
         }
-      } else {
-        track.enabled = true;
-        const video = document.querySelector('#barcode-camera-view video');
-        if (video && video.paused) {
-          video.play().catch(() => {});
-        }
-        if (isTorchOn && !isCameraSuspended && isOpen) {
-          applyTorch(track, true);
-        }
-      }
-      resetInactivityTimer();
-      const timer = setTimeout(() => {
-        isInternalPausedRef.current = false;
-      }, 500);
-      return () => clearTimeout(timer);
+      };
+
+      pauseTrackSafely();
+      return;
     }
-  }, [isPaused, isTorchOn, isCameraSuspended, isOpen, isClosing, resetInactivityTimer]);
+
+    if (isCameraSuspendedRef.current) {
+      if (autoSuspendedForTorchRef.current && isOpenRef.current && !isClosingRef.current) {
+        autoSuspendedForTorchRef.current = false;
+        isCameraSuspendedRef.current = false;
+        setIsCameraSuspended(false);
+        setScannerSessionKey(k => k + 1);
+      }
+      return;
+    }
+
+    if (isStartingRef.current) return;
+
+    if (!track || track.readyState === 'ended') {
+      if (isOpenRef.current && !isCameraSuspendedRef.current && !isClosingRef.current) {
+        setScannerSessionKey(k => k + 1);
+      }
+      return;
+    }
+
+    track.enabled = true;
+    const video = document.querySelector('#barcode-camera-view video');
+    if (video && video.paused) {
+      video.play().catch(() => {});
+    }
+
+    resetInactivityTimerRef.current();
+
+    if (isTorchOnRef.current && !isCameraSuspendedRef.current && !isClosingRef.current && isOpenRef.current && activeModeRef.current === 'camera') {
+      resumeTorchTimerRef.current = setTimeout(() => {
+        resumeTorchTimerRef.current = null;
+        if (
+          mountedRef.current &&
+          !isPausedRef.current &&
+          !isCameraSuspendedRef.current &&
+          !isClosingRef.current &&
+          isOpenRef.current &&
+          activeModeRef.current === 'camera' &&
+          isTorchOnRef.current
+        ) {
+          const liveTrack = activeTrackRef.current || getVideoTrack();
+          if (liveTrack && liveTrack.readyState === 'live') {
+            applyTorch(liveTrack, true);
+          }
+        }
+      }, 120);
+    }
+
+    resumeScanTimerRef.current = setTimeout(() => {
+      resumeScanTimerRef.current = null;
+      if (mountedRef.current && !isPausedRef.current) {
+        isInternalPausedRef.current = false;
+      }
+    }, 450);
+  }, [isPaused, getVideoTrack, applyTorch, forceStopHardware]);
 
   const handleSwitchMode = (mode) => {
     setActiveMode(mode);
     activeModeRef.current = mode;
     resetInactivityTimer();
 
+    if (resumeTorchTimerRef.current) {
+      clearTimeout(resumeTorchTimerRef.current);
+      resumeTorchTimerRef.current = null;
+    }
+    if (resumeScanTimerRef.current) {
+      clearTimeout(resumeScanTimerRef.current);
+      resumeScanTimerRef.current = null;
+    }
+
     const track = activeTrackRef.current || getVideoTrack();
     if (mode === 'search') {
       isInternalPausedRef.current = true;
-      if (isTorchOn && track) {
+      if (track) {
         applyTorch(track, false);
       }
       setTimeout(() => {
         searchInputRef.current?.focus();
       }, 100);
     } else {
-      if (track) {
+      if (track && !isPausedRef.current && !isCameraSuspendedRef.current) {
         track.enabled = true;
+        const video = document.querySelector('#barcode-camera-view video');
+        if (video && video.paused) {
+          video.play().catch(() => {});
+        }
+        if (isTorchOnRef.current) {
+          applyTorch(track, true);
+        }
       }
-      const video = document.querySelector('#barcode-camera-view video');
-      if (video && video.paused) {
-        video.play().catch(() => {});
-      }
-      if (isTorchOn && track && !isCameraSuspended) {
-        applyTorch(track, true);
-      }
-      setTimeout(() => {
-        isInternalPausedRef.current = false;
-      }, 500);
+      resumeScanTimerRef.current = setTimeout(() => {
+        resumeScanTimerRef.current = null;
+        if (mountedRef.current && !isPausedRef.current && activeModeRef.current === 'camera') {
+          isInternalPausedRef.current = false;
+        }
+      }, 450);
     }
   };
 
@@ -391,11 +819,13 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
 
   const handleResumeCamera = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
+    autoSuspendedForTorchRef.current = false;
+    isCameraSuspendedRef.current = false;
     setIsCameraSuspended(false);
     setScannerSessionKey(k => k + 1);
   };
 
-  const resetAll = () => {
+  const resetAll = useCallback((preserveTorchPreference = false) => {
     setActiveMode('camera');
     activeModeRef.current = 'camera';
     setSearchQuery('');
@@ -404,190 +834,125 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
     setIsSearching(false);
     setScannerError('');
     setIsFocusing(false);
-    setIsTorchOn(false);
+    if (!preserveTorchPreference) {
+      setIsTorchOn(false);
+    }
+    setTorchNotice('');
     setFocusIndicator({ x: '50%', y: '50%', visible: false });
-  };
-
-  const forceStopHardware = async () => {
-    setIsTorchOn(false);
-
-    const track = activeTrackRef.current;
-    if (track) {
-      try {
-        if (track.applyConstraints) {
-          await track.applyConstraints({ advanced: [{ torch: false }] });
-        }
-      } catch (_) {
-        try {
-          await track.applyConstraints({ torch: false });
-        } catch (_) {}
-      }
-    }
-    try {
-      const videoElem = document.querySelector('#barcode-camera-view video');
-      if (videoElem && videoElem.srcObject) {
-        const domTracks = videoElem.srcObject.getVideoTracks();
-        for (const t of domTracks) {
-          try {
-            if (t.applyConstraints) {
-              await t.applyConstraints({ advanced: [{ torch: false }] });
-            }
-          } catch (_) {
-            try {
-              await t.applyConstraints({ torch: false });
-            } catch (_) {}
-          }
-        }
-      }
-    } catch (_) {}
-
-    if (activeStreamRef.current) {
-      try {
-        const tracks = activeStreamRef.current.getTracks();
-        tracks.forEach(t => {
-          try {
-            t.stop();
-          } catch (_) {}
-        });
-      } catch (_) {}
-      activeStreamRef.current = null;
-    }
-
-    if (activeTrackRef.current) {
-      try {
-        activeTrackRef.current.stop();
-      } catch (_) {}
-      activeTrackRef.current = null;
-    }
-
-    try {
-      const videoElem = document.querySelector('#barcode-camera-view video');
-      if (videoElem) {
-        if (videoElem.srcObject) {
-          try {
-            const stream = videoElem.srcObject;
-            if (stream && stream.getTracks) {
-              stream.getTracks().forEach(t => {
-                try {
-                  t.stop();
-                } catch (_) {}
-              });
-            }
-          } catch (_) {}
-          videoElem.srcObject = null;
-        }
-        videoElem.src = '';
-      }
-    } catch (_) {}
-
-    if (scannerRef.current) {
-      try {
-        if (scannerRef.current.isScanning) {
-          await scannerRef.current.stop();
-        }
-        scannerRef.current.clear();
-      } catch (_) {}
-      scannerRef.current = null;
-    }
-  };
-
-  const applyZoom = async (track, val) => {
-    const videoElem = document.querySelector('#barcode-camera-view video');
-    let hwApplied = false;
-
-    if (track && track.applyConstraints) {
-      try {
-        const caps = track.getCapabilities ? track.getCapabilities() : {};
-        if (caps && caps.zoom) {
-          const minZ = caps.zoom.min || 1;
-          const maxZ = caps.zoom.max || 5;
-          const clamped = Math.min(maxZ, Math.max(minZ, val));
-          await track.applyConstraints({ advanced: [{ zoom: clamped }] });
-          hwApplied = true;
-        }
-      } catch (e) {
-        console.warn('Hardware zoom no disponible:', e);
-      }
-    }
-
-    if (videoElem) {
-      videoElem.style.transition = 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)';
-      if (hwApplied) {
-        videoElem.style.transform = 'none';
-      } else {
-        videoElem.style.transform = val > 1 ? `scale(${val})` : 'none';
-        videoElem.style.transformOrigin = 'center center';
-      }
-    }
-  };
-  const applyTorch = async (track, enabled) => {
-    if (!track) return false;
-    let ok = false;
-    if (track.applyConstraints) {
-      try {
-        await track.applyConstraints({ advanced: [{ torch: Boolean(enabled) }] });
-        ok = true;
-      } catch (_) {
-        try {
-          await track.applyConstraints({ torch: Boolean(enabled) });
-          ok = true;
-        } catch (_) {}
-      }
-    }
-    return ok;
-  };
-
-  const triggerFocus = async (track, xRatio = 0.5, yRatio = 0.5) => {
-    if (!track || !track.applyConstraints) return;
-    try {
-      await track.applyConstraints({
-        advanced: [
-          {
-            focusMode: 'single-shot',
-            pointsOfInterest: [{ x: xRatio, y: yRatio }]
-          }
-        ]
-      });
-      setTimeout(async () => {
-        try {
-          await track.applyConstraints({
-            advanced: [{ focusMode: 'continuous' }]
-          });
-        } catch (_) {}
-      }, 300);
-    } catch (_) {
-      try {
-        await track.applyConstraints({
-          advanced: [{ focusMode: 'continuous' }]
-        });
-      } catch (_) {}
-    }
-  };
+  }, []);
 
   useEffect(() => {
     if (!isOpen || !shouldRender || isClosing || isCameraSuspended) {
+      activeSessionRef.current += 1;
+      isStartingRef.current = false;
       if (!isCameraSuspended) {
         forceStopHardware();
-        resetAll();
+        resetAll(false);
       }
       return;
     }
 
-    resetAll();
-    setIsStarting(true);
+    const mySessionId = ++activeSessionRef.current;
     let isCancelled = false;
     let html5QrCode = null;
+    isStartingRef.current = true;
+    autoSuspendedForTorchRef.current = false;
+    isInternalPausedRef.current = Boolean(isPausedRef.current);
+    resetAll(true);
+    setIsStarting(true);
+
+    const configureRunningTrack = async (runningInstance, storedSettings, targetCameraId) => {
+      if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
+
+      const videoElem = attachSafeVideoSurface(runningInstance, mySessionId);
+      const streamFromInstance = runningInstance?.renderedCamera?.mediaStream || videoElem?.srcObject || null;
+      if (streamFromInstance) {
+        trackedStreamsRef.current.add(streamFromInstance);
+        activeStreamRef.current = streamFromInstance;
+      }
+
+      const track = streamFromInstance?.getVideoTracks?.()?.[0] || getVideoTrack();
+      if (track) {
+        activeTrackRef.current = track;
+        track.onended = () => {
+          if (mountedRef.current && activeSessionRef.current === mySessionId && !isSwitchingCameraRef.current) {
+            isCameraSuspendedRef.current = true;
+            setIsCameraSuspended(true);
+          }
+        };
+
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const supportedFocus = Array.isArray(caps.focusMode) ? caps.focusMode : [];
+        const hasContinuousFocus = supportedFocus.includes('continuous');
+
+        setCameraCapabilities({
+          hasTorch: Boolean(caps.torch),
+          hasZoom: Boolean(caps.zoom && caps.zoom.max > caps.zoom.min),
+          hasContinuousFocus,
+          minZoom: caps.zoom?.min || 1,
+          maxZoom: caps.zoom?.max || 4
+        });
+
+        if (hasContinuousFocus) {
+          try {
+            await track.applyConstraints({
+              advanced: [{ focusMode: 'continuous' }]
+            });
+          } catch {}
+        }
+
+        if (isCancelled || activeSessionRef.current !== mySessionId) return;
+
+        setZoomLevel(storedSettings.zoom);
+        await applyZoom(track, storedSettings.zoom);
+
+        const wantsTorch = Boolean(storedSettings.torch && caps.torch);
+        setIsTorchOn(wantsTorch);
+        isTorchOnRef.current = wantsTorch;
+
+        if (wantsTorch && !isPausedRef.current && activeModeRef.current === 'camera') {
+          const ok = await applyTorch(track, true);
+          if (mountedRef.current && activeSessionRef.current === mySessionId && !isPausedRef.current) {
+            setIsTorchOn(ok);
+          }
+        } else {
+          await applyTorch(track, false);
+          if (isPausedRef.current) {
+            try {
+              track.enabled = false;
+            } catch {}
+            if (videoElem && !videoElem.paused) {
+              try {
+                videoElem.pause();
+              } catch {}
+            }
+          }
+        }
+      }
+
+      const freshDevs = await enumerateVideoCameras();
+      if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
+      if (freshDevs.length > 0) {
+        const refreshed = prepareCameraList(freshDevs);
+        setAvailableCameras(refreshed);
+        const matched = (track?.label && refreshed.find(d => d.label === track.label)) || refreshed.find(d => d.id === targetCameraId) || refreshed[0];
+        if (matched) {
+          setActiveCameraId(matched.id);
+          setCameraLabel(matched.displayName);
+        }
+      } else if (track?.label && !targetCameraId) {
+        setCameraLabel(determineCameraLabel(track.label, 0, []));
+      }
+    };
 
     async function startScanner() {
-      if (scannerRef.current) {
-        try {
-          if (scannerRef.current.isScanning) {
-            await scannerRef.current.stop();
-          }
-          scannerRef.current.clear();
-        } catch (_) {}
-        scannerRef.current = null;
+      if (stopPromiseRef.current) {
+        await stopPromiseRef.current.catch(() => {});
+      } else if (scannerRef.current) {
+        await forceStopHardware();
       }
+
+      if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
 
       let container = document.getElementById('barcode-camera-view');
       if (!container) {
@@ -595,50 +960,24 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
         container = document.getElementById('barcode-camera-view');
       }
 
+      if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
+
       if (!container) {
-        if (!isCancelled) {
-          console.warn('Contenedor barcode-camera-view no encontrado en el DOM');
-          setScannerError('No se pudo inicializar la cámara.');
-          setIsStarting(false);
-        }
+        console.warn('Contenedor barcode-camera-view no encontrado en el DOM');
+        setScannerError('No se pudo inicializar la cámara.');
+        setIsStarting(false);
+        isStartingRef.current = false;
         return;
       }
+
       try {
         container.innerHTML = '';
-      } catch (_) {}
+      } catch {}
 
-      try {
-        html5QrCode = new Html5Qrcode('barcode-camera-view', {
-          formatsToSupport: BARCODE_ONLY_FORMATS,
-          verbose: false,
-          experimentalFeatures: {
-            useBarCodeDetectorIfSupported: true
-          }
-        });
-        scannerRef.current = html5QrCode;
-      } catch (_e) {
-        if (!isCancelled) {
-          console.error('Error al instanciar Html5Qrcode:', _e);
-          setScannerError('No se pudo inicializar la cámara.');
-          setIsStarting(false);
-        }
-        return;
-      }
+      const devices = await enumerateVideoCameras();
+      if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
 
-      let devices = cachedCameraDevices;
-      if (!devices || devices.length === 0 || !devices[0]?.label) {
-        try {
-          devices = await Html5Qrcode.getCameras();
-          if (devices && devices.length > 0 && devices[0].label) {
-            cachedCameraDevices = devices;
-          }
-        } catch (err) {
-          console.warn('Error al enumerar dispositivos de video:', err);
-        }
-      }
-
-      if (isCancelled) return;
-      const preparedList = prepareCameraList(devices || []);
+      const preparedList = prepareCameraList(devices);
       setAvailableCameras(preparedList);
 
       const mainCamera = preparedList.find(d => d.cameraType === 'main') || preparedList[0];
@@ -656,100 +995,112 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
         fps: 10
       };
 
-      const cameraInput = targetCameraId ? targetCameraId : { facingMode: 'environment' };
+      const onDecodedSuccess = async (decodedText, decodedResult) => {
+        if (isCancelled || activeSessionRef.current !== mySessionId) return;
+        if (isPausedRef.current || isInternalPausedRef.current) return;
+        if (activeModeRef.current !== 'camera') return;
+        if (isExcludedOrQrCode(decodedResult)) return;
 
-      try {
-        await html5QrCode.start(
-          cameraInput,
-          qrConfig,
-          async (decodedText, decodedResult) => {
-            if (isCancelled) return;
-            if (isPausedRef.current || isInternalPausedRef.current) return;
-            if (activeModeRef.current !== 'camera') return;
-            if (isExcludedOrQrCode(decodedResult)) return;
+        const now = Date.now();
+        if (now - lastScanTimeRef.current < 1200) return;
+        lastScanTimeRef.current = now;
 
-            const now = Date.now();
-            if (now - lastScanTimeRef.current < 1200) return;
-            lastScanTimeRef.current = now;
-
-            isInternalPausedRef.current = true;
-            if (navigator.vibrate) navigator.vibrate(50);
-            const track = getVideoTrack();
-            if (isTorchOn && track) {
-              applyTorch(track, false);
-            }
-            if (onDetectedRef.current) {
-              onDetectedRef.current(decodedText);
-            }
-          },
-          () => {}
-        );
-
-        if (isCancelled) {
-          await forceStopHardware();
-          return;
+        isInternalPausedRef.current = true;
+        if (navigator.vibrate) navigator.vibrate(50);
+        const track = getVideoTrack();
+        if (track) {
+          applyTorch(track, false);
         }
+        resetInactivityTimerRef.current();
 
-        setIsStarting(false);
-        resetInactivityTimer();
-
-        try {
-          const freshDevs = await Html5Qrcode.getCameras();
-          if (freshDevs && freshDevs.length > 0 && freshDevs[0].label) {
-            cachedCameraDevices = freshDevs;
-            const refreshed = prepareCameraList(freshDevs);
-            setAvailableCameras(refreshed);
-
-            const runningTrack = getVideoTrack();
-            if (runningTrack && runningTrack.label) {
-              const matched = refreshed.find(d => d.label === runningTrack.label) || refreshed.find(d => d.id === targetCameraId);
-              if (matched) {
-                setActiveCameraId(matched.id);
-                setCameraLabel(matched.displayName);
+        if (detectionRecoveryTimerRef.current) {
+          clearTimeout(detectionRecoveryTimerRef.current);
+        }
+        detectionRecoveryTimerRef.current = setTimeout(() => {
+          detectionRecoveryTimerRef.current = null;
+          if (
+            mountedRef.current &&
+            activeSessionRef.current === mySessionId &&
+            !isPausedRef.current &&
+            !isCameraSuspendedRef.current &&
+            !isClosingRef.current &&
+            isOpenRef.current &&
+            activeModeRef.current === 'camera'
+          ) {
+            isInternalPausedRef.current = false;
+            const liveTrack = activeTrackRef.current || getVideoTrack();
+            if (liveTrack && liveTrack.readyState === 'live') {
+              liveTrack.enabled = true;
+              if (isTorchOnRef.current) {
+                applyTorch(liveTrack, true);
               }
             }
           }
-        } catch (_) {}
+        }, 900);
 
-        const track = getVideoTrack();
-        if (track) {
-          activeTrackRef.current = track;
-          const videoElem = document.querySelector('#barcode-camera-view video');
-          if (videoElem && videoElem.srcObject) {
-            activeStreamRef.current = videoElem.srcObject;
+        if (onDetectedRef.current) {
+          onDetectedRef.current(decodedText);
+        }
+      };
+
+      const tryStartWithInput = async (input) => {
+        const instance = new Html5Qrcode('barcode-camera-view', {
+          formatsToSupport: BARCODE_ONLY_FORMATS,
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
           }
+        });
+        html5QrCode = instance;
+        scannerRef.current = instance;
 
-          if (track.label && !targetCameraId) {
-            setCameraLabel(determineCameraLabel(track.label, 0, availableCameras));
+        await instance.start(
+          input,
+          qrConfig,
+          onDecodedSuccess,
+          () => {}
+        );
+        return instance;
+      };
+
+      try {
+        const primaryInput = targetCameraId ? targetCameraId : { facingMode: 'environment' };
+        let runningInstance = null;
+        try {
+          runningInstance = await tryStartWithInput(primaryInput);
+        } catch (primaryErr) {
+          if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) {
+            await forceStopHardware(html5QrCode, html5QrCode?.renderedCamera?.mediaStream);
+            return;
           }
-
-          const caps = track.getCapabilities ? track.getCapabilities() : {};
-
-          setCameraCapabilities({
-            hasTorch: Boolean(caps.torch),
-            hasZoom: Boolean(caps.zoom),
-            minZoom: caps.zoom?.min || 1,
-            maxZoom: caps.zoom?.max || 4
-          });
-
-          try {
-            await track.applyConstraints({
-              advanced: [{ focusMode: 'continuous' }]
-            });
-          } catch (_) {}
-
-          setZoomLevel(stored.zoom);
-          await applyZoom(track, stored.zoom);
-
-          if (stored.torch && caps.torch) {
-            setIsTorchOn(true);
-            await applyTorch(track, true);
+          if (targetCameraId) {
+            await forceStopHardware(html5QrCode, html5QrCode?.renderedCamera?.mediaStream);
+            if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) return;
+            runningInstance = await tryStartWithInput({ facingMode: 'environment' });
           } else {
-            setIsTorchOn(false);
+            throw primaryErr;
           }
         }
+
+        const startedStream = runningInstance?.renderedCamera?.mediaStream || document.querySelector('#barcode-camera-view video')?.srcObject || null;
+        if (startedStream) {
+          trackedStreamsRef.current.add(startedStream);
+        }
+
+        if (isCancelled || activeSessionRef.current !== mySessionId || !mountedRef.current) {
+          await forceStopHardware(runningInstance, startedStream);
+          return;
+        }
+
+        isStartingRef.current = false;
+        setIsStarting(false);
+        resetInactivityTimerRef.current();
+
+        await configureRunningTrack(runningInstance, stored, targetCameraId);
       } catch (err) {
-        if (!isCancelled) {
+        await forceStopHardware(html5QrCode, html5QrCode?.renderedCamera?.mediaStream);
+        if (!isCancelled && activeSessionRef.current === mySessionId && mountedRef.current) {
+          isStartingRef.current = false;
           console.error('Error al iniciar la cámara principal:', err);
           setScannerError('No se pudo iniciar la cámara principal. Puedes escribir el código o nombre abajo.');
           setIsStarting(false);
@@ -761,26 +1112,41 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
 
     return () => {
       isCancelled = true;
-      if (inactivityTimerRef.current) {
+      activeSessionRef.current += 1;
+      isStartingRef.current = false;
+      if (inactivityTimerRef.current && !autoSuspendedForTorchRef.current) {
         clearTimeout(inactivityTimerRef.current);
         inactivityTimerRef.current = null;
       }
+      if (resumeScanTimerRef.current) {
+        clearTimeout(resumeScanTimerRef.current);
+        resumeScanTimerRef.current = null;
+      }
+      if (resumeTorchTimerRef.current) {
+        clearTimeout(resumeTorchTimerRef.current);
+        resumeTorchTimerRef.current = null;
+      }
+      if (detectionRecoveryTimerRef.current) {
+        clearTimeout(detectionRecoveryTimerRef.current);
+        detectionRecoveryTimerRef.current = null;
+      }
       forceStopHardware();
-      resetAll();
     };
-  }, [isOpen, shouldRender, isClosing, scannerSessionKey, isCameraSuspended]);
+  }, [isOpen, shouldRender, isClosing, scannerSessionKey, isCameraSuspended, forceStopHardware, resetAll, enumerateVideoCameras, attachSafeVideoSurface, getVideoTrack, applyZoom, applyTorch]);
 
   useEffect(() => {
     if (!isOpen) return;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        activeSessionRef.current += 1;
         forceStopHardware();
         if (onCloseRef.current) onCloseRef.current();
       }
     };
 
     const handlePageHide = () => {
+      activeSessionRef.current += 1;
       forceStopHardware();
     };
 
@@ -793,41 +1159,30 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
       window.removeEventListener('pagehide', handlePageHide);
       window.removeEventListener('beforeunload', handlePageHide);
     };
-  }, [isOpen]);
+  }, [isOpen, forceStopHardware]);
 
   const handleSwitchCamera = async () => {
-    if (isSwitchingCameraRef.current || isStarting || availableCameras.length <= 1 || !scannerRef.current) return;
+    if (isSwitchingCameraRef.current || isStarting || availableCameras.length <= 1) return;
     isSwitchingCameraRef.current = true;
+    const mySessionId = ++activeSessionRef.current;
 
     try {
       resetInactivityTimer();
       setIsStarting(true);
-      const track = activeTrackRef.current || getVideoTrack();
-      if (track) {
-        try { await applyTorch(track, false); } catch (_) {}
-        try { track.stop(); } catch (_) {}
-        activeTrackRef.current = null;
-      }
-
-      if (scannerRef.current && scannerRef.current.isScanning) {
-        try {
-          await scannerRef.current.stop();
-        } catch (stopErr) {
-          console.warn('Advertencia al detener escáner:', stopErr);
-        }
-      }
-
-      const container = document.getElementById('barcode-camera-view');
-      if (container) {
-        try { container.innerHTML = ''; } catch (_) {}
-      }
+      isStartingRef.current = true;
 
       const currentIndex = availableCameras.findIndex(d => d.id === activeCameraId);
       const nextIndex = (currentIndex >= 0 ? currentIndex + 1 : 0) % availableCameras.length;
       const nextDevice = availableCameras[nextIndex];
       if (!nextDevice) {
         setIsStarting(false);
+        isStartingRef.current = false;
         isSwitchingCameraRef.current = false;
+        return;
+      }
+
+      await forceStopHardware();
+      if (!mountedRef.current || activeSessionRef.current !== mySessionId || isClosing) {
         return;
       }
 
@@ -837,12 +1192,22 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
       const current = getStoredCameraSettings();
       saveCameraSettings({ ...current, cameraId: nextDevice.id });
 
-      await scannerRef.current.start(
+      const instance = new Html5Qrcode('barcode-camera-view', {
+        formatsToSupport: BARCODE_ONLY_FORMATS,
+        verbose: false,
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true
+        }
+      });
+      scannerRef.current = instance;
+
+      await instance.start(
         nextDevice.id,
         {
           fps: 10
         },
         async (decodedText, decodedResult) => {
+          if (activeSessionRef.current !== mySessionId) return;
           if (isPausedRef.current || isInternalPausedRef.current) return;
           if (activeModeRef.current !== 'camera') return;
           if (isExcludedOrQrCode(decodedResult)) return;
@@ -854,9 +1219,36 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
           isInternalPausedRef.current = true;
           if (navigator.vibrate) navigator.vibrate(50);
           const currentTrack = getVideoTrack();
-          if (isTorchOn && currentTrack) {
+          if (currentTrack) {
             applyTorch(currentTrack, false);
           }
+          resetInactivityTimerRef.current();
+
+          if (detectionRecoveryTimerRef.current) {
+            clearTimeout(detectionRecoveryTimerRef.current);
+          }
+          detectionRecoveryTimerRef.current = setTimeout(() => {
+            detectionRecoveryTimerRef.current = null;
+            if (
+              mountedRef.current &&
+              activeSessionRef.current === mySessionId &&
+              !isPausedRef.current &&
+              !isCameraSuspendedRef.current &&
+              !isClosingRef.current &&
+              isOpenRef.current &&
+              activeModeRef.current === 'camera'
+            ) {
+              isInternalPausedRef.current = false;
+              const liveTrack = activeTrackRef.current || getVideoTrack();
+              if (liveTrack && liveTrack.readyState === 'live') {
+                liveTrack.enabled = true;
+                if (isTorchOnRef.current) {
+                  applyTorch(liveTrack, true);
+                }
+              }
+            }
+          }, 900);
+
           if (onDetectedRef.current) {
             onDetectedRef.current(decodedText);
           }
@@ -864,54 +1256,76 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
         () => {}
       );
 
+      const switchedStream = instance?.renderedCamera?.mediaStream || document.querySelector('#barcode-camera-view video')?.srcObject || null;
+      if (switchedStream) trackedStreamsRef.current.add(switchedStream);
+
+      if (!mountedRef.current || activeSessionRef.current !== mySessionId || isClosing) {
+        await forceStopHardware(instance, switchedStream);
+        return;
+      }
+
+      isStartingRef.current = false;
       setIsStarting(false);
       resetInactivityTimer();
 
-      setTimeout(async () => {
-        const newTrack = getVideoTrack();
-        if (newTrack) {
-          activeTrackRef.current = newTrack;
-          const videoElem = document.querySelector('#barcode-camera-view video');
-          if (videoElem && videoElem.srcObject) {
-            activeStreamRef.current = videoElem.srcObject;
+      const videoElem = attachSafeVideoSurface(instance, mySessionId);
+      const activeStream = switchedStream || videoElem?.srcObject || null;
+      if (activeStream) {
+        activeStreamRef.current = activeStream;
+      }
+      const newTrack = activeStream?.getVideoTracks?.()?.[0] || getVideoTrack();
+      if (newTrack) {
+        activeTrackRef.current = newTrack;
+        newTrack.onended = () => {
+          if (mountedRef.current && activeSessionRef.current === mySessionId && !isSwitchingCameraRef.current) {
+            setIsCameraSuspended(true);
           }
-          const caps = newTrack.getCapabilities ? newTrack.getCapabilities() : {};
-          setCameraCapabilities({
-            hasTorch: Boolean(caps.torch),
-            hasZoom: Boolean(caps.zoom),
-            minZoom: caps.zoom?.min || 1,
-            maxZoom: caps.zoom?.max || 4
-          });
-          newTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-          applyZoom(newTrack, zoomLevel);
+        };
+        const caps = newTrack.getCapabilities ? newTrack.getCapabilities() : {};
+        const supportedFocus = Array.isArray(caps.focusMode) ? caps.focusMode : [];
+        const hasContinuousFocus = supportedFocus.includes('continuous');
 
-          const currentSettings = getStoredCameraSettings();
-          if (currentSettings.torch && caps.torch) {
-            setIsTorchOn(true);
-            await applyTorch(newTrack, true);
-          } else {
-            setIsTorchOn(false);
+        setCameraCapabilities({
+          hasTorch: Boolean(caps.torch),
+          hasZoom: Boolean(caps.zoom && caps.zoom.max > caps.zoom.min),
+          hasContinuousFocus,
+          minZoom: caps.zoom?.min || 1,
+          maxZoom: caps.zoom?.max || 4
+        });
+        if (hasContinuousFocus) {
+          newTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        }
+        applyZoom(newTrack, zoomLevel);
+
+        const currentSettings = getStoredCameraSettings();
+        const wantsTorch = Boolean(currentSettings.torch && caps.torch);
+        setIsTorchOn(wantsTorch);
+        isTorchOnRef.current = wantsTorch;
+        if (wantsTorch && !isPausedRef.current && activeModeRef.current === 'camera') {
+          const ok = await applyTorch(newTrack, true);
+          if (mountedRef.current && activeSessionRef.current === mySessionId && !isPausedRef.current) {
+            setIsTorchOn(ok);
+          }
+        } else {
+          await applyTorch(newTrack, false);
+          if (isPausedRef.current) {
+            try {
+              newTrack.enabled = false;
+            } catch {}
           }
         }
-      }, 150);
+      }
     } catch (e) {
       console.warn('Error alternando cámara:', e);
+      isStartingRef.current = false;
       setIsStarting(false);
-      try {
-        if (scannerRef.current && !scannerRef.current.isScanning) {
-          await scannerRef.current.start(
-            { facingMode: 'environment' },
-            { fps: 10 },
-            (decodedText) => {
-              if (onDetectedRef.current) onDetectedRef.current(decodedText);
-            },
-            () => {}
-          );
-        }
-      } catch (_) {}
+      if (mountedRef.current && activeSessionRef.current === mySessionId && !isClosing) {
+        setScannerSessionKey(k => k + 1);
+      }
     } finally {
       isSwitchingCameraRef.current = false;
-      setIsStarting(false);
+      isStartingRef.current = false;
+      if (mountedRef.current) setIsStarting(false);
     }
   };
 
@@ -935,13 +1349,31 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
 
   const handleToggleTorch = async () => {
     resetInactivityTimer();
-    const nextState = !isTorchOn;
-    setIsTorchOn(nextState);
-
+    if (isPausedRef.current || isCameraSuspendedRef.current || activeModeRef.current !== 'camera') return;
     const track = activeTrackRef.current || getVideoTrack();
-    await applyTorch(track, nextState);
+    let supportsTorch = Boolean(cameraCapabilities.hasTorch);
+    if (track?.getCapabilities) {
+      try {
+        supportsTorch = Boolean(track.getCapabilities()?.torch);
+      } catch {}
+    }
 
-    saveCameraSettings({ torch: nextState });
+    if (!track || !supportsTorch) {
+      setIsTorchOn(false);
+      setTorchNotice('Flash no disponible en esta cámara');
+      if (torchNoticeTimerRef.current) clearTimeout(torchNoticeTimerRef.current);
+      torchNoticeTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setTorchNotice('');
+      }, 2200);
+      return;
+    }
+
+    const nextState = !isTorchOn;
+    const applied = await applyTorch(track, nextState);
+    if (applied || !nextState) {
+      setIsTorchOn(nextState);
+      saveCameraSettings({ torch: nextState });
+    }
   };
 
   const handleTriggerFocus = () => {
@@ -952,9 +1384,13 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
     const track = getVideoTrack();
     triggerFocus(track, 0.5, 0.5);
 
-    setTimeout(() => {
-      setIsFocusing(false);
-      setFocusIndicator(prev => ({ ...prev, visible: false }));
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => {
+      focusTimerRef.current = null;
+      if (mountedRef.current) {
+        setIsFocusing(false);
+        setFocusIndicator(prev => ({ ...prev, visible: false }));
+      }
     }, 700);
   };
 
@@ -976,75 +1412,91 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
     const track = getVideoTrack();
     triggerFocus(track, xRatio, yRatio);
 
-    setTimeout(() => {
-      setIsFocusing(false);
-      setFocusIndicator(prev => ({ ...prev, visible: false }));
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => {
+      focusTimerRef.current = null;
+      if (mountedRef.current) {
+        setIsFocusing(false);
+        setFocusIndicator(prev => ({ ...prev, visible: false }));
+      }
     }, 700);
   };
 
   const handleClose = () => {
+    activeSessionRef.current += 1;
+    isStartingRef.current = false;
+    autoSuspendedForTorchRef.current = false;
+    isCameraSuspendedRef.current = false;
     if (inactivityTimerRef.current) {
       clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = null;
+    }
+    if (resumeScanTimerRef.current) {
+      clearTimeout(resumeScanTimerRef.current);
+      resumeScanTimerRef.current = null;
+    }
+    if (resumeTorchTimerRef.current) {
+      clearTimeout(resumeTorchTimerRef.current);
+      resumeTorchTimerRef.current = null;
+    }
+    if (detectionRecoveryTimerRef.current) {
+      clearTimeout(detectionRecoveryTimerRef.current);
+      detectionRecoveryTimerRef.current = null;
+    }
+    if (focusTimerRef.current) {
+      clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = null;
     }
     if (zoomFeedbackTimeoutRef.current) {
       clearTimeout(zoomFeedbackTimeoutRef.current);
       zoomFeedbackTimeoutRef.current = null;
     }
+    if (torchNoticeTimerRef.current) {
+      clearTimeout(torchNoticeTimerRef.current);
+      torchNoticeTimerRef.current = null;
+    }
     setIsCameraSuspended(false);
     forceStopHardware();
     animateClose();
-    setTimeout(() => {
-      resetAll();
-    }, 200);
   };
 
   const handleSelectItem = (item) => {
     resetInactivityTimer();
     isInternalPausedRef.current = true;
     const track = activeTrackRef.current || getVideoTrack();
-    if (isTorchOn && track) {
-      applyTorch(track, false);
-    }
     if (track) {
-      track.enabled = true;
-    }
-    const video = document.querySelector('#barcode-camera-view video');
-    if (video && video.paused) {
-      video.play().catch(() => {});
+      applyTorch(track, false);
     }
     setActiveMode('camera');
     activeModeRef.current = 'camera';
     setSearchQuery('');
     setSearchResults([]);
     setHasSearched(false);
+    if (detectionRecoveryTimerRef.current) {
+      clearTimeout(detectionRecoveryTimerRef.current);
+    }
+    detectionRecoveryTimerRef.current = setTimeout(() => {
+      detectionRecoveryTimerRef.current = null;
+      if (
+        mountedRef.current &&
+        !isPausedRef.current &&
+        !isCameraSuspendedRef.current &&
+        !isClosingRef.current &&
+        isOpenRef.current &&
+        activeModeRef.current === 'camera'
+      ) {
+        isInternalPausedRef.current = false;
+        const liveTrack = activeTrackRef.current || getVideoTrack();
+        if (liveTrack && liveTrack.readyState === 'live') {
+          liveTrack.enabled = true;
+          if (isTorchOnRef.current) {
+            applyTorch(liveTrack, true);
+          }
+        }
+      }
+    }, 900);
     if (onDetectedRef.current) {
       onDetectedRef.current(item.codigo, item);
-    }
-  };
-
-  const handleSelectNewCode = (code) => {
-    resetInactivityTimer();
-    const clean = String(code || '').trim();
-    isInternalPausedRef.current = true;
-    const track = activeTrackRef.current || getVideoTrack();
-    if (isTorchOn && track) {
-      applyTorch(track, false);
-    }
-    if (track) {
-      track.enabled = true;
-    }
-    const video = document.querySelector('#barcode-camera-view video');
-    if (video && video.paused) {
-      video.play().catch(() => {});
-    }
-    setActiveMode('camera');
-    activeModeRef.current = 'camera';
-    setSearchQuery('');
-    setSearchResults([]);
-    setHasSearched(false);
-    if (onDetectedRef.current) {
-      onDetectedRef.current(clean);
     }
   };
 
@@ -1150,7 +1602,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
               className="relative bg-black flex-1 min-h-[260px] sm:min-h-[300px] flex items-center justify-center overflow-hidden cursor-crosshair"
               title={activeMode === 'camera' ? 'Toca en la cámara para re-enfocar' : undefined}
             >
-              <div id="barcode-camera-view" className="w-full h-full object-cover"></div>
+              <div id="barcode-camera-view" className="w-full flex-1 self-stretch min-h-[260px] sm:min-h-[300px] object-cover"></div>
 
               {!isStarting && !scannerError && !isCameraSuspended && activeMode === 'camera' && (
                 <div className="absolute inset-x-12 top-1/2 -translate-y-1/2 pointer-events-none z-10 flex items-center justify-center">
@@ -1221,6 +1673,14 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
                         </>
                       )}
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {torchNotice && !isStarting && !scannerError && !isCameraSuspended && activeMode === 'camera' && (
+                <div className="absolute top-14 inset-x-0 z-30 flex justify-center pointer-events-none animate-fade-in">
+                  <div className="px-3 py-1.5 rounded-full bg-slate-950/90 border border-white/20 text-white text-[11px] font-semibold shadow-lg">
+                    {torchNotice}
                   </div>
                 </div>
               )}
@@ -1341,6 +1801,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
+                    if (hasSearched) setHasSearched(false);
                     resetInactivityTimer();
                   }}
                   onFocus={resetInactivityTimer}
@@ -1394,19 +1855,15 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
                 </div>
               ) : hasSearched && !isSearching ? (
                 <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200/80 text-center text-xs text-amber-900 space-y-2 animate-in fade-in duration-200">
-                  <p className="font-semibold">No se encontraron productos con "{searchQuery}"</p>
-                  <p className="text-[11px] text-amber-700">
-                    ¿Deseas agregar este código como producto nuevo?
+                  <div className="w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <p className="font-semibold">
+                    No se encontraron productos con &quot;{searchQuery.trim()}&quot;
                   </p>
-                  <button
-                    type="button"
-                    onPointerDown={(e) => e.preventDefault()}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleSelectNewCode(searchQuery)}
-                    className="mt-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-bold cursor-pointer shadow-sm transition-all"
-                  >
-                    Registrar con este código
-                  </button>
+                  <p className="text-[11px] text-amber-800 leading-relaxed max-w-xs mx-auto">
+                    Comunícate al departamento de Sistemas para recibir una actualización de catálogo.
+                  </p>
                 </div>
               ) : (
                 <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center p-6 text-slate-400">

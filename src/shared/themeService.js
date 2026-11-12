@@ -49,15 +49,29 @@ export const themeService = {
         root.classList.add('dark');
         if (body) body.classList.add('dark');
         root.style.colorScheme = 'dark';
+        root.style.backgroundColor = '#0f172a';
+        if (body) body.style.backgroundColor = '#0f172a';
       } else {
         root.classList.remove('dark');
         if (body) body.classList.remove('dark');
         root.style.colorScheme = 'light';
+        root.style.backgroundColor = '#f8fafc';
+        if (body) body.style.backgroundColor = '#f8fafc';
       }
 
       const metaThemeColor = document.querySelector('meta[name="theme-color"]');
       if (metaThemeColor) {
-        metaThemeColor.setAttribute('content', isDark ? '#0b1120' : '#ffffff');
+        metaThemeColor.setAttribute('content', isDark ? '#0f172a' : '#ffffff');
+      }
+
+      const metaColorScheme = document.querySelector('meta[name="color-scheme"]');
+      if (metaColorScheme) {
+        metaColorScheme.setAttribute('content', isDark ? 'dark' : 'light');
+      }
+
+      const metaAppleStatusBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (metaAppleStatusBar) {
+        metaAppleStatusBar.setAttribute('content', isDark ? 'black-translucent' : 'default');
       }
     }
 

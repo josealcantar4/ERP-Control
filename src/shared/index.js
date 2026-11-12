@@ -12,6 +12,7 @@ export { PWAInstallPrompt } from './PWAInstallPrompt';
 export { ReloadPrompt } from './ReloadPrompt';
 export { ErrorBoundary } from './ErrorBoundary';
 export { ScreenRefreshSpinner } from './ScreenRefreshSpinner';
+export { LogoutLoadingScreen } from './LogoutLoadingScreen';
 export { NotificationsModal } from './NotificationsModal';
 export { AutoScrollInput } from './AutoScrollInput';
 export { MarqueeText } from './MarqueeText';

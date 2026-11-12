@@ -3,7 +3,7 @@
  */
 
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { db, isFirebaseConfigured } from '../../config/firebase';
 import * as XLSX from 'xlsx';
 
 const DB_NAME = 'ERP_Catalog_DB';
@@ -585,17 +585,30 @@ export const catalogService = {
     const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
     if (localBase) return localBase;
 
+    if (!isFirebaseConfigured || !db || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return null;
+    }
+
+    let timeoutId = null;
     try {
       const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
-      const limpioSnap = await getDoc(limpioRef);
-      if (limpioSnap.exists()) {
+      const limpioSnap = await Promise.race([
+        getDoc(limpioRef),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('CATALOG_LOOKUP_TIMEOUT')), 1500);
+        })
+      ]);
+      if (limpioSnap && limpioSnap.exists()) {
         const data = limpioSnap.data();
         if (!(cleanBarcode === '1' && String(data.descripcion).includes('ATOMIZADOR'))) {
           await saveLocalBatch(STORE_CLEAN, [data]);
           return data;
         }
       }
-    } catch (_e) {}
+    } catch (_e) {
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
 
     return null;
   },
@@ -605,7 +618,10 @@ export const catalogService = {
     if (!cleanBarcode || !descripcion) return null;
 
     const now = new Date().toISOString();
-    const existing = await getLocalItem(STORE_CLEAN, cleanBarcode);
+    let existing = null;
+    try {
+      existing = await getLocalItem(STORE_CLEAN, cleanBarcode);
+    } catch (_) {}
 
     const cleanItem = {
       codigo: cleanBarcode,
@@ -615,14 +631,23 @@ export const catalogService = {
     };
 
     try {
-      const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
-      await setDoc(limpioRef, cleanItem, { merge: true });
+      await saveLocalBatch(STORE_CLEAN, [cleanItem]);
     } catch (e) {
-      console.warn('Error guardando en Firestore catalogo_limpio:', e);
+      console.warn('Error guardando producto limpio en IndexedDB:', e);
+    }
+    memoryCache = null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
+        setDoc(limpioRef, cleanItem, { merge: true }).catch(e => {
+          console.warn('Producto guardado localmente, pendiente de sincronizar en catalogo_limpio:', e);
+        });
+      } catch (e) {
+        console.warn('Error preparando guardado en Firestore catalogo_limpio:', e);
+      }
     }
 
-    await saveLocalBatch(STORE_CLEAN, [cleanItem]);
-    memoryCache = null;
     return cleanItem;
   },
 
@@ -710,28 +735,26 @@ export const catalogService = {
       updatedAt: new Date().toISOString()
     };
 
-    try {
-      const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
-      await setDoc(limpioRef, cleanItem, { merge: true });
-    } catch (e) {
-      console.warn('Error actualizando en Firestore catalogo_limpio:', e);
-    }
-
     await saveLocalBatch(STORE_CLEAN, [cleanItem]);
     memoryCache = null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
+        setDoc(limpioRef, cleanItem, { merge: true }).catch(e => {
+          console.warn('Actualización en catalogo_limpio encolada (offline):', e);
+        });
+      } catch (e) {
+        console.warn('Error preparando actualización en Firestore catalogo_limpio:', e);
+      }
+    }
+
     return cleanItem;
   },
 
   async deleteFromCleanCatalog(barcode) {
     const cleanBarcode = normalizeBarcode(barcode);
     if (!cleanBarcode) return;
-
-    try {
-      const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
-      await deleteDoc(limpioRef);
-    } catch (e) {
-      console.warn('Error eliminando de Firestore catalogo_limpio:', e);
-    }
 
     const database = await openDB();
     await new Promise((resolve, reject) => {
@@ -742,6 +765,18 @@ export const catalogService = {
       tx.onerror = () => reject(tx.error);
     });
     memoryCache = null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
+        deleteDoc(limpioRef).catch(e => {
+          console.warn('Eliminación de catalogo_limpio encolada (offline):', e);
+        });
+      } catch (e) {
+        console.warn('Error preparando eliminación en Firestore catalogo_limpio:', e);
+      }
+    }
+
     return true;
   },
 

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { formatTransferFolio, playCheckSound } from '../transferencias';
 import { MarqueeText } from '../../shared/MarqueeText';
+import { FloatingInput } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function DespacharFaltantesModal({
@@ -89,7 +90,7 @@ export function DespacharFaltantesModal({
       });
       setItemsState(initial);
 
-      const existingDigits = currentSolicitud.folio ? String(currentSolicitud.folio).replace(/^TR/i, '') : '';
+      const existingDigits = currentSolicitud.folio ? String(currentSolicitud.folio).replace(/^TR/i, '').replace(/\D/g, '').slice(0, 12) : '';
       setFolioEnvioDigits(existingDigits);
       setNotas('');
     }
@@ -387,17 +388,13 @@ export function DespacharFaltantesModal({
                       </div>
 
                       {(parseInt(it.cantidadDespachada, 10) || 1) < it.cantidadFaltanteReportada && (
-                        <div className="w-full mt-2.5 pt-2 border-t border-emerald-100 flex flex-col sm:flex-row sm:items-center gap-1.5 animate-fade-in">
-                          <label className="text-[11px] font-bold text-emerald-900 shrink-0 flex items-center gap-1">
-                            <FileText className="w-3 h-3 text-emerald-600" />
-                            <span>Motivo faltante parcial (opcional):</span>
-                          </label>
-                          <input
-                            type="text"
+                        <div className="w-full mt-2.5 pt-2.5 border-t border-emerald-100 animate-fade-in">
+                          <FloatingInput
+                            label="Motivo faltante parcial (opcional)"
                             value={it.motivoParcial || ''}
                             onChange={e => updateItemMotivoParcial(it.index, e.target.value)}
                             placeholder="Ej. Solo cuento con 2 pzas en almacén"
-                            className="w-full text-xs px-2.5 py-1.5 bg-white border border-emerald-200 hover:border-emerald-300 focus:border-emerald-500 rounded-xl focus:outline-none text-slate-800 placeholder:text-slate-400 font-medium"
+                            icon={FileText}
                           />
                         </div>
                       )}
@@ -432,6 +429,8 @@ export function DespacharFaltantesModal({
               <input
                 type="text"
                 inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="off"
                 value={folioEnvioDigits}
                 placeholder="000123"
                 maxLength={12}

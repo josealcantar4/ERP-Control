@@ -21,6 +21,11 @@ export function useModalAnimation({
   const originLockedRef = useRef('50% 50%');
   const timerRef = useRef(null);
   const prevIsOpenRef = useRef(Boolean(isOpen));
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   if (Boolean(isOpen) !== prevIsOpen) {
     setPrevIsOpen(Boolean(isOpen));
@@ -62,9 +67,9 @@ export function useModalAnimation({
     timerRef.current = setTimeout(() => {
       setShouldRender(false);
       setIsClosing(false);
-      if (onClose) onClose();
+      if (onCloseRef.current) onCloseRef.current();
     }, duration);
-  }, [isClosing, duration, onClose]);
+  }, [isClosing, duration]);
 
   useEffect(() => {
     return () => {

@@ -28,8 +28,7 @@ import {
 } from 'lucide-react';
 import { organizationService, normalizeStr } from '../usuarios/organizationService';
 import { catalogService } from '../catalogo/catalogService';
-import { CleanProductModal } from '../catalogo/CleanProductModal';
-import { transferService, canUserDispatch, playOrderSuccessSound } from '../transferencias';
+import { transferService, canUserDispatch, playOrderSuccessSound, isDirectDispatch } from '../transferencias';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
@@ -85,14 +84,13 @@ export function DespachoDirectoModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasInlineSearched, setHasInlineSearched] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isQuantityOpen, setIsQuantityOpen] = useState(false);
   const [pendingItem, setPendingItem] = useState(null);
 
   const [scanError, setScanError] = useState(null);
-  const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
-  const [unregisteredCode, setUnregisteredCode] = useState('');
   const scanErrorTimerRef = useRef(null);
 
   useEffect(() => {
@@ -135,6 +133,8 @@ export function DespachoDirectoModal({
 
   const isFormLoadingRef = useRef(false);
   const autoSaveTimerRef = useRef(null);
+  const hasSubmittedRef = useRef(false);
+  const isSubmittingRef = useRef(false);
 
   const [dialog, setDialog] = useState({
     isOpen: false,
@@ -164,7 +164,7 @@ export function DespachoDirectoModal({
 
       const unsubSolicitudes = transferService.subscribeSolicitudes((list) => {
         const drafts = list.filter(
-          s => s.estado === 'borrador' && (s.sinSolicitud || s.esDespachoDirecto) && canUserDispatch(s, currentUser)
+          s => s.estado === 'borrador' && isDirectDispatch(s) && canUserDispatch(s, currentUser)
         );
         setDirectDrafts(drafts);
       });
@@ -207,7 +207,13 @@ export function DespachoDirectoModal({
   const targetDirectHasAreas = operativeDirectAreas.length > 0;
 
   const handleResetForm = () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     isFormLoadingRef.current = true;
+    hasSubmittedRef.current = false;
+    isSubmittingRef.current = false;
     setCurrentDraftId(null);
     setSelectedSede('');
     setSelectedArea('');
@@ -217,9 +223,9 @@ export function DespachoDirectoModal({
     setPackedItems([]);
     setSearchQuery('');
     setSearchResults([]);
+    setHasInlineSearched(false);
     setErrorMsg('');
     setScanError(null);
-    setUnregisteredCode('');
     setIsSubmitting(false);
     setIsConfirmOpen(false);
     setSavingStatus('');
@@ -238,16 +244,20 @@ export function DespachoDirectoModal({
     if (!q) {
       setSearchResults([]);
       setIsSearching(false);
+      setHasInlineSearched(false);
       return;
     }
 
     setIsSearching(true);
+    setHasInlineSearched(false);
     const timer = setTimeout(async () => {
       try {
         const results = await catalogService.searchMedicines(q);
         setSearchResults(results.slice(0, 15));
+        setHasInlineSearched(true);
       } catch (err) {
         console.error('Error buscando medicinas:', err);
+        setHasInlineSearched(true);
       } finally {
         setIsSearching(false);
       }
@@ -257,12 +267,18 @@ export function DespachoDirectoModal({
   }, [searchQuery]);
 
   const handleLoadDraft = (draft) => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     isFormLoadingRef.current = true;
+    hasSubmittedRef.current = false;
+    isSubmittingRef.current = false;
     setCurrentDraftId(draft.id);
     setSelectedSede(draft.sucursalReceptora || draft.sucursalDestino || '');
     setSelectedArea(draft.areaReceptora || draft.areaDestino || '');
     setSelectedAreaId(draft.areaReceptoraId || draft.areaDestinoId || '');
-    const cleanDigits = (draft.folio || '').replace(/^TR/i, '');
+    const cleanDigits = (draft.folio || '').replace(/^TR/i, '').replace(/\D/g, '').slice(0, 12);
     setFolioDigits(cleanDigits);
 
     const obs = draft.observaciones || '';
@@ -318,6 +334,7 @@ export function DespachoDirectoModal({
   };
 
   const performAutoSave = useCallback(async () => {
+    if (hasSubmittedRef.current) return;
     if (!packedItems || packedItems.length === 0) {
       if (currentDraftId) {
         try {
@@ -361,8 +378,9 @@ export function DespachoDirectoModal({
         areaDespachadora: currentUser?.area || '',
         areaDespachadoraId: currentUser?.areaId || '',
         esTransferenciaInterna: (selectedSede || '').toLowerCase() === (currentUser?.sede || '').toLowerCase(),
-        usuarioSolicitante: currentUser?.username || 'Bodega',
-        solicitanteNombre: currentUser?.nombre || currentUser?.username || 'Bodega',
+        tipo: 'despacho_directo',
+        usuarioSolicitante: '',
+        solicitanteNombre: '',
         usuarioDespacho: currentUser?.username || 'Bodega',
         usuarioAtencion: currentUser?.username || 'Bodega',
         observaciones: observacionFinal,
@@ -382,7 +400,7 @@ export function DespachoDirectoModal({
   }, [packedItems, selectedSede, selectedArea, selectedAreaId, targetDirectSedeObj, folioDigits, notasAdicionales, currentDraftId, currentUser]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || hasSubmittedRef.current) return;
     if (isFormLoadingRef.current) {
       isFormLoadingRef.current = false;
       return;
@@ -407,6 +425,7 @@ export function DespachoDirectoModal({
     setPendingItem(item);
     setSearchQuery('');
     setSearchResults([]);
+    setHasInlineSearched(false);
     setScanError(null);
     setIsQuantityOpen(true);
   };
@@ -425,11 +444,16 @@ export function DespachoDirectoModal({
         setScanError(null);
         handleSelectProduct(item);
       } else {
-        setScanError({ code: cleanCode });
-        if (scanErrorTimerRef.current) clearTimeout(scanErrorTimerRef.current);
-        scanErrorTimerRef.current = setTimeout(() => {
-          setScanError(null);
-        }, 6000);
+        setDialog({
+          isOpen: true,
+          type: 'alert',
+          variant: 'danger',
+          title: 'Producto no encontrado',
+          message: `El código "${cleanCode}" no se encuentra en el catálogo.\n\nComunícate al departamento de Sistemas para recibir una actualización de catálogo.`,
+          confirmText: 'Entendido',
+          onConfirm: closeDialog,
+          onCancel: closeDialog
+        });
       }
     } catch (err) {
       console.error('Error procesando escaneo de código:', err);
@@ -467,19 +491,6 @@ export function DespachoDirectoModal({
       } finally {
         setIsSearching(false);
       }
-    }
-  };
-
-  const handleSaveUnregisteredProduct = async (code, desc) => {
-    try {
-      await catalogService.saveToCleanCatalog(code, desc);
-      const newItem = { codigo: code, descripcion: desc };
-      setScanError(null);
-      setIsCleanModalOpen(false);
-      setPendingItem(newItem);
-      setIsQuantityOpen(true);
-    } catch (err) {
-      console.error('Error registrando producto nuevo:', err);
     }
   };
 
@@ -591,6 +602,16 @@ export function DespachoDirectoModal({
   };
 
   const executeDispatch = async () => {
+    if (isSubmittingRef.current || hasSubmittedRef.current) return;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    isFormLoadingRef.current = true;
+    hasSubmittedRef.current = true;
+    isSubmittingRef.current = true;
+
     const fullFolio = `TR${folioDigits.trim()}`;
     const observacionBase = 'Pedido despachado sin haber sido solicitado';
     const observacionFinal = notasAdicionales.trim()
@@ -600,7 +621,7 @@ export function DespachoDirectoModal({
     try {
       setIsSubmitting(true);
       setErrorMsg('');
-      await catalogService.saveBatchToCleanCatalog(packedItems);
+      catalogService.saveBatchToCleanCatalog(packedItems).catch(() => {});
       const newDispatch = await transferService.createDirectDispatch({
         id: currentDraftId,
         folio: fullFolio,
@@ -620,8 +641,9 @@ export function DespachoDirectoModal({
         sucursalDespachadoraId: currentUser?.sedeId || '',
         areaDespachadora: currentUser?.area || '',
         areaDespachadoraId: currentUser?.areaId || '',
-        usuarioSolicitante: currentUser?.username || 'Bodega',
-        solicitanteNombre: currentUser?.nombre || currentUser?.username || 'Bodega',
+        tipo: 'despacho_directo',
+        usuarioSolicitante: '',
+        solicitanteNombre: '',
         usuarioDespacho: currentUser?.username || 'Bodega',
         usuarioAtencion: currentUser?.username || 'Bodega',
         esTransferenciaInterna: isTargetDirectOwnSede,
@@ -639,8 +661,10 @@ export function DespachoDirectoModal({
       onClose();
     } catch (err) {
       console.error('Error al despachar pedido directo:', err);
-      setErrorMsg(err.message || 'Error al guardar el despacho en Firebase.');
+      hasSubmittedRef.current = false;
+      setErrorMsg(err.message || 'Error al guardar el despacho.');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -831,9 +855,14 @@ export function DespachoDirectoModal({
               <div className="sm:col-span-2">
                 <FloatingInput
                   label="Folio Transferencia (TR)"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={12}
+                  autoComplete="off"
                   required
                   value={folioDigits}
-                  onChange={(e) => setFolioDigits(e.target.value.replace(/[^0-9a-zA-Z_-]/g, ''))}
+                  onChange={(e) => setFolioDigits(e.target.value.replace(/\D/g, '').slice(0, 12))}
                   disabled={isSubmitting}
                   placeholder="12345"
                   icon={Tag}
@@ -892,6 +921,7 @@ export function DespachoDirectoModal({
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
+                      setHasInlineSearched(false);
                       if (scanError) setScanError(null);
                     }}
                     onKeyDown={handleSearchKeyDown}
@@ -899,6 +929,7 @@ export function DespachoDirectoModal({
                     icon={Search}
                     onClear={() => {
                       setSearchQuery('');
+                      setHasInlineSearched(false);
                       setScanError(null);
                     }}
                     loading={isSearching}
@@ -916,37 +947,30 @@ export function DespachoDirectoModal({
               </div>
 
               {scanError && (
-                <div className="p-3 bg-amber-50 border border-amber-200/90 text-amber-900 rounded-2xl flex items-center justify-between gap-3 text-xs animate-fade-in shadow-sm">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                    <span className="truncate">
-                      El código <strong className="font-mono text-amber-950 font-bold">&quot;{scanError.code}&quot;</strong> no está en el catálogo.
-                    </span>
+                <div className="p-3 bg-amber-50 border border-amber-200/90 text-amber-900 rounded-2xl flex items-start justify-between gap-2.5 text-xs animate-fade-in shadow-sm">
+                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                    <div className="min-w-0 leading-relaxed">
+                      <p className="font-semibold text-amber-950">
+                        El código <span className="font-mono font-bold">&quot;{scanError.code}&quot;</span> no se encuentra en el catálogo.
+                      </p>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        Comunícate al departamento de Sistemas para recibir una actualización de catálogo.
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUnregisteredCode(scanError.code);
-                        setIsCleanModalOpen(true);
-                      }}
-                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-[11px] font-bold transition-colors cursor-pointer shadow-sm"
-                    >
-                      Registrar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScanError(null)}
-                      className="w-6 h-6 rounded-lg hover:bg-amber-200/60 text-amber-700 flex items-center justify-center transition-colors cursor-pointer"
-                      title="Cerrar aviso"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setScanError(null)}
+                    className="w-6 h-6 rounded-lg hover:bg-amber-200/60 text-amber-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                    title="Cerrar aviso"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               )}
 
-              {searchResults.length > 0 && (
+              {searchResults.length > 0 ? (
                 <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white border border-slate-200 rounded-2xl shadow-lg">
                   {searchResults.map((item) => (
                     <button
@@ -968,7 +992,19 @@ export function DespachoDirectoModal({
                     </button>
                   ))}
                 </div>
-              )}
+              ) : hasInlineSearched && !isSearching && !scanError && searchQuery.trim() ? (
+                <div className="p-3 bg-amber-50 border border-amber-200/90 text-amber-900 rounded-2xl flex items-start gap-2.5 text-xs animate-fade-in shadow-sm">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="min-w-0 leading-relaxed">
+                    <p className="font-semibold text-amber-950">
+                      No se encontraron productos con &quot;{searchQuery.trim()}&quot;.
+                    </p>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      Comunícate al departamento de Sistemas para recibir una actualización de catálogo.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
               {packedItems.length === 0 ? (
                 <div className="p-6 text-center bg-slate-50/60 rounded-2xl border border-dashed border-slate-200 space-y-1 text-slate-400">
@@ -1212,7 +1248,7 @@ export function DespachoDirectoModal({
 
       <BarcodeScannerModal
         isOpen={isScannerOpen}
-        isPaused={isQuantityOpen || isCleanModalOpen || dialog.isOpen || isConfirmOpen}
+        isPaused={isQuantityOpen || dialog.isOpen || isConfirmOpen}
         onClose={() => setIsScannerOpen(false)}
         onDetected={handleBarcodeDetected}
       />
@@ -1238,13 +1274,6 @@ export function DespachoDirectoModal({
         onConfirm={dialog.onConfirm}
         onCancel={dialog.onCancel}
         onClose={closeDialog}
-      />
-
-      <CleanProductModal
-        isOpen={isCleanModalOpen}
-        item={unregisteredCode ? { codigo: unregisteredCode, descripcion: '' } : null}
-        onClose={() => setIsCleanModalOpen(false)}
-        onSave={handleSaveUnregisteredProduct}
       />
 
       <ConfirmDirectDispatchModal
@@ -1398,9 +1427,10 @@ function ConfirmDirectDispatchModal({
               {packedItems.map((item, idx) => (
                 <div key={item.codigo || idx} className="py-2 first:pt-1 last:pb-1 flex items-center justify-between gap-2.5">
                   <div className="min-w-0 flex-1">
-                    <span className="font-bold text-slate-800 dark:text-slate-100 truncate block text-xs" title={item.descripcion}>
-                      {item.descripcion}
-                    </span>
+                    <MarqueeText
+                      text={item.descripcion}
+                      className="font-bold text-slate-800 dark:text-slate-100 text-xs"
+                    />
                     <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 block mt-0.5">
                       Código: {item.codigo}
                     </span>

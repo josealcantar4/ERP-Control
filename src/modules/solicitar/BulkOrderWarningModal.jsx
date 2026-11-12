@@ -13,7 +13,7 @@ import {
   Building2
 } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
-import { playCheckSound } from '../../shared';
+import { playCheckSound, MarqueeText } from '../../shared';
 
 export function BulkOrderWarningModal({
   isOpen,
@@ -132,9 +132,10 @@ export function BulkOrderWarningModal({
                   className="p-2.5 bg-white border border-slate-200/80 rounded-xl flex items-center justify-between gap-3 shadow-xs"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-slate-800 truncate">
-                      {item.descripcion}
-                    </p>
+                    <MarqueeText
+                      text={item.descripcion}
+                      className="text-xs font-bold text-slate-800"
+                    />
                     <p className="text-[10px] text-slate-400 font-mono">
                       Cód: {item.codigo}
                     </p>

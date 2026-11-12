@@ -26,10 +26,11 @@ export function ModalDialog({
   onClose,
   children
 }) {
-  const isConfirmActionRef = React.useRef(false);
+  const actionTriggeredRef = React.useRef(false);
 
   const {
     shouldRender,
+    isClosing,
     cardRef,
     handleClose,
     handleBackdropClick,
@@ -39,15 +40,18 @@ export function ModalDialog({
   } = useModalAnimation({
     isOpen,
     onClose: () => {
-      if (isConfirmActionRef.current) {
-        isConfirmActionRef.current = false;
-        if (onConfirm) onConfirm();
-      } else {
-        if (onCancel) onCancel();
-        else if (onClose) onClose();
-      }
+      if (actionTriggeredRef.current) return;
+      actionTriggeredRef.current = true;
+      if (onCancel) onCancel();
+      else if (onClose) onClose();
     }
   });
+
+  React.useEffect(() => {
+    if (isOpen) {
+      actionTriggeredRef.current = false;
+    }
+  }, [isOpen, title, message, type]);
 
   React.useEffect(() => {
     if (isOpen && variant === 'success') {
@@ -58,12 +62,17 @@ export function ModalDialog({
   if (!shouldRender) return null;
 
   const handleConfirmClick = () => {
-    isConfirmActionRef.current = true;
-    handleClose();
+    if (actionTriggeredRef.current || isClosing) return;
+    actionTriggeredRef.current = true;
+    if (onConfirm) {
+      onConfirm();
+    } else {
+      handleClose();
+    }
   };
 
   const handleCancelClick = () => {
-    isConfirmActionRef.current = false;
+    if (actionTriggeredRef.current || isClosing) return;
     handleClose();
   };
 

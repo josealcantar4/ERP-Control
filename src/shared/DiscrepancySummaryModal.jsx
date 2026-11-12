@@ -16,6 +16,7 @@ import {
   FileText
 } from 'lucide-react';
 import { useModalAnimation } from '../hooks';
+import { FloatingInput } from './FloatingInput';
 
 export function DiscrepancySummaryModal({
   isOpen,
@@ -197,17 +198,13 @@ export function DiscrepancySummaryModal({
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-200/60">
-                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 mb-1">
-                    <FileText className="w-3 h-3 text-slate-500 shrink-0" />
-                    <span>Motivo de este producto:</span>
-                  </div>
-                  <input
-                    type="text"
+                <div className="pt-2.5 border-t border-slate-200/60">
+                  <FloatingInput
+                    label="Motivo de este producto (opcional)"
                     value={disc.observacion || ''}
                     onChange={(e) => handleItemObsChange(idx, e.target.value)}
                     placeholder="Ej. Faltaron piezas físicas en la caja, empaque quebrado, caducado..."
-                    className="w-full text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white/90 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 placeholder:text-slate-400 font-medium"
+                    icon={FileText}
                   />
                 </div>
               </div>

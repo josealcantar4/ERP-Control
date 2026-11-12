@@ -19,6 +19,7 @@ export {
   canUserViewInRecibirHistory,
   getTransferParticipants,
   formatOrderRequestedBy,
-  isAreaExcludedFromTransfers
+  isAreaExcludedFromTransfers,
+  isDirectDispatch
 } from './transferService';
 export { TransferDetailModal } from './TransferDetailModal';

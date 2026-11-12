@@ -19,6 +19,7 @@ import {
   OfflineIndicator,
   ReloadPrompt,
   ScreenRefreshSpinner,
+  LogoutLoadingScreen,
   NotificationsModal,
   transitionView
 } from './shared';
@@ -29,9 +30,19 @@ export default function App() {
     return localStorage.getItem('currentScreen') || 'dashboard';
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutUserInfo, setLogoutUserInfo] = useState(null);
+  const isLoggingOutRef = useRef(false);
+  const logoutTimerRef = useRef(null);
   const [isScreenUpdating, setIsScreenUpdating] = useState(false);
   const isScreenRefreshingRef = useRef(false);
   const lastScreenRefreshTimeRef = useRef({});
+
+  useEffect(() => {
+    return () => {
+      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    };
+  }, []);
 
   const [syncModal, setSyncModal] = useState({
     isOpen: false,
@@ -398,6 +409,13 @@ export default function App() {
   }, []);
 
   const handleLoginSuccess = (user) => {
+    if (logoutTimerRef.current) {
+      clearTimeout(logoutTimerRef.current);
+      logoutTimerRef.current = null;
+    }
+    isLoggingOutRef.current = false;
+    setIsLoggingOut(false);
+    setLogoutUserInfo(null);
     setIsSidebarOpen(false);
     transitionView(() => {
       setCurrentUser(user);
@@ -410,25 +428,53 @@ export default function App() {
       }
       setCurrentScreen(targetScreen);
       localStorage.setItem('currentScreen', targetScreen);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }, { direction: 'login' });
 
     runCatalogAutoSync();
   };
 
   const handleLogout = () => {
+    if (isLoggingOutRef.current) return;
+    isLoggingOutRef.current = true;
+
+    const userSnapshot = currentUser
+      ? {
+          nombre: currentUser.nombre,
+          username: currentUser.username
+        }
+      : null;
+
+    setLogoutUserInfo(userSnapshot);
     setIsSidebarOpen(false);
-    transitionView(() => {
-      userService.logout();
-      transferService.resetSolicitudesSubscription();
-      setCurrentUser(null);
-      setCurrentScreen('dashboard');
-      localStorage.removeItem('currentScreen');
-    }, { direction: 'login' });
+    setIsNotificationsOpen(false);
+    setNotificationDetailTransfer(null);
+    setIsScreenUpdating(false);
+    setSyncModal(prev => ({ ...prev, isOpen: false }));
+    setIsLoggingOut(true);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+
+    userService.logout();
+    transferService.resetSolicitudesSubscription();
+    sessionStorage.removeItem('erp_recibir_order_id');
+    sessionStorage.removeItem('erp_despachar_solicitud_id');
+    setCurrentUser(null);
+    setCurrentScreen('dashboard');
+    localStorage.removeItem('currentScreen');
+
+    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    logoutTimerRef.current = setTimeout(() => {
+      transitionView(() => {
+        setIsLoggingOut(false);
+        setLogoutUserInfo(null);
+        isLoggingOutRef.current = false;
+      }, { direction: 'login' });
+    }, 950);
   };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 animate-fade-in select-none">
+      <div className="min-h-dvh bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 animate-fade-in select-none">
         <div className="flex flex-col items-center gap-4 animate-scale-in">
           <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xl shadow-blue-500/25">
             <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -448,6 +494,10 @@ export default function App() {
     );
   }
 
+  if (isLoggingOut) {
+    return <LogoutLoadingScreen user={logoutUserInfo} />;
+  }
+
   if (!currentUser) {
     return (
       <>
@@ -459,11 +509,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-colors duration-200 overflow-x-clip relative">
+    <div className="min-h-dvh bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-colors duration-200 overflow-x-clip relative">
       <OfflineIndicator />
 
       <div
-        className={`flex flex-col min-h-screen w-full transition-transform duration-300 ease-out ${
+        className={`flex flex-col min-h-dvh w-full transition-transform duration-300 ease-out ${
           isSidebarOpen ? 'transform -translate-x-72 sm:-translate-x-80 pointer-events-none select-none' : ''
         }`}
       >

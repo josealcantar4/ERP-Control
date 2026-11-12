@@ -2,13 +2,14 @@
  * Módulo para la inspección física, verificación de productos recibidos, captura de discrepancias y reporte de faltantes por sucursal.
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
   Check,
   PackageOpen,
   AlertTriangle,
+  AlertCircle,
   Truck,
   X,
   RotateCcw,
@@ -35,8 +36,10 @@ import {
   QuantityStepper,
   DiscrepancySummaryModal,
   ModalDialog,
-  MarqueeSearchInput
+  MarqueeSearchInput,
+  FloatingInput
 } from '../../shared';
+import { usePendingSync } from '../../hooks';
 
 export function getDispatchedQty(item) {
   if (!item) return 0;
@@ -160,6 +163,8 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
   const [isHistorialInitialLoading, setIsHistorialInitialLoading] = useState(false);
   const [detailSolicitud, setDetailSolicitud] = useState(null);
   const [usersList, setUsersList] = useState([]);
+  const isSubmittingRef = useRef(false);
+  const { pendingSyncIds } = usePendingSync();
 
   useEffect(() => {
     const unsub = userService.subscribeUsers((list) => {
@@ -783,92 +788,110 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
   };
 
   const finalizeReceive = async (faltantes = []) => {
-    const updatedItems = (selectedOrder.items || []).map((it, idx) => ({
-      ...it,
-      recibido: true,
-      cantidadRecibida: getReceivedQty(idx, it),
-      cantidadEsperada: getDispatchedQty(it),
-      cantidadDespachada: getDispatchedQty(it),
-      observacionRecepcion: itemObservations[idx] || it.observacionRecepcion || ''
-    }));
-    await transferService.receiveSolicitud(selectedOrder.id, faltantes, updatedItems, currentUser?.username || 'sucursal');
-    playOrderSuccessSound();
-    setIsDiscrepancyModalOpen(false);
-    closeOrder();
-  };
-
-  const handleConfirmDiscrepancies = async (summaryData) => {
-    const obsMap = { ...itemObservations };
-    (summaryData.discrepancias || []).forEach(d => {
-      const foundIdx = selectedOrder.items?.findIndex(it => it.codigo === d.codigo);
-      if (foundIdx !== -1 && d.observacion !== undefined) {
-        obsMap[foundIdx] = d.observacion;
-      }
-    });
-
-    await transferService.receiveWithDiscrepancies(selectedOrder.id, {
-      discrepancias: summaryData.discrepancias,
-      observaciones: summaryData.observaciones,
-      usuarioReceptor: currentUser?.username || 'sucursal',
-      itemsActualizados: selectedOrder.items.map((it, idx) => ({
+    if (!selectedOrder || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    try {
+      const updatedItems = (selectedOrder.items || []).map((it, idx) => ({
         ...it,
-        recibido: Boolean(checkedItems[idx]),
+        recibido: true,
         cantidadRecibida: getReceivedQty(idx, it),
         cantidadEsperada: getDispatchedQty(it),
         cantidadDespachada: getDispatchedQty(it),
-        observacionRecepcion: obsMap[idx] || it.observacionRecepcion || ''
-      }))
-    });
-    playOrderSuccessSound();
-    setIsDiscrepancyModalOpen(false);
-    closeOrder();
+        observacionRecepcion: itemObservations[idx] || it.observacionRecepcion || ''
+      }));
+      await transferService.receiveSolicitud(selectedOrder.id, faltantes, updatedItems, currentUser?.username || 'sucursal');
+      playOrderSuccessSound();
+      setIsDiscrepancyModalOpen(false);
+      closeOrder();
+    } finally {
+      isSubmittingRef.current = false;
+    }
+  };
+
+  const handleConfirmDiscrepancies = async (summaryData) => {
+    if (!selectedOrder || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    try {
+      const obsMap = { ...itemObservations };
+      (summaryData.discrepancias || []).forEach(d => {
+        const foundIdx = selectedOrder.items?.findIndex(it => it.codigo === d.codigo);
+        if (foundIdx !== -1 && d.observacion !== undefined) {
+          obsMap[foundIdx] = d.observacion;
+        }
+      });
+
+      await transferService.receiveWithDiscrepancies(selectedOrder.id, {
+        discrepancias: summaryData.discrepancias,
+        observaciones: summaryData.observaciones,
+        usuarioReceptor: currentUser?.username || 'sucursal',
+        itemsActualizados: selectedOrder.items.map((it, idx) => ({
+          ...it,
+          recibido: Boolean(checkedItems[idx]),
+          cantidadRecibida: getReceivedQty(idx, it),
+          cantidadEsperada: getDispatchedQty(it),
+          cantidadDespachada: getDispatchedQty(it),
+          observacionRecepcion: obsMap[idx] || it.observacionRecepcion || ''
+        }))
+      });
+      playOrderSuccessSound();
+      setIsDiscrepancyModalOpen(false);
+      closeOrder();
+    } finally {
+      isSubmittingRef.current = false;
+    }
   };
 
   const handleListoFaltantes = async (reReportToBodega = false) => {
-    const itemsResolucion = selectedOrder.resolucionFaltantes?.itemsResolucion || [];
-    const newlyDispatched = itemsResolucion.filter(i => i.despachado);
+    if (!selectedOrder || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    try {
+      const itemsResolucion = selectedOrder.resolucionFaltantes?.itemsResolucion || [];
+      const newlyDispatched = itemsResolucion.filter(i => i.despachado);
 
-    const itemsRecibidos = [];
-    const itemsAunFaltantes = [];
+      const itemsRecibidos = [];
+      const itemsAunFaltantes = [];
 
-    newlyDispatched.forEach((item, idx) => {
-      const dispatchedQty = getExpectedNewFaltanteQty(item, selectedOrder);
-      const currentVal = newFaltantesQuantities[idx];
-      const receivedQty = currentVal !== undefined ? Number(currentVal) : dispatchedQty;
-      const obs = newFaltanteObservations[idx] || item.observacion || '';
+      newlyDispatched.forEach((item, idx) => {
+        const dispatchedQty = getExpectedNewFaltanteQty(item, selectedOrder);
+        const currentVal = newFaltantesQuantities[idx];
+        const receivedQty = currentVal !== undefined ? Number(currentVal) : dispatchedQty;
+        const obs = newFaltanteObservations[idx] || item.observacion || '';
 
-      if (receivedQty > 0) {
-        itemsRecibidos.push({
-          ...item,
-          cantidadRecibida: receivedQty,
-          observacion: obs,
-          motivoRecepcion: obs
-        });
-      }
+        if (receivedQty > 0) {
+          itemsRecibidos.push({
+            ...item,
+            cantidadRecibida: receivedQty,
+            observacion: obs,
+            motivoRecepcion: obs
+          });
+        }
 
-      if (receivedQty < dispatchedQty) {
-        itemsAunFaltantes.push({
-          ...item,
-          cantidadAunFaltante: dispatchedQty - receivedQty,
-          cantidadEsperadaReenvio: dispatchedQty,
-          cantidadRecibidaReenvio: receivedQty,
-          observacion: obs,
-          motivoRecepcion: obs
-        });
-      }
-    });
+        if (receivedQty < dispatchedQty) {
+          itemsAunFaltantes.push({
+            ...item,
+            cantidadAunFaltante: dispatchedQty - receivedQty,
+            cantidadEsperadaReenvio: dispatchedQty,
+            cantidadRecibidaReenvio: receivedQty,
+            observacion: obs,
+            motivoRecepcion: obs
+          });
+        }
+      });
 
-    const notasReporte = itemsAunFaltantes.map(af => af.observacion).filter(Boolean).join('; ');
+      const notasReporte = itemsAunFaltantes.map(af => af.observacion).filter(Boolean).join('; ');
 
-    await transferService.receiveFaltantes(selectedOrder.id, {
-      itemsRecibidos,
-      itemsAunFaltantes,
-      reReportToBodega,
-      notas: notasReporte,
-      usuarioRecepcion: currentUser?.username || 'sucursal'
-    });
-    playOrderSuccessSound();
-    closeOrder();
+      await transferService.receiveFaltantes(selectedOrder.id, {
+        itemsRecibidos,
+        itemsAunFaltantes,
+        reReportToBodega,
+        notas: notasReporte,
+        usuarioRecepcion: currentUser?.username || 'sucursal'
+      });
+      playOrderSuccessSound();
+      closeOrder();
+    } finally {
+      isSubmittingRef.current = false;
+    }
   };
 
   const requestConfirmListoFaltantes = (reReportToBodega = false) => {
@@ -947,20 +970,13 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
               <button
                 type="button"
                 onClick={() => handleSwitchTab('recibir')}
-                className={`px-3 py-1 rounded-full flex items-center gap-1.5 cursor-pointer transition-all duration-200 ${
+                className={`px-3 py-1 rounded-full cursor-pointer transition-all duration-200 ${
                   activeTab === 'recibir'
                     ? 'bg-white text-slate-900 shadow-sm font-semibold'
                     : 'text-slate-500 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white'
                 }`}
               >
                 <span>Recibir</span>
-                {solicitudes.length > 0 && (
-                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                    activeTab === 'recibir' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-300/80 text-slate-700'
-                  }`}>
-                    {solicitudes.length}
-                  </span>
-                )}
               </button>
               <button
                 type="button"
@@ -979,8 +995,9 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
         </div>
 
         {!selectedOrder && activeTab === 'historial' && (
-          <div className="relative pt-0.5">
+          <div className="relative pt-1">
             <MarqueeSearchInput
+              label="Buscar en historial"
               placeholder="Buscar por folio, origen, producto o notas..."
               value={historySearch}
               onChange={(e) => setHistorySearch(e.target.value)}
@@ -1061,16 +1078,39 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                               <Check className="w-2.5 h-2.5 stroke-[3]" /> Revisando
                             </span>
                           )}
+                          {pendingSyncIds.has(sol.id) && (
+                            <span
+                              title="En cola para sincronizar al recuperar conexión"
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>En cola</span>
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-slate-500 font-medium">
                           {formatOrderRequestedBy(sol, usersList)}
                         </p>
-                        {(sol.observaciones || sol.motivo || sol.notas) && (
-                          <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
-                            <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                            <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
-                          </div>
-                        )}
+                        {(() => {
+                          const rawObs = sol.observaciones || sol.motivo || sol.notas;
+                          const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                          const isDirect = sol.sinSolicitud || sol.esDespachoDirecto;
+                          const isGeneric = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                          if (!obs || isGeneric) return null;
+                          return (
+                            <div className="flex items-start gap-1.5 text-xs mt-1">
+                              <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                              <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                                <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                  Observaciones:
+                                </span>
+                                <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                                  {obs}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })()}
                         <p className="text-xs text-slate-500">
                           {isFaltante
                             ? 'Faltantes despachados en camino'
@@ -1213,6 +1253,15 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                                 Despacho Directo
                               </span>
                             )}
+                            {pendingSyncIds.has(sol.id) && (
+                              <span
+                                title="En cola para sincronizar al recuperar conexión"
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                              >
+                                <Clock className="w-2.5 h-2.5 shrink-0" />
+                                <span>En cola</span>
+                              </span>
+                            )}
                           </div>
 
                           <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
@@ -1221,12 +1270,28 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             Enviado desde: <strong className="text-slate-700 dark:text-slate-200 font-semibold">{origenText}{sol.areaDestino ? ` (${sol.areaDestino})` : ''}</strong>
                           </p>
-                          {(sol.observacionesRecepcion || sol.observaciones || sol.motivo || sol.notas) && (
-                            <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/20 mt-1">
-                              <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                              <span className="italic line-clamp-2">&ldquo;{sol.observacionesRecepcion || sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
-                            </div>
-                          )}
+                          {(() => {
+                            const obsRec = typeof sol.observacionesRecepcion === 'string' ? sol.observacionesRecepcion.trim() : sol.observacionesRecepcion;
+                            const rawOrderObs = sol.observaciones || sol.motivo || sol.notas;
+                            const obsOrder = typeof rawOrderObs === 'string' ? rawOrderObs.trim() : rawOrderObs;
+                            const obs = obsRec || obsOrder;
+                            const isDirect = Boolean(sol.sinSolicitud || sol.esDespachoDirecto);
+                            const isGeneric = isDirect && !obsRec && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                            if (!obs || isGeneric) return null;
+                            return (
+                              <div className="flex items-start gap-1.5 text-xs mt-1">
+                                <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                                <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                                  <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                    Observaciones:
+                                  </span>
+                                  <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                                    {obs}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <div className="flex items-center gap-3 text-[11px] text-slate-400 dark:text-slate-500 flex-wrap">
                             <span>Recibió: <strong className="text-slate-600 dark:text-slate-300 font-medium">{receptorText}</strong></span>
                             <span>&bull;</span>
@@ -1512,13 +1577,18 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
 
                     {showObsField ? (
                       <div className="pt-2.5 border-t border-purple-100 sm:pl-9" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-between text-xs text-purple-900 mb-1 font-semibold">
-                          <div className="flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5 text-purple-500" />
-                            <span>{isUnderReceived ? 'Motivo / observación de este faltante' : 'Observación / nota del producto:'}</span>
-                            {isUnderReceived && <span className="text-red-500 font-bold">*</span>}
-                          </div>
-                          {!isUnderReceived && (
+                        <FloatingInput
+                          label={isUnderReceived ? 'Motivo / observación de este faltante' : 'Observación / nota del producto'}
+                          required={isUnderReceived}
+                          value={newFaltanteObservations[idx] || ''}
+                          onChange={(e) => handleNewFaltanteObservationChange(idx, e.target.value)}
+                          placeholder={
+                            isUnderReceived
+                              ? "Ej. Faltante físico en el reenvío, pieza rota o dañada..."
+                              : "Observación opcional sobre este producto..."
+                          }
+                          icon={FileText}
+                          endAdornment={!isUnderReceived ? (
                             <button
                               type="button"
                               onClick={() => {
@@ -1527,22 +1597,12 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                                 setNewFaltanteObservations(newObs);
                                 setActiveFaltanteObservationIndex(null);
                               }}
-                              className="text-[10px] text-purple-600 hover:text-purple-800 font-semibold cursor-pointer"
+                              className="w-6 h-6 rounded-full bg-purple-100 hover:bg-purple-200 text-purple-600 flex items-center justify-center transition-colors cursor-pointer"
+                              title="Cancelar observación"
                             >
-                              Cancelar
+                              <X className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                        </div>
-                        <input
-                          type="text"
-                          value={newFaltanteObservations[idx] || ''}
-                          onChange={(e) => handleNewFaltanteObservationChange(idx, e.target.value)}
-                          placeholder={
-                            isUnderReceived
-                              ? "Ej. Faltante físico en el reenvío, pieza rota o dañada..."
-                              : "Observación opcional sobre este producto..."
-                          }
-                          className="w-full text-xs px-3.5 py-2.5 bg-white hover:bg-slate-50 focus:bg-white border border-purple-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 text-slate-900 placeholder:text-slate-400 shadow-2xs transition-all font-medium"
+                          ) : null}
                         />
                       </div>
                     ) : (
@@ -1705,15 +1765,26 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
             <p className="text-xs text-slate-500">
               Toca el producto para marcarlo conforme, o ajusta las cantidades recibidas con los botones [ - ] y [ + ].
             </p>
-            {selectedOrder.observaciones && (
-              <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 text-xs flex items-start gap-2 text-amber-900 mt-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block">Observación del Despacho:</span>
-                  <p className="text-amber-800 font-medium">{selectedOrder.observaciones}</p>
+            {(() => {
+              const rawObs = selectedOrder.observaciones || selectedOrder.motivo || selectedOrder.notas;
+              const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+              const isDirect = Boolean(selectedOrder.sinSolicitud || selectedOrder.esDespachoDirecto);
+              const isGenericDirectObs = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+              if (!obs || isGenericDirectObs) return null;
+              return (
+                <div className="flex items-start gap-1.5 pt-2.5 mt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                  <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                  <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                    <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                      Observación del Despacho:
+                    </span>
+                    <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                      {obs}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
@@ -1739,18 +1810,21 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                 cantSolicitada !== cantDespachada
               );
 
-              const ajusteDespachoItem = selectedOrder.ajustesDespacho?.find(a => 
-                (a.codigo && item.codigo && String(a.codigo) === String(item.codigo)) ||
-                (a.descripcion && item.descripcion && a.descripcion.toLowerCase() === item.descripcion.toLowerCase())
-              );
+              const ajusteDespachoItem = !item.esExtra
+                ? selectedOrder.ajustesDespacho?.find(a =>
+                    (a.codigo && item.codigo && String(a.codigo) === String(item.codigo)) ||
+                    (a.descripcion && item.descripcion && a.descripcion.toLowerCase() === item.descripcion.toLowerCase())
+                  )
+                : null;
 
-              const itemMotivo = 
-                item.motivoAjusteDespacho || 
-                item.motivo || 
-                item.motivoAjuste || 
-                item.motivoParcial || 
-                ajusteDespachoItem?.motivo || 
+              const rawItemMotivo =
+                item.motivoAjusteDespacho ||
+                item.motivo ||
+                item.motivoAjuste ||
+                item.motivoParcial ||
+                ajusteDespachoItem?.motivo ||
                 ajusteDespachoItem?.motivoAjusteDespacho;
+              const itemMotivo = typeof rawItemMotivo === 'string' ? rawItemMotivo.trim() : rawItemMotivo;
 
               return (
                 <div
@@ -1854,9 +1928,11 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                         </div>
 
                         {itemMotivo && (
-                          <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-amber-950 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80">
-                            <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span className="italic font-medium text-amber-900">&ldquo;{itemMotivo}&rdquo;</span>
+                          <div className="mt-1.5 w-fit max-w-full flex items-start gap-1.5 text-xs text-amber-950 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80">
+                            <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-[2px]" />
+                            <span className="italic font-medium text-amber-900 break-words min-w-0 max-w-full whitespace-pre-line">
+                              &ldquo;{itemMotivo}&rdquo;
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1874,13 +1950,18 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
 
                   {(hasDiscrepancy || activeObservationIndex === index) ? (
                     <div className="pt-2.5 border-t border-slate-100 sm:pl-9" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-between text-xs text-slate-600 mb-1 font-semibold">
-                        <div className="flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                          <span>{hasDiscrepancy ? 'Motivo del faltante o discrepancia *' : 'Observación / nota del producto:'}</span>
-                          {hasDiscrepancy && <span className="text-red-500 font-bold">*</span>}
-                        </div>
-                        {!hasDiscrepancy && (
+                      <FloatingInput
+                        label={hasDiscrepancy ? 'Motivo del faltante o discrepancia' : 'Observación / nota del producto'}
+                        required={hasDiscrepancy}
+                        value={itemObservations[index] || ''}
+                        onChange={(e) => handleObservationChange(index, e.target.value)}
+                        placeholder={
+                          hasDiscrepancy
+                            ? "Ej: Faltaron piezas físicas en caja, empaque quebrado, caducado..."
+                            : "Observación opcional sobre este producto..."
+                        }
+                        icon={FileText}
+                        endAdornment={!hasDiscrepancy ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -1889,22 +1970,12 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                               setItemObservations(newObs);
                               setActiveObservationIndex(null);
                             }}
-                            className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                            className="w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+                            title="Cancelar observación"
                           >
-                            Cancelar
+                            <X className="w-3.5 h-3.5" />
                           </button>
-                        )}
-                      </div>
-                      <input
-                        type="text"
-                        value={itemObservations[index] || ''}
-                        onChange={(e) => handleObservationChange(index, e.target.value)}
-                        placeholder={
-                          hasDiscrepancy
-                            ? "Ej: Faltaron piezas físicas en caja, empaque quebrado, caducado..."
-                            : "Observación opcional sobre este producto..."
-                        }
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white focus:border-indigo-500 focus:outline-none transition-colors text-slate-800 placeholder:text-slate-400 font-medium"
+                        ) : null}
                       />
                     </div>
                   ) : (

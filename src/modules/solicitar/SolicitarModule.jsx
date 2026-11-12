@@ -5,19 +5,20 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ScanBarcode, Send, Trash2, CheckCircle2, ArrowLeft, History, ChevronRight, Plus, Minus,
-  Building2, Layers, Info, Search, X, Loader2, ChevronDown, Clock, FileText
+  Building2, Layers, Info, AlertCircle, Search, X, Loader2, ChevronDown, Clock, FileText
 } from 'lucide-react';
 import { organizationService, normalizeStr } from '../usuarios/organizationService';
 import { userService } from '../usuarios/userService';
 import { catalogService } from '../catalogo/catalogService';
-import { transferService, formatTransferFolio, canUserViewInSolicitar, playOrderSuccessSound, formatOrderRequestedBy } from '../transferencias';
+import { transferService, formatTransferFolio, canUserViewInSolicitar, playOrderSuccessSound, formatOrderRequestedBy, isDirectDispatch } from '../transferencias';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { BulkOrderWarningModal } from './BulkOrderWarningModal';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { transitionView, MarqueeSearchInput } from '../../shared';
+import { transitionView, MarqueeSearchInput, FloatingInput } from '../../shared';
+import { usePendingSync } from '../../hooks';
 
 export const SolicitarModule = React.memo(function SolicitarModule({ currentUser, onBack, onRefresh }) {
   const [sedesList, setSedesList] = useState([]);
@@ -55,6 +56,9 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
   });
 
   const [savingStatus, setSavingStatus] = useState('saved');
+  const [isSending, setIsSending] = useState(false);
+  const isSendingRef = useRef(false);
+  const { pendingSyncIds } = usePendingSync();
   const [activeTab, setActiveTab] = useState(() => {
     return localStorage.getItem('erp_solicitar_active_tab') || 'captura';
   });
@@ -165,7 +169,13 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
 
     async function init() {
       const draft = await transferService.getActiveDraft(currentUser.username);
-      if (draft && draft.items && draft.items.length > 0) {
+      if (
+        draft &&
+        draft.items &&
+        draft.items.length > 0 &&
+        !isDirectDispatch(draft) &&
+        !(typeof draft.observaciones === 'string' && draft.observaciones.startsWith('Pedido despachado sin haber sido solicitado'))
+      ) {
         setCurrentDraft(prev => {
           if (prev.items && prev.items.length > 0) return prev;
           if (draft.sucursalDestino) {
@@ -199,7 +209,10 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
   }, [currentUser]);
 
   const triggerAutoSave = async (draft) => {
-    if (!draft || !draft.items || draft.items.length === 0) {
+    if (!draft || isDirectDispatch(draft)) {
+      return;
+    }
+    if (!draft.items || draft.items.length === 0) {
       if (draft?.id) {
         await transferService.deleteEmptyDraft(draft.id);
       }
@@ -266,18 +279,14 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
     }
     if (!item) {
       setDialog({
-        isOpen: true, type: 'prompt', title: 'Producto no registrado',
-        message: `El código "${cleanBarcode}" no se encontró en el catálogo.\nEscribe la descripción del producto para agregarlo:`,
-        inputPlaceholder: 'Ej. Paracetamol 500mg', confirmText: 'Continuar', cancelText: 'Cancelar',
-        onConfirm: async () => {
-          const val = dialog.inputValue?.trim();
-          closeDialog();
-          if (val) {
-            setScannedMedicine({ codigo: cleanBarcode, descripcion: val });
-            await catalogService.saveToCleanCatalog(cleanBarcode, val);
-            setIsQuantityOpen(true);
-          }
-        }, onCancel: closeDialog
+        isOpen: true,
+        type: 'alert',
+        variant: 'danger',
+        title: 'Producto no encontrado',
+        message: `El código "${cleanBarcode}" no se encuentra en el catálogo.\n\nComunícate al departamento de Sistemas para recibir una actualización de catálogo.`,
+        confirmText: 'Entendido',
+        onConfirm: closeDialog,
+        onCancel: closeDialog
       });
       return;
     }
@@ -416,6 +425,7 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
   const targetHasAreas = operativeTargetAreas.length > 0;
 
   const handleSubmitSolicitud = async () => {
+    if (isSendingRef.current) return;
     if (isCurrentUserAreaExcluded) {
       setDialog({
         isOpen: true,
@@ -514,6 +524,9 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
   };
 
   const executeSendOrder = async () => {
+    if (isSendingRef.current) return;
+    isSendingRef.current = true;
+    setIsSending(true);
     try {
       const targetSedeMatch = sedesList.find(s => s.id === selectedDestSedeId || normalizeStr(s.nombre) === normalizeStr(selectedDestSede));
       const targetAreaMatch = areasList.find(a => a.id === selectedDestAreaId || normalizeStr(a.nombre) === normalizeStr(selectedDestArea));
@@ -543,6 +556,7 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       const newDraftId = 'sol-' + Date.now();
       setCurrentDraft({
         id: newDraftId,
+        folio: '',
         sucursalOrigen: currentUser?.sede || 'Sucursal',
         sucursalOrigenId: currentUser?.sedeId || '',
         areaOrigen: currentUser?.area || '',
@@ -556,6 +570,7 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
         usuarioDestino: '',
         observaciones: '',
         motivo: '',
+        notas: '',
         estado: 'borrador',
         fecha: new Date().toISOString(),
         items: []
@@ -564,12 +579,14 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       setSelectedDestSedeId('');
       setSelectedDestArea('');
       setSelectedDestAreaId('');
-      setSelectedDestArea('');
       setSavingStatus('saved');
 
       handleSwitchTab('historial');
     } catch (e) {
       console.error('Error al enviar solicitud:', e);
+    } finally {
+      isSendingRef.current = false;
+      setIsSending(false);
     }
   };
 
@@ -685,8 +702,9 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
         </div>
 
         {activeTab === 'historial' && (
-          <div className="relative pt-0.5">
+          <div className="relative pt-1">
             <MarqueeSearchInput
+              label="Buscar en historial"
               placeholder="Buscar por folio, destino o producto..."
               value={historySearch}
               onChange={(e) => handleSearchChange(e.target.value)}
@@ -838,24 +856,36 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
               </div>
             )}
 
-            <div className="p-4 bg-slate-50/50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
-              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                Observaciones / Motivo (opcional)
-              </label>
-              <input
-                type="text"
+            <div className="p-4 bg-slate-50/50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800">
+              <FloatingInput
+                label="Observaciones / Motivo (opcional)"
                 value={currentDraft.observaciones || ''}
                 onChange={(e) => setCurrentDraft(prev => ({ ...prev, observaciones: e.target.value, motivo: e.target.value, notas: e.target.value }))}
                 placeholder="Ej. Surtido urgente para fin de semana, reposición de faltantes..."
-                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 transition-colors"
+                icon={FileText}
               />
             </div>
 
             {currentDraft.items && currentDraft.items.length > 0 && (
               <div className="p-4 bg-slate-50/80 dark:bg-slate-800/60 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <span className="text-xs text-slate-500 dark:text-slate-400">Tu lista está autoguardada.</span>
-                <button onClick={handleSubmitSolicitud} className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs rounded-2xl shadow-md flex items-center justify-center gap-2 cursor-pointer">
-                  <Send className="w-4 h-4" /><span>Enviar</span>
+                <button
+                  type="button"
+                  disabled={isSending}
+                  onClick={handleSubmitSolicitud}
+                  className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs rounded-2xl shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isSending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Enviar</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}
@@ -908,10 +938,12 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                     <div
                       key={sol.id}
                       onClick={() => {
-                        if (isDraft) {
+                        if (isDraft && !isDirectDispatch(sol)) {
                           setCurrentDraft(sol);
-                          if (sol.sucursalDestino) setSelectedDestSede(sol.sucursalDestino);
-                          if (sol.areaDestino) setSelectedDestArea(sol.areaDestino);
+                          setSelectedDestSede(sol.sucursalDestino || '');
+                          setSelectedDestSedeId(sol.sucursalDestinoId || '');
+                          setSelectedDestArea(sol.areaDestino || '');
+                          setSelectedDestAreaId(sol.areaDestinoId || '');
                           handleSwitchTab('captura');
                           window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
                         } else {
@@ -937,7 +969,16 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                          {!isDraft && pendingSyncIds.has(sol.id) && (
+                            <span
+                              title="En cola para sincronizar al recuperar conexión"
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-transparent text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 flex items-center gap-1 whitespace-nowrap"
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>En cola</span>
+                            </span>
+                          )}
                           <span
                             className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider whitespace-nowrap ${
                               isDraft
@@ -999,12 +1040,26 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                         {formatOrderRequestedBy(sol, usersList)}
                       </p>
 
-                      {(sol.observaciones || sol.motivo || sol.notas) && (
-                        <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/30 px-3 py-1.5 rounded-xl border border-amber-200/80 dark:border-amber-500/20">
-                          <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                          <span className="italic line-clamp-2">&ldquo;{sol.observaciones || sol.motivo || sol.notas}&rdquo;</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const rawObs = sol.observaciones || sol.motivo || sol.notas;
+                        const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
+                        const isDirect = Boolean(sol.sinSolicitud || sol.esDespachoDirecto);
+                        const isGeneric = isDirect && (!obs || obs === 'Pedido despachado sin haber sido solicitado' || obs === 'Pedido despachado sin haber sido solicitado.');
+                        if (!obs || isGeneric) return null;
+                        return (
+                          <div className="flex items-start gap-1.5 text-xs">
+                            <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
+                            <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
+                              <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                                Observaciones:
+                              </span>
+                              <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
+                                {obs}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -1062,7 +1117,7 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
         }}
         onConfirmQuantity={handleConfirmQuantity}
       />
-      <ModalDialog isOpen={dialog.isOpen} type={dialog.type} title={dialog.title} message={dialog.message} confirmText={dialog.confirmText} onConfirm={dialog.onConfirm} onCancel={dialog.onCancel} />
+      <ModalDialog isOpen={dialog.isOpen} type={dialog.type} variant={dialog.variant} title={dialog.title} message={dialog.message} confirmText={dialog.confirmText} onConfirm={dialog.onConfirm} onCancel={dialog.onCancel} />
       
       <TransferDetailModal
         isOpen={Boolean(detailSolicitud)}

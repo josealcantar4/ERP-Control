@@ -140,8 +140,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     const sedeObj = sedesList.find(s => s.nombre === user.sede || s.id === user.sedeId);
     const sedeAreas = sedeObj?.areas || [];
 
-    const isRootAdmin = user.username?.toLowerCase() === 'administrador';
-    let userRoles = user.roles || ['solicitar'];
+    const isRootAdmin = typeof user?.username === 'string' && user.username.toLowerCase() === 'administrador';
+    let userRoles = Array.isArray(user?.roles)
+      ? user.roles.filter(r => typeof r === 'string')
+      : (typeof user?.roles === 'string' ? [user.roles] : ['solicitar']);
+    if (userRoles.length === 0) userRoles = ['solicitar'];
     if (isRootAdmin) {
       if (!userRoles.includes('admin')) userRoles = [...userRoles, 'admin'];
       if (!userRoles.includes('catalogo')) userRoles = [...userRoles, 'catalogo'];
@@ -151,8 +154,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
     setUserForm({
       username: user.username,
-      password: user.password || '',
-      confirmPassword: user.password || '',
+      password: '',
+      confirmPassword: '',
       nombre: user.nombre,
       sede: user.sede || '',
       sedeId: user.sedeId || sedeObj?.id || '',
@@ -234,9 +237,18 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       return;
     }
 
-    if (userForm.password !== userForm.confirmPassword) {
-      setFormError('Las contraseñas no coinciden. Por favor verifica.');
-      return;
+    const isEditMode = Boolean(editingUser);
+    const hasPasswordInput = Boolean(userForm.password || userForm.confirmPassword);
+
+    if (!isEditMode || hasPasswordInput) {
+      if (userForm.password !== userForm.confirmPassword) {
+        setFormError('Las contraseñas no coinciden. Por favor verifica.');
+        return;
+      }
+      if (userForm.password.trim().length < 3) {
+        setFormError('La contraseña debe tener al menos 3 caracteres.');
+        return;
+      }
     }
 
     setIsProcessing(true);
@@ -247,7 +259,6 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
     const payload = {
       username: userForm.username,
-      password: userForm.password,
       nombre: userForm.nombre,
       sede: selectedSedeObj?.nombre || userForm.sede,
       sedeId: selectedSedeObj?.id || userForm.sedeId || '',
@@ -256,6 +267,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
       roles: userForm.roles,
       excluirDestinatario: finalExcluirDestinatario
     };
+
+    if (!isEditMode || hasPasswordInput) {
+      payload.password = userForm.password;
+    }
 
     try {
       if (editingUser) {
@@ -595,10 +610,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
     );
   }
 
+  const searchQuery = typeof searchUser === 'string' ? searchUser.toLowerCase() : '';
   const filteredUsers = usersList.filter(u =>
-    u.nombre?.toLowerCase().includes(searchUser.toLowerCase()) ||
-    u.username?.toLowerCase().includes(searchUser.toLowerCase()) ||
-    u.sede?.toLowerCase().includes(searchUser.toLowerCase())
+    (typeof u?.nombre === 'string' && u.nombre.toLowerCase().includes(searchQuery)) ||
+    (typeof u?.username === 'string' && u.username.toLowerCase().includes(searchQuery)) ||
+    (typeof u?.sede === 'string' && u.sede.toLowerCase().includes(searchQuery))
   );
 
   return (
@@ -955,15 +971,19 @@ function AdminUserModal({
 
   if (!shouldRender) return null;
 
-  const selectedSedeObj = sedesList.find(s => s.nombre === userForm.sede || s.id === userForm.sedeId);
-  const sedeSpecificAreas = selectedSedeObj?.areas || [];
+  const isEditMode = Boolean(editingUser);
+
+  const selectedSedeObj = (sedesList || []).find(s => s && (s.nombre === userForm.sede || s.id === userForm.sedeId));
+  const sedeSpecificAreas = Array.isArray(selectedSedeObj?.areas) ? selectedSedeObj.areas : [];
 
   const operativeSedeAreas = sedeSpecificAreas
-    .map(sa => resolveAreaObj(sa, areasList))
     .filter(Boolean)
-    .filter(aObj => !aObj.excluirTransferencias);
+    .map(sa => resolveAreaObj(sa, areasList))
+    .filter(aObj => aObj && typeof aObj.nombre === 'string' && aObj.nombre.trim() !== '' && !aObj.excluirTransferencias);
 
-  const excludedAdminAreas = areasList.filter(a => a.excluirTransferencias);
+  const excludedAdminAreas = (areasList || []).filter(
+    a => a && typeof a.nombre === 'string' && a.nombre.trim() !== '' && a.excluirTransferencias
+  );
 
   const selectedAreaObj = resolveAreaObj(userForm.areaId || userForm.area, areasList);
   const isSelectedAreaExcluded = Boolean(selectedAreaObj?.excluirTransferencias);
@@ -1016,12 +1036,12 @@ function AdminUserModal({
             <FloatingInput
               label="Username"
               required
-              disabled={Boolean(editingUser && editingUser.username?.toLowerCase() === 'administrador')}
+              disabled={Boolean(editingUser && typeof editingUser.username === 'string' && editingUser.username.toLowerCase() === 'administrador')}
               placeholder="Ej. juan.patente"
               value={userForm.username}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
             />
-            {editingUser && editingUser.username?.toLowerCase() === 'administrador' && (
+            {editingUser && typeof editingUser.username === 'string' && editingUser.username.toLowerCase() === 'administrador' && (
               <span className="text-[10px] text-slate-400 mt-1 block">
                 El nombre de usuario del Administrador principal no puede modificarse.
               </span>
@@ -1029,10 +1049,11 @@ function AdminUserModal({
           </div>
           
           <FloatingInput
-            label={editingUser ? 'Modificar Contraseña' : 'Contraseña'}
-            required
+            label={isEditMode ? 'Nueva Contraseña (opcional)' : 'Contraseña'}
+            required={!isEditMode}
             type={showPassword ? 'text' : 'password'}
-            placeholder="Mínimo 3 caracteres"
+            autoComplete="new-password"
+            placeholder={isEditMode ? 'Dejar vacío para mantener la actual' : 'Mínimo 3 caracteres'}
             value={userForm.password}
             onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
             icon={Key}
@@ -1049,10 +1070,11 @@ function AdminUserModal({
           />
 
           <FloatingInput
-            label="Confirmar Contraseña"
-            required
+            label={isEditMode ? 'Confirmar Nueva Contraseña (opcional)' : 'Confirmar Contraseña'}
+            required={!isEditMode}
             type={showConfirmPassword ? 'text' : 'password'}
-            placeholder="Repite la contraseña"
+            autoComplete="new-password"
+            placeholder={isEditMode ? 'Repite solo si deseas cambiarla' : 'Repite la contraseña'}
             value={userForm.confirmPassword}
             onChange={(e) => setUserForm({ ...userForm, confirmPassword: e.target.value })}
             icon={Key}
@@ -1132,7 +1154,7 @@ function AdminUserModal({
                     {operativeSedeAreas.length > 0 && (
                       <optgroup label={`Áreas operativas de ${userForm.sede}`}>
                         {operativeSedeAreas.map((aObj) => (
-                          <option key={`op-${aObj.id}`} value={aObj.nombre}>
+                          <option key={`op-${aObj.id || aObj.nombre}`} value={aObj.nombre}>
                             {aObj.nombre}
                           </option>
                         ))}
@@ -1149,9 +1171,15 @@ function AdminUserModal({
                       </optgroup>
                     )}
 
-                    {userForm.area &&
-                      !operativeSedeAreas.some(a => a.toLowerCase() === userForm.area.toLowerCase()) &&
-                      !excludedAdminAreas.some(a => a.nombre?.toLowerCase() === userForm.area.toLowerCase()) && (
+                    {typeof userForm.area === 'string' && userForm.area &&
+                      !operativeSedeAreas.some(a => {
+                        const areaName = typeof a === 'string' ? a : a?.nombre;
+                        return typeof areaName === 'string' && areaName.toLowerCase() === userForm.area.toLowerCase();
+                      }) &&
+                      !excludedAdminAreas.some(a => {
+                        const areaName = typeof a === 'string' ? a : a?.nombre;
+                        return typeof areaName === 'string' && areaName.toLowerCase() === userForm.area.toLowerCase();
+                      }) && (
                         <option value={userForm.area}>
                           {userForm.area} (Asignada actualmente)
                         </option>

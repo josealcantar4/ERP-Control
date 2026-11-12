@@ -4,7 +4,12 @@
 
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAnalytics, isSupported } from "firebase/analytics";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import {
+  getAuth,
+  initializeAuth,
+  inMemoryPersistence,
+  GoogleAuthProvider
+} from "firebase/auth";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -26,6 +31,9 @@ const firebaseConfig = {
 export const isFirebaseConfigured = true;
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+const secondaryApp = getApps().find((a) => a.name === "AdminProvisioner")
+  || initializeApp(firebaseConfig, "AdminProvisioner");
 
 let analytics = null;
 if (typeof window !== "undefined") {
@@ -49,9 +57,19 @@ try {
 }
 
 const auth = getAuth(app);
+
+let secondaryAuth;
+try {
+  secondaryAuth = initializeAuth(secondaryApp, {
+    persistence: inMemoryPersistence
+  });
+} catch {
+  secondaryAuth = getAuth(secondaryApp);
+}
+
 const googleProvider = new GoogleAuthProvider();
 
 const storage = getStorage(app);
 
-export { app, analytics, auth, db, storage, googleProvider, firebaseConfig };
+export { app, analytics, auth, secondaryAuth, db, storage, googleProvider, firebaseConfig };
 export default app;

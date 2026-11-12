@@ -7,7 +7,7 @@
  * en texto plano nunca se guardan ni se comparan directamente contra Firestore.
  */
 
-import { db } from '../../config/firebase';
+import { db, auth, secondaryAuth } from '../../config/firebase';
 import {
   collection,
   doc,
@@ -18,21 +18,15 @@ import {
   onSnapshot,
   query
 } from 'firebase/firestore';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  signOut
+} from 'firebase/auth';
 
 const CURRENT_USER_KEY = 'erp_current_user';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPERS DE CONTRASEÑA
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Genera el hash SHA-256 de un string usando Web Crypto API (nativa en todos los
- * navegadores modernos y Node >= 19). Produce el mismo hash que el script de
- * migración, garantizando compatibilidad entre entornos.
- *
- * @param {string} plainText  Contraseña en texto plano
- * @returns {Promise<string>} Hash hexadecimal de 64 caracteres
- */
 async function hashPassword(plainText) {
   const encoder = new TextEncoder();
   const data = encoder.encode(String(plainText));
@@ -41,46 +35,47 @@ async function hashPassword(plainText) {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * Detecta si un string ya es un hash SHA-256 (64 caracteres hex en minúsculas).
- * Se usa para evitar re-hashear una contraseña que el formulario de edición
- * pre-rellena con el hash existente cuando el admin no quiere cambiarla.
- *
- * @param {string} str
- * @returns {boolean}
- */
 function isAlreadyHashed(str) {
   return typeof str === 'string' && /^[a-f0-9]{64}$/.test(str);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SERVICIO
-// ─────────────────────────────────────────────────────────────────────────────
+function deriveVirtualEmail(username) {
+  return `${String(username || '').trim().toLowerCase().replace(/\s+/g, '_')}@erp-control.internal`;
+}
 
 export const userService = {
-  /**
-   * Verifica que el usuario Administrador exista en Firestore.
-   * Si no existe (primer arranque), lo crea con una contraseña inicial
-   * generada aleatoriamente, hasheada, y la imprime una sola vez en consola.
-   */
   async ensureAdminInitialized() {
     try {
       const snapAll = await getDocs(collection(db, 'usuarios'));
       const adminDoc = snapAll.docs.find(d => (d.data()?.username || '').toLowerCase() === 'administrador');
 
       if (!adminDoc) {
-        // Generar contraseña inicial aleatoria — nunca hardcodeada
         const initialPassword = (typeof crypto !== 'undefined' && crypto.randomUUID)
           ? crypto.randomUUID().replace(/-/g, '').substring(0, 10)
           : String(Date.now()).slice(-8);
 
         const hashedInitial = await hashPassword(initialPassword);
+        const virtualEmail = deriveVirtualEmail('Administrador');
+        let authUid = '';
+
+        try {
+          const cred = await createUserWithEmailAndPassword(secondaryAuth, virtualEmail, hashedInitial);
+          authUid = cred.user?.uid || '';
+        } catch (authErr) {
+          if (authErr?.code !== 'auth/email-already-in-use') {
+            console.warn('No se pudo aprovisionar Administrador en Firebase Auth:', authErr);
+          }
+        } finally {
+          await signOut(secondaryAuth).catch(() => {});
+        }
 
         const newAdminRef = doc(collection(db, 'usuarios'));
         await setDoc(newAdminRef, {
           id: newAdminRef.id,
           username: 'Administrador',
           password: hashedInitial,
+          ...(authUid ? { authUid } : {}),
+          virtualEmail,
           nombre: 'Administrador General',
           sede: 'Matriz Centro',
           area: 'Dirección General',
@@ -90,7 +85,6 @@ export const userService = {
           createdAt: new Date().toISOString()
         });
 
-        // ⚠️ MOSTRAR CONTRASEÑA INICIAL UNA SOLA VEZ — solo en consola del instalador
         console.info(
           `%c[ERP SETUP] ✅ Usuario Administrador creado.` +
           `\n  Contraseña inicial: ${initialPassword}` +
@@ -103,10 +97,6 @@ export const userService = {
     }
   },
 
-  /**
-   * Suscripción en tiempo real a la lista de usuarios.
-   * No expone el hash de la contraseña en el estado del cliente.
-   */
   subscribeUsers(onUpdate) {
     this.ensureAdminInitialized();
 
@@ -163,11 +153,6 @@ export const userService = {
     }
   },
 
-  /**
-   * Autentica al usuario contra Firestore.
-   * Aplica SHA-256 a la contraseña ingresada antes de compararla con el hash
-   * almacenado en Firestore.
-   */
   async login(username, password) {
     const cleanUser = String(username || '').trim();
     const cleanPass = String(password || '');
@@ -176,48 +161,139 @@ export const userService = {
       throw new Error('Por favor ingresa tu usuario y contraseña.');
     }
 
-    if (cleanUser === 'Administrador') {
-      await this.ensureAdminInitialized();
-    }
-
-    // ✅ Hashear la contraseña ANTES de compararla con Firestore
+    const virtualEmail = deriveVirtualEmail(cleanUser);
     const hashedInput = await hashPassword(cleanPass);
 
-    const snapAll = await getDocs(collection(db, 'usuarios'));
-    const matchedDoc = snapAll.docs.find(d => {
-      const u = d.data();
-      return u.username === cleanUser;
-    });
+    let authUser = null;
+    try {
+      const credential = await signInWithEmailAndPassword(auth, virtualEmail, hashedInput);
+      authUser = credential.user;
+    } catch (authErr) {
+      const fallbackCodes = [
+        'auth/user-not-found',
+        'auth/invalid-credential',
+        'auth/invalid-login-credentials',
+        'auth/wrong-password'
+      ];
 
-    if (matchedDoc) {
-      const data = matchedDoc.data();
-      // Comparar hash contra hash (nunca texto plano)
-      if (data.password === hashedInput) {
-        const roles = data.roles || data.rol || ['solicitar'];
-        const user = {
-          id: matchedDoc.id,
-          username: data.username,
-          nombre: data.nombre || data.username,
-          sede: data.sede || 'Matriz Centro',
-          sedeId: data.sedeId || '',
-          area: data.area || 'General',
-          areaId: data.areaId || '',
-          roles: Array.isArray(roles) ? roles : [roles],
-          excluirDestinatario: Boolean(data.excluirDestinatario)
-          // ✅ No se expone el campo password en la sesión del cliente
-        };
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-        return user;
+      if (!fallbackCodes.includes(authErr?.code)) {
+        if (authErr?.code === 'auth/too-many-requests') {
+          throw new Error('Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.');
+        }
+        if (authErr?.code === 'auth/network-request-failed') {
+          throw new Error('Error de conexión. Verifica tu acceso a internet.');
+        }
+        if (authErr?.code === 'auth/operation-not-allowed') {
+          throw new Error('El proveedor de Email/Contraseña no está habilitado en Firebase Authentication.');
+        }
+        throw new Error('No se pudo iniciar sesión. Intenta de nuevo.');
+      }
+
+      if (cleanPass.length >= 6) {
+        try {
+          const legacyCred = await signInWithEmailAndPassword(auth, virtualEmail, cleanPass);
+          authUser = legacyCred.user;
+          await updatePassword(authUser, hashedInput).catch(() => {});
+        } catch (legacyErr) {
+          if (!fallbackCodes.includes(legacyErr?.code)) {
+            if (legacyErr?.code === 'auth/too-many-requests') {
+              throw new Error('Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.');
+            }
+            if (legacyErr?.code === 'auth/network-request-failed') {
+              throw new Error('Error de conexión. Verifica tu acceso a internet.');
+            }
+          }
+        }
       }
     }
 
-    throw new Error('Usuario o contraseña incorrectos.');
+    if (!authUser && cleanUser === 'Administrador') {
+      await this.ensureAdminInitialized();
+    }
+
+    let snapAll;
+    try {
+      snapAll = await getDocs(collection(db, 'usuarios'));
+    } catch (fsErr) {
+      if (fsErr?.code === 'permission-denied') {
+        if (authUser) {
+          await signOut(auth).catch(() => {});
+        }
+        throw new Error('Usuario o contraseña incorrectos.');
+      }
+      throw fsErr;
+    }
+
+    const matchedDoc = snapAll.docs.find(d => {
+      const u = d.data();
+      if (u.username === cleanUser) return true;
+      if (authUser) {
+        return (
+          (u.authUid && u.authUid === authUser.uid) ||
+          (typeof u.username === 'string' && u.username.toLowerCase() === cleanUser.toLowerCase())
+        );
+      }
+      return false;
+    });
+
+    if (!matchedDoc) {
+      if (authUser) {
+        await signOut(auth).catch(() => {});
+      }
+      throw new Error('Usuario o contraseña incorrectos.');
+    }
+
+    const data = matchedDoc.data();
+
+    if (!authUser) {
+      if (data.password !== hashedInput) {
+        throw new Error('Usuario o contraseña incorrectos.');
+      }
+
+      try {
+        const createdCredential = await createUserWithEmailAndPassword(auth, virtualEmail, hashedInput);
+        authUser = createdCredential.user;
+      } catch (createErr) {
+        if (createErr?.code === 'auth/email-already-in-use') {
+          throw new Error(
+            'Tu contraseña fue actualizada en la base de datos pero no coincide con Firebase Authentication. Contacta al administrador.'
+          );
+        }
+        if (createErr?.code === 'auth/network-request-failed') {
+          throw new Error('Error de conexión. Verifica tu acceso a internet.');
+        }
+        if (createErr?.code === 'auth/operation-not-allowed') {
+          throw new Error('El proveedor de Email/Contraseña no está habilitado en Firebase Authentication.');
+        }
+        throw createErr;
+      }
+    }
+
+    if (authUser?.uid && data.authUid !== authUser.uid) {
+      setDoc(
+        doc(db, 'usuarios', matchedDoc.id),
+        { authUid: authUser.uid, virtualEmail },
+        { merge: true }
+      ).catch(() => {});
+    }
+
+    const roles = data.roles || data.rol || ['solicitar'];
+    const user = {
+      id: matchedDoc.id,
+      uid: authUser?.uid || '',
+      username: data.username,
+      nombre: data.nombre || data.username,
+      sede: data.sede || 'Matriz Centro',
+      sedeId: data.sedeId || '',
+      area: data.area || 'General',
+      areaId: data.areaId || '',
+      roles: Array.isArray(roles) ? roles : [roles],
+      excluirDestinatario: Boolean(data.excluirDestinatario)
+    };
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    return user;
   },
 
-  /**
-   * Crea un nuevo usuario en Firestore.
-   * La contraseña se hashea antes de guardarla; nunca se almacena texto plano.
-   */
   async createUser(userData) {
     const username = userData.username?.trim();
     const password = userData.password?.trim();
@@ -241,8 +317,27 @@ export const userService = {
       throw new Error(`El nombre de usuario "${username}" ya está registrado.`);
     }
 
-    // ✅ Hashear la contraseña antes de guardar en Firestore
     const hashedPassword = await hashPassword(password);
+    const virtualEmail = deriveVirtualEmail(username);
+
+    let authUid = '';
+    try {
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, virtualEmail, hashedPassword);
+      authUid = cred.user?.uid || '';
+    } catch (authErr) {
+      if (authErr?.code === 'auth/email-already-in-use') {
+        try {
+          const existingCred = await signInWithEmailAndPassword(secondaryAuth, virtualEmail, hashedPassword);
+          authUid = existingCred.user?.uid || '';
+        } catch {
+          throw new Error(`El usuario "${username}" ya existe en Firebase Authentication con otra contraseña.`);
+        }
+      } else {
+        throw authErr;
+      }
+    } finally {
+      await signOut(secondaryAuth).catch(() => {});
+    }
 
     const newDocRef  = doc(collection(db, 'usuarios'));
     const newUserId  = newDocRef.id;
@@ -250,7 +345,9 @@ export const userService = {
     const newUser = {
       id: newUserId,
       username,
-      password: hashedPassword,   // ← hash, nunca texto plano
+      password: hashedPassword,
+      authUid,
+      virtualEmail,
       nombre,
       sede,
       sedeId: userData.sedeId?.trim() || '',
@@ -265,15 +362,6 @@ export const userService = {
     return newUser;
   },
 
-  /**
-   * Actualiza los datos de un usuario existente.
-   *
-   * Lógica de contraseña (manejo de doble-hash):
-   *   - Si updateData.password está vacío → se conserva el hash existente en Firestore.
-   *   - Si updateData.password es igual al hash almacenado (formulario no fue modificado)
-   *     → se conserva el hash sin re-hashear.
-   *   - Si updateData.password es texto plano nuevo (< 64 chars hex) → se hashea y guarda.
-   */
   async updateUser(userId, updateData) {
     if (!userId) throw new Error('ID de usuario inválido.');
 
@@ -321,29 +409,62 @@ export const userService = {
       }
     }
 
-    // ── Resolución segura de la contraseña ───────────────────────────────────
     const rawPass = updateData.password?.trim() || '';
 
     let finalPassword;
+    let isPasswordChanged = false;
     if (!rawPass) {
-      // Campo vacío → conservar el hash actual
       finalPassword = existing.password;
     } else if (isAlreadyHashed(rawPass)) {
-      // El formulario de edición pre-rellena el campo con el hash existente;
-      // si el admin no lo cambió, llegará aquí el mismo hash → conservarlo.
       finalPassword = rawPass;
     } else {
-      // Contraseña nueva en texto plano → validar longitud y hashear
       if (rawPass.length < 3) throw new Error('La contraseña debe tener al menos 3 caracteres.');
       finalPassword = await hashPassword(rawPass);
+      isPasswordChanged = finalPassword !== existing.password;
     }
-    // ─────────────────────────────────────────────────────────────────────────
+
+    let updatedAuthUid = existing.authUid || '';
+    let updatedVirtualEmail = existing.virtualEmail || deriveVirtualEmail(existing.username);
+
+    if (isPasswordChanged) {
+      const oldHash = existing.password;
+      try {
+        if (oldHash) {
+          const cred = await signInWithEmailAndPassword(secondaryAuth, updatedVirtualEmail, oldHash);
+          updatedAuthUid = cred.user?.uid || updatedAuthUid;
+          if (secondaryAuth.currentUser) {
+            await updatePassword(secondaryAuth.currentUser, finalPassword);
+          }
+        } else {
+          const created = await createUserWithEmailAndPassword(secondaryAuth, updatedVirtualEmail, finalPassword);
+          updatedAuthUid = created.user?.uid || updatedAuthUid;
+        }
+      } catch (authErr) {
+        if (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential' || authErr?.code === 'auth/invalid-login-credentials') {
+          try {
+            const created = await createUserWithEmailAndPassword(secondaryAuth, updatedVirtualEmail, finalPassword);
+            updatedAuthUid = created.user?.uid || updatedAuthUid;
+          } catch (createErr) {
+            if (createErr?.code !== 'auth/email-already-in-use') {
+              throw createErr;
+            }
+            console.warn('[AdminProvisioner] La cuenta ya existía en Firebase Auth con otra credencial:', updatedVirtualEmail);
+          }
+        } else {
+          throw authErr;
+        }
+      } finally {
+        await signOut(secondaryAuth).catch(() => {});
+      }
+    }
 
     const updated = {
       ...updateData,
       id: docRef.id,
       username: finalUsername,
-      password: finalPassword,   // siempre hash SHA-256
+      password: finalPassword,
+      ...(updatedAuthUid ? { authUid: updatedAuthUid } : {}),
+      virtualEmail: updatedVirtualEmail,
       roles: updateData.roles || existing.roles,
       excluirDestinatario: updateData.excluirDestinatario !== undefined
         ? Boolean(updateData.excluirDestinatario)
@@ -369,7 +490,6 @@ export const userService = {
         areaId: updated.areaId || existing.areaId || '',
         roles: updated.roles,
         excluirDestinatario: updated.excluirDestinatario
-        // ✅ password no se propaga a la sesión del cliente
       };
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedActiveUser));
       window.dispatchEvent(new CustomEvent('erp_current_user_updated', { detail: updatedActiveUser }));
@@ -415,6 +535,9 @@ export const userService = {
 
   logout() {
     localStorage.removeItem(CURRENT_USER_KEY);
+    signOut(auth).catch((err) => {
+      console.warn('Error al cerrar sesión en Firebase Auth:', err);
+    });
   },
 
   async getMatrizDestinatarios() {

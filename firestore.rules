@@ -2,42 +2,51 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
     match /usuarios/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /medicamentos/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /solicitudes/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /sedes/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /areas/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /catalogo_limpio/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
+    }
+
+    match /catalogo_meta/{document} {
+      allow read, write: if isAuthenticated();
     }
 
     match /material_brindado/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /material_tipos/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /material_personal/{document} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
+
     match /{document=**} {
       allow read, write: if false;
     }

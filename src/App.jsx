@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { auth } from './config/firebase';
 import { userService, organizationService, AdminUsersModule, LoginScreen } from './modules/usuarios';
 import { catalogService, CatalogUploadModule, CatalogSyncModal } from './modules/catalogo';
 import { transferService, TransferDetailModal, dismissNotification } from './modules/transferencias';
@@ -372,30 +373,50 @@ export default function App() {
   }, [currentScreen, currentUser]);
 
   useEffect(() => {
-    const savedUser = userService.getCurrentUser();
-    if (savedUser) {
-      setCurrentUser(savedUser);
-      
-      const storedScreen = localStorage.getItem('currentScreen');
-      let targetScreen = 'dashboard';
+    let cancelled = false;
 
-      if (storedScreen) {
-        targetScreen = storedScreen;
-      } else if (savedUser.roles?.length === 1) {
-        if (savedUser.roles[0] === 'solicitar') targetScreen = 'solicitar';
-        else if (savedUser.roles[0] === 'despachar') targetScreen = 'despachar';
-        else if (savedUser.roles[0] === 'material') targetScreen = 'material';
-        else if (savedUser.roles[0] === 'admin') targetScreen = 'admin';
+    const restoreSession = async () => {
+      try {
+        if (typeof auth.authStateReady === 'function') {
+          await auth.authStateReady();
+        }
+      } catch (_) {}
+
+      if (cancelled) return;
+
+      const savedUser = userService.getCurrentUser();
+      if (savedUser && auth.currentUser) {
+        setCurrentUser(savedUser);
+
+        const storedScreen = localStorage.getItem('currentScreen');
+        let targetScreen = 'dashboard';
+
+        if (storedScreen) {
+          targetScreen = storedScreen;
+        } else if (savedUser.roles?.length === 1) {
+          if (savedUser.roles[0] === 'solicitar') targetScreen = 'solicitar';
+          else if (savedUser.roles[0] === 'despachar') targetScreen = 'despachar';
+          else if (savedUser.roles[0] === 'material') targetScreen = 'material';
+          else if (savedUser.roles[0] === 'admin') targetScreen = 'admin';
+        }
+
+        setCurrentScreen(targetScreen);
+        localStorage.setItem('currentScreen', targetScreen);
+
+        performScreenRefresh(targetScreen);
+
+        runCatalogAutoSync();
+      } else if (savedUser && !auth.currentUser) {
+        // Sesión heredada previa a Firebase Auth: limpiar para que inicie sesión y ejecute JIT Auth
+        userService.logout();
       }
+      setIsLoading(false);
+    };
 
-      setCurrentScreen(targetScreen);
-      localStorage.setItem('currentScreen', targetScreen);
-
-      performScreenRefresh(targetScreen);
-
-      runCatalogAutoSync();
-    }
-    setIsLoading(false);
+    restoreSession();
+    return () => {
+      cancelled = true;
+    };
   }, [performScreenRefresh]);
 
   useEffect(() => {

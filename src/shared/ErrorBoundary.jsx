@@ -3,16 +3,17 @@
  */
 
 import React from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { parseErrorDisplay } from './errorUtils';
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, showDetails: false };
   }
 
   static getDerivedStateFromError(error) {
-    return { hasError: true, error };
+    return { hasError: true, error, showDetails: false };
   }
 
   componentDidCatch(error, errorInfo) {
@@ -24,11 +25,21 @@ export class ErrorBoundary extends React.Component {
   };
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, showDetails: false });
+  };
+
+  toggleDetails = () => {
+    this.setState((prev) => ({ showDetails: !prev.showDetails }));
   };
 
   render() {
     if (this.state.hasError) {
+      const { displayMessage, technicalDetails } = parseErrorDisplay(this.state.error, {
+        forceTechnical: true,
+        fallbackMessage:
+          'Ocurrió un error de conexión o del sistema. El sistema aisló el fallo para proteger tus datos.'
+      });
+
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 select-none">
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-100 text-center space-y-4">
@@ -36,13 +47,36 @@ export class ErrorBoundary extends React.Component {
               <AlertTriangle className="w-7 h-7" />
             </div>
             
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <h2 className="text-lg font-bold text-slate-900 tracking-tight">
                 Se presentó un problema inesperado
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed">
-                El sistema aisló el error para proteger tus datos. Puedes reintentar o recargar la pantalla.
+                {displayMessage}
               </p>
+
+              {technicalDetails && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={this.toggleDetails}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                  >
+                    <span>{this.state.showDetails ? 'Ocultar detalles' : 'Ver detalles'}</span>
+                    {this.state.showDetails ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+
+                  {this.state.showDetails && (
+                    <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-left text-[11px] font-mono text-slate-600 break-words max-h-36 overflow-y-auto select-text">
+                      {technicalDetails}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="pt-2 flex flex-col sm:flex-row gap-2">

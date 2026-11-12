@@ -24,7 +24,7 @@ import {
   ChevronDown,
   Loader2
 } from 'lucide-react';
-import { catalogService } from './catalogService';
+import { catalogService, CATALOG_FILE_ID_REGEX, isValidCatalogFileId } from './catalogService';
 import { CleanProductModal } from './CleanProductModal';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { AutoScrollInput } from '../../shared/AutoScrollInput';
@@ -50,6 +50,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
   const [feedback, setFeedback] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   const [customFileId, setCustomFileId] = useState('');
+  const [configError, setConfigError] = useState('');
 
   const [cleanItems, setCleanItems] = useState([]);
   const [cleanSearchQuery, setCleanSearchQuery] = useState('');
@@ -145,23 +146,52 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
   const handleSaveConfig = () => {
     if (!isRootAdmin) return;
-    if (!customFileId.trim()) return;
-    let clean = customFileId.trim();
+    const clean = String(customFileId || '').trim();
+    const lowerClean = clean.toLowerCase();
 
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
-      const matchId = clean.match(/\/d\/([a-zA-Z0-9_-]+)/) || clean.match(/id=([a-zA-Z0-9_-]+)/);
-      if (matchId && matchId[1]) {
-        clean = matchId[1];
-      }
+    if (!clean) {
+      const msg = 'Por favor ingresa el ID del archivo de Google Drive.';
+      setConfigError(msg);
+      setFeedback({ type: 'error', message: msg });
+      return;
     }
 
-    catalogService.setCatalogFileId(clean);
-    setShowConfig(false);
-    setFeedback({
-      type: 'success',
-      message: 'Identificador o enlace del Servidor Central actualizado correctamente.'
-    });
-    loadStatus();
+    if (
+      lowerClean.includes('http://') ||
+      lowerClean.includes('https://') ||
+      clean.includes('..') ||
+      clean.includes('/') ||
+      clean.includes('\\')
+    ) {
+      const msg =
+        'No se permiten URLs completas ni rutas relativas. Ingresa únicamente el ID del archivo de Google Drive.';
+      setConfigError(msg);
+      setFeedback({ type: 'error', message: msg });
+      return;
+    }
+
+    if (!CATALOG_FILE_ID_REGEX.test(clean) || !isValidCatalogFileId(clean)) {
+      const msg =
+        'Identificador inválido. Debe contener solo entre 25 y 45 caracteres (letras, números, "-" o "_"), sin espacios ni caracteres especiales.';
+      setConfigError(msg);
+      setFeedback({ type: 'error', message: msg });
+      return;
+    }
+
+    try {
+      catalogService.setCatalogFileId(clean);
+      setConfigError('');
+      setShowConfig(false);
+      setFeedback({
+        type: 'success',
+        message: 'Identificador de Google Drive actualizado correctamente.'
+      });
+      loadStatus();
+    } catch (err) {
+      const msg = err.message || 'El identificador ingresado no es válido.';
+      setConfigError(msg);
+      setFeedback({ type: 'error', message: msg });
+    }
   };
 
   const handleOpenAddClean = () => {
@@ -388,16 +418,23 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         {isRootAdmin && showConfig && (
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 animate-fade-in">
             <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-              <span>Identificador del Recurso Central</span>
+              <span>ID del Archivo en Google Drive</span>
               <span className="text-[10px] text-purple-700 font-semibold bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">Exclusivo Administrador</span>
             </div>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={customFileId}
-                onChange={(e) => setCustomFileId(e.target.value)}
-                placeholder="ID o enlace del archivo en Servidor Central"
-                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={(e) => {
+                  setCustomFileId(e.target.value);
+                  if (configError) setConfigError('');
+                }}
+                placeholder="Ej. 1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom"
+                className={`flex-1 bg-white border rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 ${
+                  configError
+                    ? 'border-red-400 focus:ring-red-500'
+                    : 'border-slate-200 focus:ring-blue-500'
+                }`}
               />
               <button
                 onClick={handleSaveConfig}
@@ -406,6 +443,12 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                 Guardar
               </button>
             </div>
+            {configError && (
+              <p className="text-[11px] font-medium text-red-600 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{configError}</span>
+              </p>
+            )}
           </div>
         )}
 

@@ -22,6 +22,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updatePassword,
+  deleteUser as deleteAuthUser,
   signOut
 } from 'firebase/auth';
 
@@ -39,8 +40,42 @@ function isAlreadyHashed(str) {
   return typeof str === 'string' && /^[a-f0-9]{64}$/.test(str);
 }
 
-function deriveVirtualEmail(username) {
-  return `${String(username || '').trim().toLowerCase().replace(/\s+/g, '_')}@erp-control.internal`;
+export function normalizeUsernameKey(username) {
+  return String(username || '').trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+export function deriveVirtualEmail(username) {
+  return `${normalizeUsernameKey(username)}@erp-control.internal`;
+}
+
+export function findConflictingUser(users, candidateUsername, excludeId = null) {
+  const cleanCandidate = String(candidateUsername || '').trim();
+  if (!cleanCandidate) return null;
+
+  const candidateLower = cleanCandidate.toLowerCase();
+  const candidateKey = normalizeUsernameKey(cleanCandidate);
+  const candidateVirtualEmail = deriveVirtualEmail(cleanCandidate);
+
+  return (users || []).find((u) => {
+    if (!u) return false;
+    const isSameUser = excludeId && (u.id ? u.id === excludeId : u.username === excludeId);
+    if (isSameUser) return false;
+
+    const existingUsername = String(u.username || '').trim();
+    if (!existingUsername) return false;
+
+    const existingLower = existingUsername.toLowerCase();
+    const existingKey = normalizeUsernameKey(existingUsername);
+    const existingVirtualEmail = String(u.virtualEmail || deriveVirtualEmail(existingUsername))
+      .trim()
+      .toLowerCase();
+
+    return (
+      existingLower === candidateLower ||
+      existingKey === candidateKey ||
+      existingVirtualEmail === candidateVirtualEmail
+    );
+  }) || null;
 }
 
 export const userService = {
@@ -110,6 +145,7 @@ export const userService = {
           return {
             id: d.id,
             username: data.username || d.id,
+            virtualEmail: data.virtualEmail || deriveVirtualEmail(data.username || d.id),
             nombre: data.nombre || data.username || d.id,
             sede: data.sede || 'Sin sede',
             sedeId: data.sedeId || '',
@@ -136,6 +172,7 @@ export const userService = {
         return {
           id: d.id,
           username: data.username || d.id,
+          virtualEmail: data.virtualEmail || deriveVirtualEmail(data.username || d.id),
           nombre: data.nombre || data.username || d.id,
           sede: data.sede || 'Sin sede',
           sedeId: data.sedeId || '',
@@ -310,11 +347,15 @@ export const userService = {
     if (!roles || roles.length === 0) throw new Error('Debes asignar al menos un rol.');
 
     const snapAll = await getDocs(collection(db, 'usuarios'));
-    const isTaken = snapAll.docs.some(d =>
-      (d.data()?.username || '').toLowerCase() === username.toLowerCase()
-    );
-    if (isTaken) {
-      throw new Error(`El nombre de usuario "${username}" ya está registrado.`);
+    const existingUsers = snapAll.docs.map(d => ({ id: d.id, ...d.data() }));
+    const conflict = findConflictingUser(existingUsers, username);
+    if (conflict) {
+      if (String(conflict.username || '').trim().toLowerCase() === username.toLowerCase()) {
+        throw new Error(`El nombre de usuario "${username}" ya está registrado.`);
+      }
+      throw new Error(
+        `El nombre de usuario "${username}" entra en conflicto con "@${conflict.username}" porque generan el mismo identificador interno.`
+      );
     }
 
     const hashedPassword = await hashPassword(password);
@@ -326,15 +367,11 @@ export const userService = {
       authUid = cred.user?.uid || '';
     } catch (authErr) {
       if (authErr?.code === 'auth/email-already-in-use') {
-        try {
-          const existingCred = await signInWithEmailAndPassword(secondaryAuth, virtualEmail, hashedPassword);
-          authUid = existingCred.user?.uid || '';
-        } catch {
-          throw new Error(`El usuario "${username}" ya existe en Firebase Authentication con otra contraseña.`);
-        }
-      } else {
-        throw authErr;
+        throw new Error(
+          `El nombre de usuario "${username}" (o un identificador equivalente) ya está registrado en Firebase Authentication.`
+        );
       }
+      throw authErr;
     } finally {
       await signOut(secondaryAuth).catch(() => {});
     }
@@ -386,7 +423,7 @@ export const userService = {
     const isRootAdmin = (existing.username || '').toLowerCase() === 'administrador';
 
     let finalUsername = existing.username;
-    if (updateData.username) {
+    if (updateData.username !== undefined) {
       const newUsername = updateData.username.trim();
       if (!newUsername) throw new Error('El nombre de usuario no puede estar vacío.');
 
@@ -394,19 +431,18 @@ export const userService = {
         throw new Error('El nombre de usuario del Administrador principal no puede ser modificado.');
       }
 
-      if (newUsername.toLowerCase() !== (existing.username || '').toLowerCase()) {
-        const snapAll = await getDocs(collection(db, 'usuarios'));
-        const duplicate = snapAll.docs.find(d =>
-          d.id !== docRef.id &&
-          (d.data()?.username || '').toLowerCase() === newUsername.toLowerCase()
-        );
-        if (duplicate) {
+      const snapAll = await getDocs(collection(db, 'usuarios'));
+      const existingUsers = snapAll.docs.map(d => ({ id: d.id, ...d.data() }));
+      const conflict = findConflictingUser(existingUsers, newUsername, docRef.id);
+      if (conflict) {
+        if (String(conflict.username || '').trim().toLowerCase() === newUsername.toLowerCase()) {
           throw new Error(`El nombre de usuario "${newUsername}" ya está en uso por otro usuario.`);
         }
-        finalUsername = newUsername;
-      } else {
-        finalUsername = newUsername;
+        throw new Error(
+          `El nombre de usuario "${newUsername}" entra en conflicto con "@${conflict.username}" porque generan el mismo identificador interno.`
+        );
       }
+      finalUsername = newUsername;
     }
 
     const rawPass = updateData.password?.trim() || '';
@@ -515,8 +551,25 @@ export const userService = {
       }
     }
 
-    if (snap.exists() && (snap.data()?.username || '').toLowerCase() === 'administrador') {
-      throw new Error('No es posible eliminar el usuario Administrador principal del sistema.');
+    if (snap.exists()) {
+      const data = snap.data() || {};
+      if ((data.username || '').toLowerCase() === 'administrador') {
+        throw new Error('No es posible eliminar el usuario Administrador principal del sistema.');
+      }
+
+      const virtualEmail = data.virtualEmail || deriveVirtualEmail(data.username);
+      const hashedPassword = data.password;
+
+      try {
+        if (virtualEmail && hashedPassword) {
+          const cred = await signInWithEmailAndPassword(secondaryAuth, virtualEmail, hashedPassword);
+          await deleteAuthUser(cred.user);
+        }
+      } catch (authErr) {
+        console.warn('No se pudo eliminar la cuenta en Firebase Auth:', authErr);
+      } finally {
+        await signOut(secondaryAuth).catch(() => {});
+      }
     }
 
     await deleteDoc(docRef);

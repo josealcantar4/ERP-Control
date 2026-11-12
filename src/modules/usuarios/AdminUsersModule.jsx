@@ -27,7 +27,7 @@ import {
   Tag,
   Database
 } from 'lucide-react';
-import { userService } from './userService';
+import { userService, findConflictingUser } from './userService';
 import { organizationService, resolveAreaObj, normalizeStr } from './organizationService';
 import { ModalDialog } from '../../shared/ModalDialog';
 import { transitionView, FloatingInput, MarqueeSearchInput, playSuccessSound } from '../../shared';
@@ -222,6 +222,25 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
   const handleSaveUser = async (e) => {
     e.preventDefault();
     setFormError('');
+
+    const cleanUsername = (userForm.username || '').trim();
+    if (!cleanUsername) {
+      setFormError('El nombre de usuario es obligatorio.');
+      return;
+    }
+
+    const excludeId = editingUser ? (editingUser.id || editingUser.username) : null;
+    const usernameConflict = findConflictingUser(usersList, cleanUsername, excludeId);
+    if (usernameConflict) {
+      if (String(usernameConflict.username || '').trim().toLowerCase() === cleanUsername.toLowerCase()) {
+        setFormError(`El username "@${usernameConflict.username}" ya está registrado.`);
+      } else {
+        setFormError(
+          `El username "${cleanUsername}" entra en conflicto con "@${usernameConflict.username}" porque generan el mismo identificador interno.`
+        );
+      }
+      return;
+    }
 
     if (!userForm.sede) {
       setFormError('Por favor selecciona una sede para el usuario.');
@@ -901,6 +920,8 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
         isOpen={isUserModalOpen}
         onClose={() => setIsUserModalOpen(false)}
         editingUser={editingUser}
+        usersList={usersList}
+        isProcessing={isProcessing}
         formError={formError}
         handleSaveUser={handleSaveUser}
         userForm={userForm}
@@ -951,6 +972,8 @@ function AdminUserModal({
   isOpen,
   onClose,
   editingUser,
+  usersList = [],
+  isProcessing = false,
   formError,
   handleSaveUser,
   userForm,
@@ -972,6 +995,27 @@ function AdminUserModal({
   if (!shouldRender) return null;
 
   const isEditMode = Boolean(editingUser);
+  const isRootAdminEdit = Boolean(
+    editingUser && typeof editingUser.username === 'string' && editingUser.username.toLowerCase() === 'administrador'
+  );
+  const trimmedUsername = (userForm.username || '').trim();
+  const excludeId = editingUser ? (editingUser.id || editingUser.username) : null;
+  const conflictingUser = !isRootAdminEdit && trimmedUsername
+    ? findConflictingUser(usersList, trimmedUsername, excludeId)
+    : null;
+
+  const usernameError = conflictingUser
+    ? String(conflictingUser.username || '').trim().toLowerCase() === trimmedUsername.toLowerCase()
+      ? `El username "@${conflictingUser.username}" ya está en uso.`
+      : `Equivale al username "@${conflictingUser.username}", que ya está en uso (espacios y "_" comparten identificador).`
+    : '';
+
+  const showUsernameAvailable = Boolean(
+    trimmedUsername &&
+    !usernameError &&
+    !isRootAdminEdit &&
+    (!isEditMode || trimmedUsername.toLowerCase() !== String(editingUser?.username || '').trim().toLowerCase())
+  );
 
   const selectedSedeObj = (sedesList || []).find(s => s && (s.nombre === userForm.sede || s.id === userForm.sedeId));
   const sedeSpecificAreas = Array.isArray(selectedSedeObj?.areas) ? selectedSedeObj.areas : [];
@@ -1036,16 +1080,22 @@ function AdminUserModal({
             <FloatingInput
               label="Username"
               required
-              disabled={Boolean(editingUser && typeof editingUser.username === 'string' && editingUser.username.toLowerCase() === 'administrador')}
+              disabled={isRootAdminEdit}
               placeholder="Ej. juan.patente"
               value={userForm.username}
+              error={usernameError}
               onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
             />
-            {editingUser && typeof editingUser.username === 'string' && editingUser.username.toLowerCase() === 'administrador' && (
+            {isRootAdminEdit ? (
               <span className="text-[10px] text-slate-400 mt-1 block">
                 El nombre de usuario del Administrador principal no puede modificarse.
               </span>
-            )}
+            ) : showUsernameAvailable ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 mt-1 font-medium">
+                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                <span>Username disponible</span>
+              </span>
+            ) : null}
           </div>
           
           <FloatingInput
@@ -1290,7 +1340,8 @@ function AdminUserModal({
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer"
+              disabled={Boolean(usernameError) || isProcessing}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer"
             >
               {editingUser ? 'Guardar Cambios' : 'Registrar'}
             </button>

@@ -3,27 +3,33 @@
  */
 
 import React, { useState } from 'react';
-import { Lock, User, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Lock, User, ArrowRight, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import { userService } from './userService';
-import { FloatingInput } from '../../shared';
+import { FloatingInput, parseErrorDisplay } from '../../shared';
 
 export function LoginScreen({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
+  const [errorState, setErrorState] = useState(null);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setErrorState(null);
+    setShowErrorDetails(false);
     setLoading(true);
 
     try {
       const user = await userService.login(username, password);
       onLoginSuccess(user);
     } catch (err) {
-      setError(err.message || 'Usuario o contraseña incorrectos.');
+      setErrorState(
+        parseErrorDisplay(err, {
+          fallbackMessage: 'Ocurrió un error de conexión o del sistema. Intenta de nuevo.'
+        })
+      );
     } finally {
       setLoading(false);
     }
@@ -48,10 +54,33 @@ export function LoginScreen({ onLoginSuccess }) {
 
       <div className="w-full max-w-sm bg-white rounded-3xl p-7 border border-slate-200/80 shadow-sm space-y-5">
         
-        {error && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+        {errorState && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{errorState.displayMessage}</span>
+            </div>
+            {errorState.isTechnical && errorState.technicalDetails && (
+              <div className="pl-6 space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowErrorDetails((prev) => !prev)}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-500 hover:text-red-700 transition-colors cursor-pointer"
+                >
+                  <span>{showErrorDetails ? 'Ocultar detalles' : 'Ver detalles'}</span>
+                  {showErrorDetails ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </button>
+                {showErrorDetails && (
+                  <div className="p-2 bg-white/80 border border-red-200/80 rounded-xl text-[11px] font-mono text-red-700 break-words max-h-28 overflow-y-auto select-text">
+                    {errorState.technicalDetails}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

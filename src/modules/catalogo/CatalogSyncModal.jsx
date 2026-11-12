@@ -4,8 +4,9 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertTriangle, Layers, ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { useModalAnimation } from '../../hooks';
+import { parseErrorDisplay } from '../../shared/errorUtils';
 
 export function CatalogSyncModal({
   isOpen,
@@ -15,6 +16,10 @@ export function CatalogSyncModal({
   onRetry,
   onDismiss
 }) {
+  const [expandedDetailKey, setExpandedDetailKey] = React.useState(null);
+  const detailKey = `${isOpen ? '1' : '0'}:${status}:${typeof error === 'string' ? error : error?.message || ''}`;
+  const showDetails = expandedDetailKey === detailKey;
+
   const { shouldRender, cardRef, handleClose, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen,
     onClose: onDismiss
@@ -25,6 +30,7 @@ export function CatalogSyncModal({
   const isDone = status === 'done';
   const isError = status === 'error';
   const percent = progress?.percent || 0;
+  const parsedError = isError && error ? parseErrorDisplay(error) : null;
 
   const modalContent = (
     <div className={`fixed inset-0 z-[9999] bg-slate-900/70 dark:bg-black/80 flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto overscroll-contain ${backdropClass}`}>
@@ -65,6 +71,29 @@ export function CatalogSyncModal({
               ? 'No pudimos conectar con el Servidor Central. Puedes reintentar o seguir trabajando con tu base de datos local.'
               : 'Optimizando el índice de productos en este dispositivo para consultas instantáneas y modo offline.'}
           </p>
+          {isError && parsedError && parsedError.technicalDetails && (
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedDetailKey((prev) => (prev === detailKey ? null : detailKey))
+                }
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                <span>{showDetails ? 'Ocultar detalles' : 'Ver detalles'}</span>
+                {showDetails ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+              {showDetails && (
+                <div className="mt-2 p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-left text-[11px] font-mono text-slate-600 dark:text-slate-300 break-words max-h-32 overflow-y-auto select-text">
+                  {parsedError.technicalDetails}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {!isDone && !isError && (

@@ -12,6 +12,24 @@ const STORE_BASE = 'catalogo_base_local';
 const STORE_CLEAN = 'catalogo_limpio_local';
 
 const DEFAULT_FILE_ID = '1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom';
+export const CATALOG_FILE_ID_REGEX = /^[a-zA-Z0-9_-]{25,45}$/;
+
+export function isValidCatalogFileId(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes('http://') ||
+    lower.includes('https://') ||
+    trimmed.includes('..') ||
+    trimmed.includes('/') ||
+    trimmed.includes('\\')
+  ) {
+    return false;
+  }
+  return CATALOG_FILE_ID_REGEX.test(trimmed);
+}
 const STORAGE_KEY_FILE_ID = 'erp_catalog_file_id';
 const STORAGE_KEY_SYNCED_ID = 'erp_catalog_synced_id';
 const STORAGE_KEY_LAST_SYNC = 'erp_catalog_last_sync_date';
@@ -182,29 +200,37 @@ async function purgeStaleCleanItem() {
 }
 
 export const catalogService = {
+  isValidCatalogFileId,
+
   getCatalogFileId() {
-    return localStorage.getItem(STORAGE_KEY_FILE_ID) || DEFAULT_FILE_ID;
+    const storedId = localStorage.getItem(STORAGE_KEY_FILE_ID);
+    if (storedId && isValidCatalogFileId(storedId)) {
+      return storedId.trim();
+    }
+    if (storedId) {
+      localStorage.removeItem(STORAGE_KEY_FILE_ID);
+    }
+    return DEFAULT_FILE_ID;
   },
 
   setCatalogFileId(newId) {
-    if (!newId) return;
-    const cleanId = newId.trim();
+    const cleanId = typeof newId === 'string' ? newId.trim() : '';
+    if (!isValidCatalogFileId(cleanId)) {
+      throw new Error(
+        'Identificador inválido. Ingresa únicamente el ID del archivo de Google Drive (25 a 45 caracteres alfanuméricos, "_" o "-"), sin URLs ni rutas relativas.'
+      );
+    }
     localStorage.setItem(STORAGE_KEY_FILE_ID, cleanId);
     memoryCache = null;
+    return cleanId;
   },
 
   getDownloadUrl() {
     const fileId = this.getCatalogFileId();
-
-    if (fileId.startsWith('http://') || fileId.startsWith('https://')) {
-      return fileId;
+    if (!isValidCatalogFileId(fileId)) {
+      throw new Error('El identificador del archivo de catálogo no es válido.');
     }
-
-    if (fileId.startsWith('2PACX-')) {
-      return `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`;
-    }
-
-    return `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx`;
+    return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(fileId)}/export?format=xlsx`;
   },
 
   getMetadataUrl() {
@@ -213,11 +239,11 @@ export const catalogService = {
 
   getFallbackUrls() {
     const fileId = this.getCatalogFileId();
-    if (fileId.startsWith('http://') || fileId.startsWith('https://') || fileId.startsWith('2PACX-')) {
+    if (!isValidCatalogFileId(fileId)) {
       return [];
     }
     return [
-      `https://docs.google.com/spreadsheets/d/e/${fileId}/pub?output=xlsx`
+      `https://docs.google.com/spreadsheets/d/e/${encodeURIComponent(fileId)}/pub?output=xlsx`
     ];
   },
 

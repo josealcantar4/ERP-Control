@@ -27,3 +27,4 @@ export { themeService } from './themeService';
 export { soundSettingsService } from './soundSettingsService';
 export { userPreferencesService } from './userPreferencesService';
 export { playCheckSound, playNotificationSound, playOrderSuccessSound, playSuccessSound } from '../modules/transferencias';
+export { DEFAULT_FRIENDLY_ERROR_MESSAGE, isTechnicalError, parseErrorDisplay } from './errorUtils';

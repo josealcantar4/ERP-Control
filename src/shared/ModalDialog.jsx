@@ -4,17 +4,20 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, CheckCircle2, HelpCircle, X, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle2, HelpCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { useModalAnimation } from '../hooks';
 import { AutoScrollInput } from './AutoScrollInput';
 import { FloatingInput } from './FloatingInput';
 import { playSuccessSound } from '../modules/transferencias';
+import { parseErrorDisplay } from './errorUtils';
 
 export function ModalDialog({
   isOpen,
   type = 'alert',
   title = '',
   message = '',
+  error = null,
+  friendlyMessage = '',
   confirmText = 'Aceptar',
   cancelText = 'Cancelar',
   variant = 'primary',
@@ -27,6 +30,25 @@ export function ModalDialog({
   children
 }) {
   const actionTriggeredRef = React.useRef(false);
+  const [expandedDetailKey, setExpandedDetailKey] = React.useState(null);
+
+  const errorSource = error || message;
+  const hasErrorContent = Boolean(errorSource);
+  const detailKey = `${isOpen ? '1' : '0'}:${title}:${typeof errorSource === 'string' ? errorSource : errorSource?.message || ''}`;
+  const showDetails = expandedDetailKey === detailKey;
+  const shouldParseError = hasErrorContent && (variant === 'danger' || Boolean(error));
+  const parsedError = React.useMemo(() => {
+    if (!shouldParseError) {
+      return {
+        isTechnical: false,
+        displayMessage: typeof message === 'string' ? message : '',
+        technicalDetails: ''
+      };
+    }
+    return parseErrorDisplay(errorSource, {
+      ...(friendlyMessage ? { fallbackMessage: friendlyMessage } : {})
+    });
+  }, [shouldParseError, errorSource, message, friendlyMessage]);
 
   const {
     shouldRender,
@@ -51,7 +73,7 @@ export function ModalDialog({
     if (isOpen) {
       actionTriggeredRef.current = false;
     }
-  }, [isOpen, title, message, type]);
+  }, [isOpen, title, message, error, type]);
 
   React.useEffect(() => {
     if (isOpen && variant === 'success') {
@@ -107,14 +129,41 @@ export function ModalDialog({
             )}
           </div>
 
-          <div className="space-y-1 flex-1">
+          <div className="space-y-1 flex-1 min-w-0">
             <h3 className="text-base font-bold text-slate-900 leading-snug">
               {title}
             </h3>
-            {message && (
-              <p className="text-xs text-slate-500 leading-relaxed whitespace-pre-line">
-                {message}
-              </p>
+            {hasErrorContent && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500 leading-relaxed whitespace-pre-line">
+                  {parsedError.displayMessage}
+                </p>
+
+                {parsedError.isTechnical && parsedError.technicalDetails && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedDetailKey((prev) => (prev === detailKey ? null : detailKey))
+                      }
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                    >
+                      <span>{showDetails ? 'Ocultar detalles' : 'Ver detalles'}</span>
+                      {showDetails ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+
+                    {showDetails && (
+                      <div className="mt-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-mono text-slate-600 break-words max-h-36 overflow-y-auto select-text">
+                        {parsedError.technicalDetails}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

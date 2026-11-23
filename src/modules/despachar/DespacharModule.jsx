@@ -18,7 +18,6 @@ import {
   Loader2,
   X,
   PackagePlus,
-  Minus,
   FileText,
   AlertTriangle,
   AlertCircle,
@@ -31,12 +30,11 @@ import { catalogService } from '../catalogo/catalogService';
 import { BarcodeScannerModal } from '../../shared/BarcodeScannerModal';
 import { CaptureQuantityModal } from '../../shared/CaptureQuantityModal';
 import { ModalDialog } from '../../shared/ModalDialog';
-import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
 import { TransferDetailModal } from '../transferencias/TransferDetailModal';
 import { DespacharFaltantesModal } from './DespacharFaltantesModal';
 import { DespachoDirectoModal } from './DespachoDirectoModal';
-import { transitionView, QuantityStepper, MarqueeSearchInput, FloatingInput } from '../../shared';
+import { transitionView, QuantityStepper, MarqueeSearchInput, FloatingInput, ConversationBubbles } from '../../shared';
 import { useModalAnimation, usePendingSync } from '../../hooks';
 
 export const DespacharModule = React.memo(function DespacharModule({ currentUser, onBack, onRefresh }) {
@@ -583,7 +581,9 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
         cantidadSolicitada: 0,
         cantidadDespachada: Number(qty || 1),
         esExtra: true,
-        atendido: true
+        atendido: true,
+        esRelacionado: Boolean(selectedExtraItem.esRelacionado),
+        codigoRelacionado: selectedExtraItem.codigoRelacionado || ''
       };
       const updatedItems = [...(selectedSolicitud.items || []), newItem];
       const updatedSol = { ...selectedSolicitud, items: updatedItems };
@@ -593,7 +593,9 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
       await transferService.addExtraItem(selectedSolicitud.id, {
         codigo: selectedExtraItem.codigo,
         descripcion: selectedExtraItem.descripcion,
-        cantidad: qty
+        cantidad: qty,
+        esRelacionado: Boolean(selectedExtraItem.esRelacionado),
+        codigoRelacionado: selectedExtraItem.codigoRelacionado || ''
       });
       playCheckSound();
       resetExtraModal();
@@ -859,7 +861,9 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
             cantidadDespachada: Number(i.cantidadDespachada),
             diferencia: Number(i.cantidadSolicitada ?? 1) - Number(i.cantidadDespachada),
             motivo: i.motivoAjusteDespacho || i.motivo || '',
-            motivoAjusteDespacho: i.motivoAjusteDespacho || i.motivo || ''
+            motivoAjusteDespacho: i.motivoAjusteDespacho || i.motivo || '',
+            esRelacionado: Boolean(i.esRelacionado),
+            codigoRelacionado: i.codigoRelacionado || ''
           }));
 
         await transferService.completeSolicitud(currentSol.id, finalFolio, {
@@ -940,10 +944,22 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                             Extra
                           </span>
                         )}
+                        {(item.esRelacionado || item.codigoRelacionado) && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                            Relacionado
+                          </span>
+                        )}
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
-                        Código: {item.codigo}
-                      </span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] font-mono text-slate-400 block">
+                          Código: {item.codigo}
+                        </span>
+                        {item.codigoRelacionado && item.codigoRelacionado !== item.codigo && (
+                          <span className="text-[10px] font-mono text-indigo-600 font-semibold">
+                            (EAN: {item.codigoRelacionado})
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <span className="shrink-0 px-2.5 py-1 rounded-xl font-mono text-xs font-extrabold bg-white text-red-700 border border-red-200 shadow-2xs">
                       {qty} pz
@@ -1098,10 +1114,10 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
               </div>
               <div className="grid grid-cols-1 gap-3">
                 {reportesIncompletos.map((sol) => (
-                  <div key={sol.id} className="bg-red-50/70 rounded-3xl p-5 border border-red-200 shadow-sm space-y-3">
+                  <div key={sol.id} className="bg-red-50/70 dark:bg-slate-900 rounded-3xl p-5 border border-red-200 dark:border-red-500/30 shadow-sm space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-red-950 font-mono text-sm sm:text-base">
+                        <span className="font-bold text-red-950 dark:text-red-300 font-mono text-sm sm:text-base">
                           Folio: {sol.folio || formatTransferFolio(sol)}
                         </span>
                         <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-red-600 text-white uppercase tracking-wider flex items-center gap-1 shadow-2xs">
@@ -1142,8 +1158,8 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                               </strong>
                             </div>
                             {obs && (
-                              <div className="text-[11px] text-red-800 bg-red-50/90 px-2.5 py-1 rounded-xl border border-red-200/60 italic flex items-center gap-1.5">
-                                <FileText className="w-3 h-3 text-red-600 shrink-0" />
+                              <div className="text-[11px] text-red-800 dark:text-red-300 bg-red-50/90 px-2.5 py-1 rounded-xl border border-red-200/60 dark:border-red-500/30 italic flex items-center gap-1.5">
+                                <FileText className="w-3 h-3 text-red-600 dark:text-red-400 shrink-0" />
                                 <span>Motivo reportado: &ldquo;{obs}&rdquo;</span>
                               </div>
                             )}
@@ -1152,24 +1168,12 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                       })}
                     </ul>
 
-                    {(() => {
-                      const rawObs = sol.reporteDiscrepancias?.observaciones || sol.observacionesRecepcion;
-                      const obs = typeof rawObs === 'string' ? rawObs.trim() : rawObs;
-                      if (!obs) return null;
-                      return (
-                        <div className="flex items-start gap-1.5 text-xs pt-0.5">
-                          <AlertCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0 mt-[3px]" />
-                          <div className="min-w-0 flex-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-relaxed">
-                            <span className="font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">
-                              Nota general de sucursal:
-                            </span>
-                            <span className="font-normal text-slate-600 dark:text-slate-300 break-words min-w-0 max-w-full whitespace-pre-line">
-                              {obs}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
+                    <ConversationBubbles
+                      solicitud={sol}
+                      currentUser={currentUser}
+                      viewerSide="bodega"
+                      compact
+                    />
 
                     <div className="mt-1 pt-2.5 border-t border-red-200/70 flex items-center justify-between gap-2 flex-wrap">
                       <div className="text-[11px] text-red-700 italic">
@@ -1457,6 +1461,11 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                               {(sol.sinSolicitud || sol.esDespachoDirecto) && (
                                 <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-transparent text-amber-800 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30">
                                   Directo
+                                </span>
+                              )}
+                              {sol.items?.some(it => it.esRelacionado || it.codigoRelacionado) && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                                  Relacionado
                                 </span>
                               )}
                             </div>
@@ -1753,6 +1762,11 @@ export const DespacharModule = React.memo(function DespacharModule({ currentUser
                         </div>
                         <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-0.5">
                           <span>Código: {item.codigo}</span>
+                          {item.esRelacionado && (
+                            <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded-full shrink-0">
+                              Relacionado
+                            </span>
+                          )}
                           {!isExtra && (
                             <>
                               <span>•</span>
@@ -2029,9 +2043,16 @@ function ExtraProductModal({
                       className="font-semibold text-slate-900 text-xs block"
                     />
                   </div>
-                  <span className="text-[10px] font-mono text-slate-400 shrink-0 bg-white px-2 py-1 rounded-md border border-slate-100">
-                    {med.codigo}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {med.esRelacionado && (
+                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full">
+                        Relacionado
+                      </span>
+                    )}
+                    <span className="text-[10px] font-mono text-slate-400 bg-white px-2 py-1 rounded-md border border-slate-100">
+                      {med.codigo}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>

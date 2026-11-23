@@ -8,7 +8,13 @@ import { X, Check, Package, Plus, Minus } from 'lucide-react';
 import { useModalAnimation } from '../hooks';
 import { MarqueeText } from './MarqueeText';
 
-export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQuantity }) {
+export function CaptureQuantityModal({
+  isOpen,
+  onClose,
+  scannedItem,
+  onConfirmQuantity,
+  zIndexClass = 'z-[170]'
+}) {
   const { shouldRender, cardRef, handleClose, handleBackdropClick, backdropClass, cardClass, cardStyle } = useModalAnimation({
     isOpen: Boolean(isOpen && scannedItem),
     onClose
@@ -51,7 +57,7 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
   const modalContent = (
     <div
       onClick={handleBackdropClick}
-      className={`fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 overflow-y-auto overscroll-contain select-none ${backdropClass}`}
+      className={`fixed inset-0 ${zIndexClass} flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 overflow-y-auto overscroll-contain select-none ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -76,10 +82,17 @@ export function CaptureQuantityModal({ isOpen, onClose, scannedItem, onConfirmQu
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1">
-            <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
-              CÓDIGO: {currentItem.codigo}
-            </span>
+          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-mono text-slate-400 block tracking-wider uppercase">
+                CÓDIGO: {currentItem.codigo}
+              </span>
+              {currentItem.esRelacionado && (
+                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full shrink-0">
+                  Relacionado
+                </span>
+              )}
+            </div>
             <div className="text-base font-bold text-slate-900 leading-snug">
               <MarqueeText text={currentItem.descripcion} />
             </div>

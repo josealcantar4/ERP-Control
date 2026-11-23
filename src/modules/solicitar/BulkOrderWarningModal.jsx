@@ -136,9 +136,16 @@ export function BulkOrderWarningModal({
                       text={item.descripcion}
                       className="text-xs font-bold text-slate-800"
                     />
-                    <p className="text-[10px] text-slate-400 font-mono">
-                      Cód: {item.codigo}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[10px] text-slate-400 font-mono">
+                        Cód: {item.codigo}
+                      </p>
+                      {(item.esRelacionado || item.codigoRelacionado) && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                          Relacionado
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="shrink-0">
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-bold">

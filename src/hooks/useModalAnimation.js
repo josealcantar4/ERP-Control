@@ -10,7 +10,8 @@ export function useModalAnimation({
   onClose,
   duration = 180,
   cardRef: externalCardRef = null,
-  centerOrigin = false
+  centerOrigin = false,
+  preventClose = false
 }) {
   const [shouldRender, setShouldRender] = useState(Boolean(isOpen));
   const [isClosing, setIsClosing] = useState(false);
@@ -78,7 +79,7 @@ export function useModalAnimation({
   }, []);
 
   useEffect(() => {
-    if (!shouldRender || isClosing) return;
+    if (!shouldRender || isClosing || preventClose) return;
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         handleClose();
@@ -86,10 +87,10 @@ export function useModalAnimation({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shouldRender, isClosing, handleClose]);
+  }, [shouldRender, isClosing, handleClose, preventClose]);
 
   const handleBackdropClick = useCallback((e, conditionOrAction = true) => {
-    if (e.target !== e.currentTarget) return false;
+    if (preventClose || e.target !== e.currentTarget) return false;
 
     if (typeof conditionOrAction === 'function') {
       conditionOrAction();
@@ -102,7 +103,7 @@ export function useModalAnimation({
 
     handleClose();
     return true;
-  }, [handleClose]);
+  }, [handleClose, preventClose]);
 
   const cardClass = isClosing ? 'animate-modal-exit' : 'animate-modal-enter';
   const backdropClass = isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter';

@@ -1974,7 +1974,9 @@ export const transferService = {
       cantidadSolicitada: 0,
       cantidadDespachada: Number(extraItem.cantidad || 1),
       esExtra: true,
-      atendido: true
+      atendido: true,
+      esRelacionado: Boolean(extraItem.esRelacionado),
+      codigoRelacionado: extraItem.codigoRelacionado || ''
     };
 
     if (extraItem?.codigo && extraItem?.descripcion) {
@@ -2190,7 +2192,9 @@ export const transferService = {
         atendido: true,
         despachado: true,
         recibido: false,
-        esExtra: false
+        esExtra: false,
+        esRelacionado: Boolean(item.esRelacionado),
+        codigoRelacionado: item.codigoRelacionado || ''
       }))
     };
 
@@ -2275,7 +2279,9 @@ export const transferService = {
         cantidadSolicitada: 0,
         cantidadDespachada: Number(item.cantidad || item.cantidadDespachada || 1),
         atendido: true,
-        esExtra: false
+        esExtra: false,
+        esRelacionado: Boolean(item.esRelacionado),
+        codigoRelacionado: item.codigoRelacionado || ''
       }))
     };
 
@@ -2430,7 +2436,9 @@ export const transferService = {
         esAusenciaTotal: d.tipo === 'ausencia_total',
         observacion: d.observacion || '',
         motivoRecepcion: d.observacion || '',
-        motivo: d.observacion || ''
+        motivo: d.observacion || '',
+        esRelacionado: Boolean(d.esRelacionado),
+        codigoRelacionado: d.codigoRelacionado || ''
       }));
 
     const extras = discrepancias
@@ -2443,7 +2451,9 @@ export const transferService = {
         cantidadExtra: d.diferencia,
         observacion: d.observacion || '',
         motivoRecepcion: d.observacion || '',
-        motivo: d.observacion || ''
+        motivo: d.observacion || '',
+        esRelacionado: Boolean(d.esRelacionado),
+        codigoRelacionado: d.codigoRelacionado || ''
       }));
 
     const estado = faltantes.length > 0 ? 'recibida_incompleta' : 'recibida';
@@ -2614,7 +2624,9 @@ export const transferService = {
         cantidadFaltante: af.cantidadAunFaltante,
         diferencia: -af.cantidadAunFaltante,
         observacion: af.observacion || af.motivoRecepcion || '',
-        motivo: af.observacion || af.motivoRecepcion || ''
+        motivo: af.observacion || af.motivoRecepcion || '',
+        esRelacionado: Boolean(af.esRelacionado),
+        codigoRelacionado: af.codigoRelacionado || ''
       }));
 
       const notasSucursal = receptionData.notas || itemsAunFaltantes.map(af => af.observacion).filter(Boolean).join('; ') || existing?.observacionesRecepcion || '';

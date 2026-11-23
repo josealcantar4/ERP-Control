@@ -294,7 +294,9 @@ export function DespachoDirectoModal({
       (draft.items || []).map(it => ({
         codigo: it.codigo,
         descripcion: it.descripcion,
-        cantidad: Number(it.cantidadDespachada || it.cantidad || 1)
+        cantidad: Number(it.cantidadDespachada || it.cantidad || 1),
+        esRelacionado: Boolean(it.esRelacionado),
+        codigoRelacionado: it.codigoRelacionado || ''
       }))
     );
 
@@ -508,7 +510,9 @@ export function DespachoDirectoModal({
         const updated = [...prev];
         updated[idx] = {
           ...updated[idx],
-          cantidad: updated[idx].cantidad + qty
+          cantidad: updated[idx].cantidad + qty,
+          esRelacionado: updated[idx].esRelacionado || Boolean(pendingItem.esRelacionado),
+          codigoRelacionado: updated[idx].codigoRelacionado || pendingItem.codigoRelacionado || ''
         };
         return updated;
       }
@@ -516,7 +520,9 @@ export function DespachoDirectoModal({
         {
           codigo: pendingItem.codigo,
           descripcion: pendingItem.descripcion,
-          cantidad: qty
+          cantidad: qty,
+          esRelacionado: Boolean(pendingItem.esRelacionado),
+          codigoRelacionado: pendingItem.codigoRelacionado || ''
         },
         ...prev
       ];
@@ -984,7 +990,14 @@ export function DespachoDirectoModal({
                           text={item.descripcion}
                           className="font-bold text-slate-800 text-xs block"
                         />
-                        <p className="font-mono text-[10px] text-slate-400">EAN: {item.codigo}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-mono text-[10px] text-slate-400">EAN: {item.codigo}</p>
+                          {item.esRelacionado && (
+                            <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded-full shrink-0">
+                              Relacionado
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span className="text-[11px] font-bold text-blue-600 shrink-0">
                         + Agregar
@@ -1026,9 +1039,16 @@ export function DespachoDirectoModal({
                           text={it.descripcion}
                           className="text-xs font-bold text-slate-800 block"
                         />
-                        <p className="text-[10px] font-mono text-slate-400">
-                          EAN: {it.codigo}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-[10px] font-mono text-slate-400">
+                            EAN: {it.codigo}
+                          </p>
+                          {it.esRelacionado && (
+                            <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded-full shrink-0">
+                              Relacionado
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
@@ -1132,6 +1152,11 @@ export function DespachoDirectoModal({
                           {Boolean(draft.esTransferenciaInterna) && (
                             <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
                               Transferencia Interna
+                            </span>
+                          )}
+                          {draft.items?.some(it => it.esRelacionado || it.codigoRelacionado) && (
+                            <span className="text-[10px] text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                              Relacionados
                             </span>
                           )}
                           <span className="font-mono text-xs font-semibold text-blue-600">
@@ -1431,9 +1456,16 @@ function ConfirmDirectDispatchModal({
                       text={item.descripcion}
                       className="font-bold text-slate-800 dark:text-slate-100 text-xs"
                     />
-                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 block mt-0.5">
-                      Código: {item.codigo}
-                    </span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 block">
+                        Código: {item.codigo}
+                      </span>
+                      {item.esRelacionado && (
+                        <span className="text-[9px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.2 rounded-full shrink-0">
+                          Relacionado
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span className="shrink-0 px-2.5 py-1 rounded-xl font-mono text-xs font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80 shadow-2xs">
                     {item.cantidad} pza{item.cantidad === 1 ? '' : 's'}

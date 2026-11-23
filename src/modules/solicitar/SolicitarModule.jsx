@@ -309,12 +309,20 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
       newItems[existingIndex] = {
         ...newItems[existingIndex],
         cantidadSolicitada: newItems[existingIndex].cantidadSolicitada + cantidad,
-        cantidadDespachada: newItems[existingIndex].cantidadSolicitada + cantidad
+        cantidadDespachada: newItems[existingIndex].cantidadSolicitada + cantidad,
+        esRelacionado: newItems[existingIndex].esRelacionado || Boolean(scannedMedicine.esRelacionado),
+        codigoRelacionado: newItems[existingIndex].codigoRelacionado || scannedMedicine.codigoRelacionado || ''
       };
     } else {
       newItems.unshift({
-        codigo: scannedMedicine.codigo, descripcion: scannedMedicine.descripcion,
-        cantidadSolicitada: cantidad, cantidadDespachada: cantidad, esExtra: false, atendido: false
+        codigo: scannedMedicine.codigo,
+        descripcion: scannedMedicine.descripcion,
+        cantidadSolicitada: cantidad,
+        cantidadDespachada: cantidad,
+        esExtra: false,
+        atendido: false,
+        esRelacionado: Boolean(scannedMedicine.esRelacionado),
+        codigoRelacionado: scannedMedicine.codigoRelacionado || ''
       });
     }
 
@@ -818,7 +826,14 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                         text={item.descripcion}
                         className="text-sm font-semibold text-slate-900 dark:text-slate-100 block"
                       />
-                      <p className="text-xs font-mono text-slate-400 dark:text-slate-500">Código: {item.codigo}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-xs font-mono text-slate-400 dark:text-slate-500">Código: {item.codigo}</p>
+                        {item.esRelacionado && (
+                          <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-0.5 rounded-full shrink-0">
+                            Relacionado
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="flex items-center bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
@@ -960,6 +975,11 @@ export const SolicitarModule = React.memo(function SolicitarModule({ currentUser
                           {Boolean(sol.esTransferenciaInterna || (sol.sucursalOrigen && sol.sucursalOrigen === sol.sucursalDestino)) && (
                             <span className="text-[10px] text-indigo-700 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-transparent border border-indigo-200 dark:border-indigo-500/30 px-2 py-0.5 rounded-full shrink-0">
                               Transferencia Interna
+                            </span>
+                          )}
+                          {sol.items?.some(it => it.esRelacionado || it.codigoRelacionado) && (
+                            <span className="text-[10px] text-indigo-700 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-transparent border border-indigo-200 dark:border-indigo-500/30 px-2 py-0.5 rounded-full shrink-0">
+                              Relacionado
                             </span>
                           )}
                           {(sol.sucursalDestino || sol.areaDestino) && (

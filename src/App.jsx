@@ -110,7 +110,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       const unsubMaterial = materialService.subscribeMateriales((items) => {
-        const notifs = materialService.calculateNotifications(items);
+        const notifs = materialService.calculateNotifications(items, currentUser);
         setMaterialNotifications(notifs);
       });
 
@@ -120,11 +120,14 @@ export default function App() {
       }, currentUser);
 
       const unsubClean = catalogService.subscribeCleanCatalog();
+      const unsubRelated = catalogService.subscribeRelatedCodes();
+      catalogService.syncRelatedCodesFromFirestore().catch(() => {});
 
       return () => {
         if (unsubMaterial) unsubMaterial();
         if (unsubSolicitudes) unsubSolicitudes();
         if (unsubClean) unsubClean();
+        if (unsubRelated) unsubRelated();
       };
     } else {
       transferService.resetSolicitudesSubscription();
@@ -145,6 +148,8 @@ export default function App() {
       if (currentUser) {
         const latestSolicitudes = transferService.getLocalSolicitudes();
         setTransferNotifications(transferService.calculateTransferNotifications(latestSolicitudes, currentUser));
+        const latestMaterial = materialService.getLocalMateriales();
+        setMaterialNotifications(materialService.calculateNotifications(latestMaterial, currentUser));
       }
     };
     window.addEventListener('erp_notifications_dismissed', handleDismissed);
@@ -284,10 +289,14 @@ export default function App() {
       if (screen === 'solicitar') {
         await Promise.all([
           transferService.refreshSolicitudes(),
-          userService.getMatrizDestinatarios()
+          userService.getMatrizDestinatarios(),
+          catalogService.syncRelatedCodesFromFirestore().catch(() => {})
         ]);
       } else if (screen === 'despachar' || screen === 'recibir') {
-        await transferService.refreshSolicitudes();
+        await Promise.all([
+          transferService.refreshSolicitudes(),
+          catalogService.syncRelatedCodesFromFirestore().catch(() => {})
+        ]);
       } else if (screen === 'admin') {
         await Promise.all([
           userService.refreshUsers(),
@@ -302,7 +311,8 @@ export default function App() {
         await Promise.all([
           transferService.refreshSolicitudes(),
           userService.getMatrizDestinatarios(),
-          materialService.refreshAll()
+          materialService.refreshAll(),
+          catalogService.syncRelatedCodesFromFirestore().catch(() => {})
         ]);
       }
     } catch (err) {
@@ -329,20 +339,28 @@ export default function App() {
     const handleFocusOrVisible = () => {
       if (document.visibilityState === 'visible') {
         runCatalogAutoSync();
+        catalogService.syncRelatedCodesFromFirestore().catch(() => {});
       }
     };
 
+    const handleOnline = () => {
+      catalogService.syncRelatedCodesFromFirestore().catch(() => {});
+    };
+
     window.addEventListener('focus', handleFocusOrVisible);
+    window.addEventListener('online', handleOnline);
     document.addEventListener('visibilitychange', handleFocusOrVisible);
 
     const intervalId = setInterval(() => {
       if (document.visibilityState === 'visible') {
         runCatalogAutoSync();
+        catalogService.syncRelatedCodesFromFirestore().catch(() => {});
       }
     }, 60000);
 
     return () => {
       window.removeEventListener('focus', handleFocusOrVisible);
+      window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleFocusOrVisible);
       clearInterval(intervalId);
     };
@@ -572,7 +590,7 @@ export default function App() {
               setTransferNotifications(freshTransferNotifs);
 
               const latestMaterial = materialService.getLocalMateriales();
-              const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial);
+              const freshMaterialNotifs = materialService.calculateNotifications(latestMaterial, currentUser);
               setMaterialNotifications(freshMaterialNotifs);
             }
             setIsNotificationsOpen(true);

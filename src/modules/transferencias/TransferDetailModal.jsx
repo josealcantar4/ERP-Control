@@ -21,11 +21,14 @@ import {
 } from 'lucide-react';
 import { formatTransferFolio, dismissNotification, formatOrderRequestedBy } from './transferService';
 import { userService } from '../usuarios/userService';
+import { catalogService } from '../catalogo/catalogService';
 import { useModalAnimation, usePendingSync } from '../../hooks';
 import { MarqueeText } from '../../shared/MarqueeText';
+import { ConversationBubbles } from '../../shared';
 
 export function TransferDetailModal({ isOpen, solicitud, onClose }) {
   const [usersList, setUsersList] = React.useState([]);
+  const [relatedMap, setRelatedMap] = React.useState(new Map());
   const { pendingSyncIds } = usePendingSync();
 
   React.useEffect(() => {
@@ -36,6 +39,22 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
       if (typeof unsub === 'function') unsub();
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    catalogService.getRelatedCodes().then(list => {
+      if (!isMounted || !Array.isArray(list)) return;
+      const map = new Map();
+      list.forEach(rel => {
+        if (rel.codigo) map.set(String(rel.codigo).trim(), rel);
+      });
+      setRelatedMap(map);
+    }).catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
 
   const lastSolicitudRef = useRef(solicitud);
   if (solicitud) lastSolicitudRef.current = solicitud;
@@ -124,6 +143,11 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 dark:bg-transparent text-amber-800 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30 flex items-center gap-1">
                   <PackagePlus className="w-3 h-3 text-amber-700 dark:text-amber-400" />
                   Despacho sin Solicitud
+                </span>
+              )}
+              {currentSolicitud.items?.some(it => it.esRelacionado || it.codigoRelacionado) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                  Incluye Relacionados
                 </span>
               )}
               {isCompleted && (
@@ -395,14 +419,13 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
           </div>
 
         {!hasFaltantesReport && (currentSolicitud.observacionesRecepcion || currentSolicitud.reporteDiscrepancias?.observaciones) && (
-          <div className="p-3.5 bg-emerald-50/90 dark:bg-transparent border-b border-emerald-200/70 dark:border-slate-800 text-xs space-y-1">
-            <div className="flex items-center gap-1.5 font-bold text-emerald-900 dark:text-emerald-400">
-              <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span>Observaciones de Recepción en Sucursal:</span>
-            </div>
-            <p className="text-emerald-800 dark:text-emerald-300 font-medium pl-5 leading-relaxed italic">
-              &ldquo;{currentSolicitud.observacionesRecepcion || currentSolicitud.reporteDiscrepancias?.observaciones}&rdquo;
-            </p>
+          <div className="p-3.5 border-b border-slate-200/70 dark:border-slate-800">
+            <ConversationBubbles
+              solicitud={currentSolicitud}
+              currentUser={userService.getCurrentUser()}
+              viewerSide="auto"
+              compact
+            />
           </div>
         )}
 
@@ -424,17 +447,12 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
               )}
             </div>
 
-            {(currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion) && (
-              <div className="p-2.5 bg-red-100/60 dark:bg-transparent rounded-xl border border-red-200 dark:border-slate-800 text-xs text-red-950 dark:text-red-400 space-y-0.5">
-                <span className="font-bold text-[11px] text-red-900 dark:text-red-300 flex items-center gap-1">
-                  <FileText className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
-                  <span>Motivo reportado por sucursal:</span>
-                </span>
-                <p className="italic text-red-900 dark:text-red-300 pl-4.5 text-[11px] leading-snug">
-                  &ldquo;{currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion}&rdquo;
-                </p>
-              </div>
-            )}
+            <ConversationBubbles
+              solicitud={currentSolicitud}
+              currentUser={userService.getCurrentUser()}
+              viewerSide="auto"
+              compact
+            />
 
             <div className="bg-white/90 dark:bg-slate-900 rounded-2xl p-3 border border-red-200/80 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 text-xs shadow-2xs space-y-1.5">
               {currentSolicitud.reporteFaltantes.map((f, i) => {
@@ -446,15 +464,39 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                   ? f.cantidadFaltante
                   : (f.diferencia !== undefined ? Math.abs(f.diferencia) : (f.cantidadDespachada || f.cantidadSolicitada || 1));
 
+                const fCleanCode = String(f.codigo || '').trim();
+                const isFRelacionado = Boolean(
+                  f.esRelacionado ||
+                  f.codigoRelacionado ||
+                  f.relacionInfo ||
+                  (fCleanCode && relatedMap.has(fCleanCode))
+                );
+                const relFObj = relatedMap.get(fCleanCode);
+                const fEanAlterno = f.codigoRelacionado || (relFObj?.codigo && relFObj.codigo !== f.codigo ? relFObj.codigo : null);
+
                 return (
                   <div
                     key={i}
                     className="pt-1.5 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5"
                   >
                     <div className="min-w-0">
-                      <span className="font-bold text-slate-800 dark:text-slate-100">{f.descripcion}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-800 dark:text-slate-100">{f.descripcion}</span>
+                        {isFRelacionado && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-indigo-100 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                            Relacionado
+                          </span>
+                        )}
+                      </div>
                       <div className="space-y-0.5 text-[11px] font-mono text-slate-600 dark:text-slate-400 mt-1">
-                        <div>Código: <strong className="text-slate-800 dark:text-slate-200">{f.codigo}</strong></div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>Código: <strong className="text-slate-800 dark:text-slate-200">{f.codigo}</strong></span>
+                          {fEanAlterno && fEanAlterno !== f.codigo && (
+                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">
+                              (EAN alterno: {fEanAlterno})
+                            </span>
+                          )}
+                        </div>
                         {f.cantidadRecibida !== undefined && (
                           <div>Recibidas: <strong className="text-slate-800 dark:text-slate-200">{f.cantidadRecibida} de {f.cantidadDespachada || f.cantidadSolicitada} pz</strong></div>
                         )}
@@ -523,16 +565,11 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                     </span>
                   </div>
                 )}
-                {currentSolicitud.resolucionFaltantes.notas && (
-                  <div className="text-slate-500 dark:text-slate-400 italic">
-                    &ldquo;{currentSolicitud.resolucionFaltantes.notas}&rdquo;
-                  </div>
-                )}
               </div>
             )}
 
             {currentSolicitud.recepcionFaltantes && (
-              <div className="p-2.5 bg-purple-50/70 dark:bg-transparent rounded-xl border border-purple-200/80 dark:border-slate-800 text-[11px] text-purple-950 dark:text-purple-400 space-y-1 mt-2">
+              <div className="p-2.5 bg-purple-50/70 dark:bg-transparent rounded-xl border border-purple-200/80 dark:border-purple-500/30 text-[11px] text-purple-950 dark:text-purple-300 space-y-1 mt-2">
                 <div className="flex items-center justify-between flex-wrap gap-1">
                   <span>
                     <strong>Recepción de Reenvío:</strong>{' '}
@@ -545,30 +582,41 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                   )}
                 </div>
                 {currentSolicitud.recepcionFaltantes.itemsAunFaltantes?.length > 0 && (
-                  <div className="mt-1 pt-1.5 border-t border-purple-200/60 space-y-1">
+                  <div className="mt-1 pt-1.5 border-t border-purple-200/60 dark:border-purple-500/20 space-y-1">
                     <span className="text-[10px] font-bold text-red-800 dark:text-red-400 uppercase tracking-wider block">
                       Faltantes definitivos al cerrar reenvío:
                     </span>
-                    {currentSolicitud.recepcionFaltantes.itemsAunFaltantes.map((af, idx) => (
-                      <div key={idx} className="bg-white/80 dark:bg-slate-900 p-1.5 rounded-lg border border-purple-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
-                        <span className="font-semibold text-slate-800 dark:text-slate-100">{af.descripcion}</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-red-700 dark:text-red-400 bg-red-50 dark:bg-transparent px-1.5 py-0.5 rounded border border-red-200 dark:border-red-500/30 text-[10px]">
-                            Faltaron {af.cantidadAunFaltante} pz
-                          </span>
-                          {(af.observacion || af.motivoRecepcion) && (
-                            <span className="text-[10px] italic text-purple-900 dark:text-purple-300">
-                              &ldquo;{af.observacion || af.motivoRecepcion}&rdquo;
+                    {currentSolicitud.recepcionFaltantes.itemsAunFaltantes.map((af, idx) => {
+                      const afCleanCode = String(af.codigo || '').trim();
+                      const isAfRelacionado = Boolean(
+                        af.esRelacionado ||
+                        af.codigoRelacionado ||
+                        af.relacionInfo ||
+                        (afCleanCode && relatedMap.has(afCleanCode))
+                      );
+                      return (
+                        <div key={idx} className="bg-white/80 dark:bg-slate-900 p-1.5 rounded-lg border border-purple-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-800 dark:text-slate-100">{af.descripcion}</span>
+                            {isAfRelacionado && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-100 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                                Relacionado
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-red-700 dark:text-red-400 bg-red-50 dark:bg-transparent px-1.5 py-0.5 rounded border border-red-200 dark:border-red-500/30 text-[10px]">
+                              Faltaron {af.cantidadAunFaltante} pz
                             </span>
-                          )}
+                            {(af.observacion || af.motivoRecepcion) && (
+                              <span className="text-[10px] italic text-purple-900 dark:text-purple-300">
+                                &ldquo;{af.observacion || af.motivoRecepcion}&rdquo;
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {currentSolicitud.recepcionFaltantes.notas && (
-                  <div className="text-slate-500 italic">
-                    &ldquo;{currentSolicitud.recepcionFaltantes.notas}&rdquo;
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -590,14 +638,30 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
             <div className="bg-white/90 dark:bg-slate-900 rounded-2xl p-3 border border-blue-200/80 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 text-xs shadow-2xs space-y-1.5">
               {currentSolicitud.reporteDiscrepancias.discrepancias
                 .filter(d => d.tipo === 'extra')
-                .map((ext, i) => (
-                  <div key={i} className="pt-1.5 first:pt-0 flex items-center justify-between gap-2">
-                    <span className="font-bold text-slate-800 dark:text-slate-100">{ext.descripcion}</span>
-                    <span className="font-mono text-xs font-extrabold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-transparent px-2 py-0.5 rounded-lg border border-blue-200 dark:border-blue-500/30">
-                      +{ext.diferencia} extra (Recibidas: {ext.cantidadRecibida})
-                    </span>
-                  </div>
-                ))}
+                .map((ext, i) => {
+                  const extCleanCode = String(ext.codigo || '').trim();
+                  const isExtRelacionado = Boolean(
+                    ext.esRelacionado ||
+                    ext.codigoRelacionado ||
+                    ext.relacionInfo ||
+                    (extCleanCode && relatedMap.has(extCleanCode))
+                  );
+                  return (
+                    <div key={i} className="pt-1.5 first:pt-0 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-800 dark:text-slate-100">{ext.descripcion}</span>
+                        {isExtRelacionado && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-100 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                            Relacionado
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono text-xs font-extrabold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-transparent px-2 py-0.5 rounded-lg border border-blue-200 dark:border-blue-500/30">
+                        +{ext.diferencia} extra (Recibidas: {ext.cantidadRecibida})
+                      </span>
+                    </div>
+                  );
+                })}
             </div>
           </div>
         )}
@@ -611,6 +675,15 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
           <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200/80 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900">
             {currentSolicitud.items?.map((item, index) => {
               const qty = item.cantidadDespachada ?? item.cantidadSolicitada ?? 0;
+              const itemCleanCode = String(item.codigo || '').trim();
+              const isRelacionado = Boolean(
+                item.esRelacionado ||
+                item.codigoRelacionado ||
+                item.relacionInfo ||
+                (itemCleanCode && relatedMap.has(itemCleanCode))
+              );
+              const relItemObj = relatedMap.get(itemCleanCode);
+              const eanAlterno = item.codigoRelacionado || (relItemObj?.codigo && relItemObj.codigo !== item.codigo ? relItemObj.codigo : null);
               return (
                 <div key={index} className="p-3 sm:p-3.5 flex items-center justify-between gap-3 text-xs">
                   <div className="min-w-0 flex-1 space-y-0.5">
@@ -624,10 +697,22 @@ export function TransferDetailModal({ isOpen, solicitud, onClose }) {
                           EXTRA
                         </span>
                       )}
+                      {isRelacionado && (
+                        <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-indigo-100 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30">
+                          Relacionado
+                        </span>
+                      )}
                     </div>
-                    <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 block">
-                      EAN: {item.codigo}
-                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 block">
+                        EAN: {item.codigo}
+                      </span>
+                      {eanAlterno && eanAlterno !== item.codigo && (
+                        <span className="font-mono text-[9px] text-indigo-600 dark:text-indigo-400 font-semibold">
+                          (EAN alterno: {eanAlterno})
+                        </span>
+                      )}
+                    </div>
                     {item.cantidadSolicitada !== undefined && item.cantidadDespachada !== undefined && !item.esExtra && Number(item.cantidadSolicitada) !== Number(item.cantidadDespachada) && (
                       <span className="inline-block text-[10px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-transparent text-amber-800 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30 px-1.5 py-0.5 rounded mt-0.5 mr-1">
                         {item.cantidadDespachada} despachadas ({item.cantidadSolicitada} solicitadas)

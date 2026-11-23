@@ -5,7 +5,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ArrowLeft,
-  RefreshCw,
   Database,
   Clock,
   CheckCircle2,
@@ -22,23 +21,65 @@ import {
   Sparkles,
   Tag,
   ChevronDown,
-  Loader2
+  Loader2,
+  Link2,
+  ArrowRight
 } from 'lucide-react';
 import { catalogService, CATALOG_FILE_ID_REGEX, isValidCatalogFileId } from './catalogService';
 import { CleanProductModal } from './CleanProductModal';
+import { RelatedCodeModal } from './RelatedCodeModal';
 import { ModalDialog } from '../../shared/ModalDialog';
-import { AutoScrollInput } from '../../shared/AutoScrollInput';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { MarqueeSearchInput, playSuccessSound } from '../../shared';
+import { MarqueeSearchInput, FloatingInput, playSuccessSound, transitionView } from '../../shared';
 
 export function CatalogUploadModule({ currentUser, onBack }) {
   const activeUser = currentUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('erp_current_user') || '{}') : {});
   const isRootAdmin = activeUser?.username?.toLowerCase() === 'administrador';
   const hasCatalogAccess = isRootAdmin || activeUser?.roles?.includes('catalogo');
 
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = localStorage.getItem('erp_catalog_active_tab') || 'sincronizacion';
+    if (saved === 'limpio' && !isRootAdmin) return 'sincronizacion';
+    return saved;
+  });
+  const [tabDirection, setTabDirection] = useState('initial');
+
+  const TAB_ORDER = useMemo(() => {
+    return isRootAdmin
+      ? ['sincronizacion', 'limpio', 'relacionados']
+      : ['sincronizacion', 'relacionados'];
+  }, [isRootAdmin]);
+
+  const handleSwitchTab = (newTab) => {
+    if (newTab === activeTab) return;
+    const oldIdx = TAB_ORDER.indexOf(activeTab);
+    const newIdx = TAB_ORDER.indexOf(newTab);
+    const direction = newIdx >= oldIdx ? 'forward' : 'back';
+    setTabDirection(direction);
+    transitionView(() => {
+      setActiveTab(newTab);
+    }, { direction });
+  };
+
+  const getTabAnimationClass = () => {
+    if (tabDirection === 'initial') return 'animate-fade-in';
+    return tabDirection === 'forward' ? 'animate-tab-slide-right' : 'animate-tab-slide-left';
+  };
+
+  useEffect(() => {
+    localStorage.setItem('erp_catalog_active_tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!isRootAdmin && activeTab === 'limpio') {
+      setActiveTab('sincronizacion');
+    }
+  }, [isRootAdmin, activeTab]);
+
   const [catalogStatus, setCatalogStatus] = useState({
     localCount: 0,
     cleanCount: 0,
+    relatedCount: 0,
     lastSync: null,
     lastModified: null,
     fileId: '',
@@ -57,6 +98,14 @@ export function CatalogUploadModule({ currentUser, onBack }) {
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [editingCleanItem, setEditingCleanItem] = useState(null);
   const [isHistorySyncing, setIsHistorySyncing] = useState(false);
+
+  const [relatedItems, setRelatedItems] = useState([]);
+  const [relatedSearchQuery, setRelatedSearchQuery] = useState('');
+  const [isRelatedModalOpen, setIsRelatedModalOpen] = useState(false);
+  const [editingRelatedItem, setEditingRelatedItem] = useState(null);
+  const [relatedItemsLimit, setRelatedItemsLimit] = useState(15);
+  const [isLoadingMoreRelated, setIsLoadingMoreRelated] = useState(false);
+  const relatedSentinelRef = useRef(null);
 
   const [dialog, setDialog] = useState({
     isOpen: false,
@@ -91,6 +140,9 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         setCleanItems(items);
       }
 
+      const rels = await catalogService.getRelatedCodes();
+      setRelatedItems(rels);
+
       const status = await catalogService.getCatalogStatus();
       setCatalogStatus(status);
       setCustomFileId(status.fileId);
@@ -124,6 +176,11 @@ export function CatalogUploadModule({ currentUser, onBack }) {
       });
     }
 
+    const unsubRelated = catalogService.subscribeRelatedCodes((items) => {
+      setRelatedItems(items);
+      setCatalogStatus(prev => ({ ...prev, relatedCount: items.length }));
+    });
+
     const handleGlobalSync = async (e) => {
       setServerState('up_to_date');
       const status = await catalogService.getCatalogStatus();
@@ -139,6 +196,9 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     return () => {
       if (typeof unsubscribe === 'function') {
         unsubscribe();
+      }
+      if (typeof unsubRelated === 'function') {
+        unsubRelated();
       }
       window.removeEventListener('erp_catalog_synced', handleGlobalSync);
     };
@@ -338,6 +398,128 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     };
   }, [hasMoreClean, isLoadingMoreClean, handleLoadMoreClean]);
 
+  const filteredRelatedItems = useMemo(() => {
+    const q = relatedSearchQuery.trim().toLowerCase();
+    if (!q) return relatedItems;
+    return relatedItems.filter(it => {
+      const cod = String(it.codigo || '').toLowerCase();
+      const maestro = String(it.codigoMaestro || '').toLowerCase();
+      const desc = String(it.descripcion || '').toLowerCase();
+      const notas = String(it.notas || '').toLowerCase();
+      return cod.includes(q) || maestro.includes(q) || desc.includes(q) || notas.includes(q);
+    });
+  }, [relatedItems, relatedSearchQuery]);
+
+  const visibleRelatedItems = useMemo(() => {
+    return filteredRelatedItems.slice(0, relatedItemsLimit);
+  }, [filteredRelatedItems, relatedItemsLimit]);
+
+  const hasMoreRelated = visibleRelatedItems.length < filteredRelatedItems.length;
+
+  const handleLoadMoreRelated = useCallback(() => {
+    if (isLoadingMoreRelated) return;
+    setIsLoadingMoreRelated(true);
+    setTimeout(() => {
+      setRelatedItemsLimit(prev => prev + 15);
+      setIsLoadingMoreRelated(false);
+    }, 250);
+  }, [isLoadingMoreRelated]);
+
+  const handleRelatedSearchChange = (val) => {
+    setRelatedSearchQuery(val);
+    setRelatedItemsLimit(15);
+  };
+
+  useEffect(() => {
+    if (!hasMoreRelated || isLoadingMoreRelated) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        handleLoadMoreRelated();
+      }
+    }, { rootMargin: '120px' });
+
+    const el = relatedSentinelRef.current;
+    if (el) observer.observe(el);
+    return () => {
+      if (el) observer.unobserve(el);
+    };
+  }, [hasMoreRelated, isLoadingMoreRelated, handleLoadMoreRelated]);
+
+  const handleOpenAddRelated = () => {
+    setEditingRelatedItem(null);
+    setIsRelatedModalOpen(true);
+  };
+
+  const handleOpenEditRelated = (item) => {
+    setEditingRelatedItem(item);
+    setIsRelatedModalOpen(true);
+  };
+
+  const handleOpenAddAnotherRelated = (item) => {
+    setEditingRelatedItem({
+      codigoMaestro: item.codigoMaestro,
+      descripcion: item.descripcion,
+      isAddingToExistingMaster: true
+    });
+    setIsRelatedModalOpen(true);
+  };
+
+  const handleSaveRelatedCode = async (payload) => {
+    const saved = await catalogService.saveRelatedCodes(payload, activeUser);
+    const updated = await catalogService.getRelatedCodes();
+    setRelatedItems(updated);
+    setCatalogStatus(prev => ({ ...prev, relatedCount: updated.length }));
+    const count = Array.isArray(saved) ? saved.length : 1;
+    setFeedback({
+      type: 'success',
+      message: `${count === 1 ? 'Código relacionado vinculado' : `${count} códigos relacionados vinculados`} exitosamente a "${payload.descripcion}".`
+    });
+  };
+
+  const handleDeleteRelatedCode = (item) => {
+    if (!isRootAdmin) {
+      setDialog({
+        isOpen: true,
+        type: 'alert',
+        variant: 'warning',
+        title: 'Acceso Restringido',
+        message: 'Solo el usuario Administrador tiene autorización para eliminar códigos relacionados.',
+        confirmText: 'Entendido',
+        onConfirm: closeDialog
+      });
+      return;
+    }
+
+    setDialog({
+      isOpen: true,
+      type: 'confirm',
+      variant: 'danger',
+      title: '¿Eliminar Código Relacionado?',
+      message: `¿Estás seguro de eliminar el código relacionado "${item.codigo}" vinculado a "${item.descripcion}"?\n\nAl eliminarlo, este código ya no se reconocerá automáticamente como equivalente del producto maestro.`,
+      confirmText: 'Sí, eliminar',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        closeDialog();
+        try {
+          await catalogService.deleteRelatedCode(item.codigo, activeUser);
+          const updated = await catalogService.getRelatedCodes();
+          setRelatedItems(updated);
+          setCatalogStatus(prev => ({ ...prev, relatedCount: updated.length }));
+          setFeedback({
+            type: 'success',
+            message: `Código relacionado "${item.codigo}" eliminado con éxito.`
+          });
+        } catch (err) {
+          console.error('Error eliminando código relacionado:', err);
+          setFeedback({
+            type: 'error',
+            message: err.message || 'No fue posible eliminar el código relacionado.'
+          });
+        }
+      }
+    });
+  };
+
   const formatDate = (isoString) => {
     if (!isoString) return 'Nunca sincronizado';
     try {
@@ -375,16 +557,60 @@ export function CatalogUploadModule({ currentUser, onBack }) {
     <div className="max-w-3xl mx-auto space-y-6 pb-20 select-none">
       
       <div className="sticky top-16 z-30 bg-slate-50 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 pt-2 pb-3 -mx-4 px-4 sm:-mx-6 sm:px-6">
-        <button
-          onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all cursor-pointer"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Volver al Dashboard</span>
-        </button>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+          <button
+            onClick={onBack}
+            className="self-start sm:self-auto inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-900 px-3.5 py-1.5 rounded-full border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Volver al Dashboard</span>
+          </button>
+
+          <div className={`bg-slate-200/80 dark:bg-slate-800 p-1 rounded-full grid ${isRootAdmin ? 'grid-cols-3' : 'grid-cols-2'} sm:flex text-xs font-medium border border-transparent dark:border-slate-700/60 w-full sm:w-auto shrink-0`}>
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('sincronizacion')}
+              className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
+                activeTab === 'sincronizacion'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              Sincronización
+            </button>
+            {isRootAdmin && (
+              <button
+                type="button"
+                onClick={() => handleSwitchTab('limpio')}
+                className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
+                  activeTab === 'limpio'
+                    ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                <span className="hidden sm:inline">Catálogo </span>Limpio ({cleanItems.length})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleSwitchTab('relacionados')}
+              className={`px-2 sm:px-3 py-1.5 sm:py-1 rounded-full text-center whitespace-nowrap truncate transition-all cursor-pointer ${
+                activeTab === 'relacionados'
+                  ? 'bg-white text-slate-900 shadow-sm font-semibold dark:bg-slate-900 dark:text-white dark:border dark:border-slate-700'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+              }`}
+            >
+              <span className="hidden sm:inline">Códigos </span>Relacionados ({relatedItems.length})
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
+      {activeTab === 'sincronizacion' && (
+        <div
+          key="tab-sincronizacion"
+          className={`bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-6 ${getTabAnimationClass()}`}
+        >
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -395,10 +621,10 @@ export function CatalogUploadModule({ currentUser, onBack }) {
               <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
                 Administración &bull; Base de Datos
               </span>
-              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                 Sincronización del Catálogo Central
               </h1>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Almacenamiento local ultrarrápido con actualización inteligente en la nube.
               </p>
             </div>
@@ -407,7 +633,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           {isRootAdmin && (
             <button
               onClick={() => setShowConfig(!showConfig)}
-              className="self-start sm:self-auto p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer"
+              className="self-start sm:self-auto p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
               title="Configuración avanzada del recurso central"
             >
               <Settings2 className="w-5 h-5" />
@@ -416,29 +642,29 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         </div>
 
         {isRootAdmin && showConfig && (
-          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 animate-fade-in">
-            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-              <span>ID del Archivo en Google Drive</span>
-              <span className="text-[10px] text-purple-700 font-semibold bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">Exclusivo Administrador</span>
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3 animate-fade-in">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 pb-1">
+              <span>Configuración del Archivo Fuente</span>
+              <span className="text-[10px] text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/80 border border-purple-200 dark:border-purple-800 px-2 py-0.5 rounded-full">Exclusivo Administrador</span>
             </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={customFileId}
-                onChange={(e) => {
-                  setCustomFileId(e.target.value);
-                  if (configError) setConfigError('');
-                }}
-                placeholder="Ej. 1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom"
-                className={`flex-1 bg-white border rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 ${
-                  configError
-                    ? 'border-red-400 focus:ring-red-500'
-                    : 'border-slate-200 focus:ring-blue-500'
-                }`}
-              />
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <FloatingInput
+                  label="ID del Archivo en Google Drive"
+                  value={customFileId}
+                  onChange={(e) => {
+                    setCustomFileId(e.target.value);
+                    if (configError) setConfigError('');
+                  }}
+                  placeholder="Ej. 1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom"
+                  className="font-mono text-xs"
+                  error={configError}
+                />
+              </div>
               <button
+                type="button"
                 onClick={handleSaveConfig}
-                className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer transition-colors"
+                className="bg-slate-900 dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-4 py-3 rounded-2xl text-xs font-bold hover:bg-slate-800 cursor-pointer transition-colors shrink-0 shadow-sm"
               >
                 Guardar
               </button>
@@ -452,14 +678,14 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
         )}
 
-        <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRootAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3`}>
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRootAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-3`}>
           
-          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
-            <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+          <div className="bg-slate-50/80 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
               <Database className="w-3.5 h-3.5 text-blue-600" />
               <span>Catálogo Base</span>
             </div>
-            <div className="text-xl font-mono font-bold text-slate-900">
+            <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
               {catalogStatus.localCount.toLocaleString()}
             </div>
             <p className="text-[10px] text-slate-400">
@@ -470,12 +696,12 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
 
           {isRootAdmin && (
-            <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+            <div className="bg-slate-50/80 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+              <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
                 <Layers className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Catálogo Limpio</span>
               </div>
-              <div className="text-xl font-mono font-bold text-slate-900">
+              <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
                 {catalogStatus.cleanCount.toLocaleString()}
               </div>
               <p className="text-[10px] text-slate-400">
@@ -484,12 +710,25 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </div>
           )}
 
-          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
-            <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+          <div className="bg-slate-50/80 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
+              <Link2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span>Códigos Relacionados</span>
+            </div>
+            <div className="text-xl font-mono font-bold text-slate-900 dark:text-white">
+              {(catalogStatus.relatedCount ?? relatedItems.length).toLocaleString()}
+            </div>
+            <p className="text-[10px] text-slate-400">
+              Códigos alternos activos
+            </p>
+          </div>
+
+          <div className="bg-slate-50/80 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
               <Clock className="w-3.5 h-3.5 text-indigo-600" />
               <span>Última Sincro</span>
             </div>
-            <div className="text-xs font-bold text-slate-800 truncate" title={formatDate(catalogStatus.lastSync)}>
+            <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate" title={formatDate(catalogStatus.lastSync)}>
               {formatDate(catalogStatus.lastSync)}
             </div>
             <p className="text-[10px] text-slate-400 truncate" title={catalogStatus.lastModified ? `Edición archivo: ${formatDate(catalogStatus.lastModified)}` : 'En este navegador'}>
@@ -497,8 +736,8 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             </p>
           </div>
 
-          <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 space-y-1">
-            <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold">
+          <div className="bg-slate-50/80 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-1">
+            <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
               {serverState === 'offline' ? (
                 <WifiOff className="w-3.5 h-3.5 text-amber-600" />
               ) : (
@@ -510,11 +749,11 @@ export function CatalogUploadModule({ currentUser, onBack }) {
               {isVerifying ? (
                 <span className="text-slate-400">Verificando en Servidor Central...</span>
               ) : serverState === 'up_to_date' ? (
-                <span className="text-emerald-700">Actualizado</span>
+                <span className="text-emerald-700 dark:text-emerald-400">Actualizado</span>
               ) : serverState === 'server_updated' ? (
-                <span className="text-blue-600">Nueva versión en Servidor Central</span>
+                <span className="text-blue-600 dark:text-blue-400">Nueva versión en Servidor Central</span>
               ) : (
-                <span className="text-amber-600">Sin conexión</span>
+                <span className="text-amber-600 dark:text-amber-400">Sin conexión</span>
               )}
             </div>
             <p className="text-[10px] text-slate-400">
@@ -561,31 +800,35 @@ export function CatalogUploadModule({ currentUser, onBack }) {
             <HardDriveDownload className="w-5 h-5" />
             <span>Forzar Sincronización Manual</span>
           </button>
-          <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 text-center leading-relaxed">
             Descarga la versión más reciente del archivo desde el Servidor Central y reconstruye el índice local de productos visiblemente en pantalla para todos los usuarios.
           </p>
         </div>
 
       </div>
+      )}
 
-      {isRootAdmin && (
-        <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8 space-y-6">
+      {activeTab === 'limpio' && isRootAdmin && (
+        <div
+          key="tab-limpio"
+          className={`bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-6 ${getTabAnimationClass()}`}
+        >
           
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
                     Catálogo Limpio
                   </h2>
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
                     {cleanItems.length} {cleanItems.length === 1 ? 'producto' : 'productos'}
                   </span>
                 </div>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Catálogo validado automáticamente en operaciones reales (solicitudes, extras y despachos).
                 </p>
               </div>
@@ -593,6 +836,17 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
             <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
               <button
+                type="button"
+                onClick={handleSyncFromHistory}
+                disabled={isHistorySyncing}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl text-xs font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                title="Escanear transferencias pasadas para agregar productos al catálogo limpio"
+              >
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>{isHistorySyncing ? 'Sincronizando...' : 'Alimentar de Historial'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={handleOpenAddClean}
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
               >
@@ -604,6 +858,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
 
           <div>
             <MarqueeSearchInput
+              label="Buscar en catálogo limpio"
               value={cleanSearchQuery}
               onChange={(e) => handleCleanSearchChange(e.target.value)}
               placeholder="Buscar en el catálogo limpio por código o descripción..."
@@ -613,15 +868,15 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           </div>
 
           {cleanItems.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+            <div className="p-8 text-center bg-slate-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
                 <Layers className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-xs sm:text-sm font-bold text-slate-700">
+                <h3 className="text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-200">
                   Catálogo Limpio Vacío (0 Registros)
                 </h3>
-                <p className="text-[11px] text-slate-400 max-w-md mx-auto leading-relaxed">
+                <p className="text-[11px] text-slate-400 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
                   El Catálogo Limpio reúne los productos validados que se solicitan, se envían como extras o se despachan directamente, eliminando el ruido y registros obsoletos del catálogo general.
                 </p>
               </div>
@@ -636,7 +891,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
               </div>
             </div>
           ) : filteredCleanItems.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
+            <div className="p-6 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/40 rounded-2xl">
               No se encontraron productos limpios que coincidan con "{cleanSearchQuery}".
             </div>
           ) : (
@@ -644,20 +899,20 @@ export function CatalogUploadModule({ currentUser, onBack }) {
               {visibleCleanItems.map((item) => (
                 <div
                   key={item.codigo}
-                  className="p-3.5 bg-slate-50/90 hover:bg-slate-100/80 rounded-2xl border border-slate-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+                  className="p-3.5 bg-slate-50/90 dark:bg-slate-800/60 hover:bg-slate-100/80 dark:hover:bg-slate-800 rounded-2xl border border-slate-200/70 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
                 >
                   <div className="flex items-start sm:items-center gap-3 min-w-0">
-                    <span className="shrink-0 inline-flex items-center gap-1 bg-white border border-slate-200/90 text-slate-800 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl shadow-2xs">
+                    <span className="shrink-0 inline-flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl shadow-2xs">
                       <Tag className="w-3 h-3 text-emerald-600" />
                       {item.codigo}
                     </span>
                     <div className="min-w-0 flex-1">
                       <MarqueeText
                         text={item.descripcion}
-                        className="text-xs font-semibold text-slate-900 block"
+                        className="text-xs font-semibold text-slate-900 dark:text-white block"
                       />
                       {item.updatedAt && (
-                        <p className="text-[10px] text-slate-400">
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500">
                           Actualizado: {formatDate(item.updatedAt)}
                         </p>
                       )}
@@ -667,14 +922,14 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                   <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
                     <button
                       onClick={() => handleOpenEditClean(item)}
-                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 rounded-xl transition-colors cursor-pointer"
                       title="Editar descripción"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteCleanProduct(item)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/60 rounded-xl transition-colors cursor-pointer"
                       title="Eliminar producto"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -683,7 +938,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                 </div>
               ))}
 
-              <div className="pt-2 text-center text-xs text-slate-400">
+              <div className="pt-2 text-center text-xs text-slate-400 dark:text-slate-500">
                 <span>Mostrando {visibleCleanItems.length} de {filteredCleanItems.length} productos</span>
               </div>
 
@@ -693,7 +948,7 @@ export function CatalogUploadModule({ currentUser, onBack }) {
                     type="button"
                     disabled={isLoadingMoreClean}
                     onClick={handleLoadMoreClean}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl border border-slate-200/80 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
                   >
                     {isLoadingMoreClean ? (
                       <>
@@ -715,6 +970,191 @@ export function CatalogUploadModule({ currentUser, onBack }) {
         </div>
       )}
 
+      {/* Sección Códigos Relacionados (Alternos) */}
+      {activeTab === 'relacionados' && (
+        <div
+          key="tab-relacionados"
+          className={`bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm p-6 sm:p-8 space-y-6 ${getTabAnimationClass()}`}
+        >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+              <Link2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                  Códigos Relacionados
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300">
+                  {relatedItems.length} {relatedItems.length === 1 ? 'código' : 'códigos'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Vincula códigos de barras alternos a productos del catálogo maestro para que el escáner los reconozca al surtir y solicitar.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            <button
+              onClick={handleOpenAddRelated}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Relacionar Código</span>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <MarqueeSearchInput
+            label="Buscar códigos relacionados"
+            value={relatedSearchQuery}
+            onChange={(e) => handleRelatedSearchChange(e.target.value)}
+            placeholder="Buscar por código relacionado, código maestro o descripción..."
+            icon={Search}
+            onClear={() => handleRelatedSearchChange('')}
+          />
+        </div>
+
+        {relatedItems.length === 0 ? (
+          <div className="p-8 text-center bg-slate-50/70 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-500 flex items-center justify-center mx-auto">
+              <Link2 className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-200">
+                Sin Códigos Relacionados (0 Registros)
+              </h3>
+              <p className="text-[11px] text-slate-400 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                Relaciona códigos de barras de nuevas presentaciones o variantes de laboratorio para que el escáner los identifique automáticamente con su producto maestro oficial.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+              <button
+                onClick={handleOpenAddRelated}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Relacionar primer código</span>
+              </button>
+            </div>
+          </div>
+        ) : filteredRelatedItems.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/40 rounded-2xl">
+            No se encontraron códigos relacionados que coincidan con "{relatedSearchQuery}".
+          </div>
+        ) : (
+          <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+            {visibleRelatedItems.map((item) => (
+              <div
+                key={item.codigo}
+                className="p-3.5 bg-slate-50/90 dark:bg-slate-800/60 hover:bg-slate-100/80 dark:hover:bg-slate-800 rounded-2xl border border-slate-200/70 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+              >
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Código Relacionado */}
+                    <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-bold px-2.5 py-1 rounded-xl shadow-2xs">
+                      <Tag className="w-3 h-3 text-indigo-500" />
+                      {item.codigo}
+                    </span>
+                    <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200/60 dark:border-indigo-800 px-2 py-0.5 rounded-full">
+                      Relacionado
+                    </span>
+
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+
+                    {/* Código Maestro */}
+                    <span className="inline-flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[11px] font-bold px-2 py-1 rounded-xl shadow-2xs">
+                      <Database className="w-3 h-3 text-emerald-600" />
+                      {item.codigoMaestro}
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200/60 dark:border-emerald-800 px-2 py-0.5 rounded-full">
+                      Maestro
+                    </span>
+                  </div>
+
+                  {/* Descripción */}
+                  <div className="min-w-0">
+                    <MarqueeText
+                      text={item.descripcion}
+                      className="text-xs font-semibold text-slate-900 dark:text-white block"
+                    />
+                  </div>
+
+                  {/* Notas o fechas */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    {item.notas && (
+                      <span className="text-slate-500 dark:text-slate-400 italic">
+                        "{item.notas}"
+                      </span>
+                    )}
+                    {item.updatedAt && (
+                      <span>Actualizado: {formatDate(item.updatedAt)}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                  <button
+                    onClick={() => handleOpenAddAnotherRelated(item)}
+                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 rounded-xl transition-colors cursor-pointer"
+                    title="Vincular otro código alterno a este mismo producto maestro"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleOpenEditRelated(item)}
+                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 rounded-xl transition-colors cursor-pointer"
+                    title="Editar código relacionado"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  {isRootAdmin && (
+                    <button
+                      onClick={() => handleDeleteRelatedCode(item)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/60 rounded-xl transition-colors cursor-pointer"
+                      title="Eliminar código relacionado (Solo Administrador)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div className="pt-2 text-center text-xs text-slate-400 dark:text-slate-500">
+              <span>Mostrando {visibleRelatedItems.length} de {filteredRelatedItems.length} códigos relacionados</span>
+            </div>
+
+            {hasMoreRelated && (
+              <div ref={relatedSentinelRef} className="pt-1 pb-2 text-center">
+                <button
+                  type="button"
+                  disabled={isLoadingMoreRelated}
+                  onClick={handleLoadMoreRelated}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-60"
+                >
+                  {isLoadingMoreRelated ? (
+                    <>
+                      <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
+                      <span>Cargando más códigos...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                      <span>Cargar más códigos</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      )}
+
       {isRootAdmin && (
         <CleanProductModal
           isOpen={isCleanModalOpen}
@@ -723,6 +1163,14 @@ export function CatalogUploadModule({ currentUser, onBack }) {
           onSave={handleSaveCleanProduct}
         />
       )}
+
+      <RelatedCodeModal
+        isOpen={isRelatedModalOpen}
+        item={editingRelatedItem}
+        currentUser={activeUser}
+        onClose={() => setIsRelatedModalOpen(false)}
+        onSave={handleSaveRelatedCode}
+      />
 
       <ModalDialog
         isOpen={dialog.isOpen}

@@ -3,13 +3,14 @@
  */
 
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, writeBatch } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '../../config/firebase';
+import { db, auth, isFirebaseConfigured } from '../../config/firebase';
 import * as XLSX from 'xlsx';
 
 const DB_NAME = 'ERP_Catalog_DB';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const STORE_BASE = 'catalogo_base_local';
 const STORE_CLEAN = 'catalogo_limpio_local';
+const STORE_RELATED = 'catalogo_relacionados_local';
 
 const DEFAULT_FILE_ID = '1BKAflq-3XwRVvRngQXxYXpSRBDPbcQom';
 export const CATALOG_FILE_ID_REGEX = /^[a-zA-Z0-9_-]{25,45}$/;
@@ -42,8 +43,27 @@ const STORAGE_KEY_EXCEL_ROWS = 'erp_catalog_excel_rows';
 const STORAGE_KEY_DUPLICATES = 'erp_catalog_duplicates_count';
 const STORAGE_KEY_CODE_VERSION = 'erp_catalog_code_version';
 const CURRENT_CODE_VERSION = 'v5_cors_safe_fingerprint';
+const STORAGE_KEY_RELATED = 'erp_catalog_related_codes';
 
 let memoryCache = null;
+let relatedMemoryCache = null;
+
+function getLocalRelatedData(fallback = []) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_RELATED);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveLocalRelatedData(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY_RELATED, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Error guardando códigos relacionados en localStorage:', e);
+  }
+}
 
 function bytesToHex(arr) {
   let hex = '';
@@ -76,7 +96,7 @@ function parseZipDateTime(bytes) {
   return new Date(year, month - 1, day, hours, minutes, seconds);
 }
 
-function normalizeBarcode(raw) {
+export function normalizeBarcode(raw) {
   if (raw === undefined || raw === null) return '';
   return String(raw).trim().replace(/\s+/g, '').replace(/\//g, '-');
 }
@@ -92,14 +112,35 @@ function openDB() {
       if (!database.objectStoreNames.contains(STORE_CLEAN)) {
         database.createObjectStore(STORE_CLEAN, { keyPath: 'codigo' });
       }
+      if (!database.objectStoreNames.contains(STORE_RELATED)) {
+        const store = database.createObjectStore(STORE_RELATED, { keyPath: 'codigo' });
+        store.createIndex('codigoMaestro', 'codigoMaestro', { unique: false });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
+async function deleteLocalItem(storeName, key) {
+  const database = await openDB();
+  if (!database.objectStoreNames.contains(storeName)) {
+    return;
+  }
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    store.delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function getLocalItem(storeName, key) {
   const database = await openDB();
+  if (!database.objectStoreNames.contains(storeName)) {
+    return null;
+  }
   return new Promise((resolve, reject) => {
     const tx = database.transaction(storeName, 'readonly');
     const store = tx.objectStore(storeName);
@@ -111,6 +152,9 @@ async function getLocalItem(storeName, key) {
 
 async function getAllLocalItems(storeName) {
   const database = await openDB();
+  if (!database.objectStoreNames.contains(storeName)) {
+    return [];
+  }
   return new Promise((resolve, reject) => {
     const tx = database.transaction(storeName, 'readonly');
     const store = tx.objectStore(storeName);
@@ -122,6 +166,9 @@ async function getAllLocalItems(storeName) {
 
 async function getLocalCount(storeName) {
   const database = await openDB();
+  if (!database.objectStoreNames.contains(storeName)) {
+    return 0;
+  }
   return new Promise((resolve, reject) => {
     const tx = database.transaction(storeName, 'readonly');
     const store = tx.objectStore(storeName);
@@ -133,6 +180,9 @@ async function getLocalCount(storeName) {
 
 async function saveLocalBatch(storeName, items) {
   const database = await openDB();
+  if (!database.objectStoreNames.contains(storeName)) {
+    return;
+  }
   return new Promise((resolve, reject) => {
     const tx = database.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
@@ -272,6 +322,12 @@ export const catalogService = {
     }
 
     const localCount = await getLocalCount(STORE_BASE);
+    let relatedCount = 0;
+    try {
+      relatedCount = await getLocalCount(STORE_RELATED);
+    } catch (_) {
+      relatedCount = (getLocalRelatedData([])).length;
+    }
     const lastSync = localStorage.getItem(STORAGE_KEY_LAST_SYNC) || null;
     const lastModified = localStorage.getItem(STORAGE_KEY_LAST_MODIFIED) || null;
     const fileId = this.getCatalogFileId();
@@ -281,6 +337,7 @@ export const catalogService = {
     return {
       localCount,
       cleanCount,
+      relatedCount,
       totalCount: localCount,
       lastSync,
       lastModified,
@@ -601,6 +658,7 @@ export const catalogService = {
     const cleanBarcode = normalizeBarcode(rawBarcode);
     if (!cleanBarcode) return null;
 
+    // 1. Catálogo limpio local
     const localLimpio = await getLocalItem(STORE_CLEAN, cleanBarcode);
     if (localLimpio) {
       if (!(localLimpio.codigo === '1' && String(localLimpio.descripcion).includes('ATOMIZADOR'))) {
@@ -608,15 +666,45 @@ export const catalogService = {
       }
     }
 
+    // 2. Catálogo base local
     const localBase = await getLocalItem(STORE_BASE, cleanBarcode);
     if (localBase) return localBase;
 
+    // 3. Códigos relacionados locales
+    const related = await this.getRelatedCode(cleanBarcode);
+    if (related && related.codigoMaestro) {
+      let master = null;
+      try {
+        const masterClean = await getLocalItem(STORE_CLEAN, related.codigoMaestro);
+        if (masterClean && !(masterClean.codigo === '1' && String(masterClean.descripcion).includes('ATOMIZADOR'))) {
+          master = masterClean;
+        } else {
+          const masterBase = await getLocalItem(STORE_BASE, related.codigoMaestro);
+          if (masterBase) master = masterBase;
+        }
+      } catch (_) {}
+
+      const desc = master?.descripcion || related.descripcion;
+      return {
+        ...(master || {}),
+        codigo: related.codigoMaestro,
+        descripcion: desc,
+        esRelacionado: true,
+        codigoRelacionado: cleanBarcode,
+        codigoEscaneado: cleanBarcode,
+        codigoMaestro: related.codigoMaestro,
+        relacionInfo: related
+      };
+    }
+
+    // 4. Búsqueda remota en Firebase si está en línea
     if (!isFirebaseConfigured || !db || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
       return null;
     }
 
     let timeoutId = null;
     try {
+      // Consultar en catalogo_limpio
       const limpioRef = doc(db, 'catalogo_limpio', cleanBarcode);
       const limpioSnap = await Promise.race([
         getDoc(limpioRef),
@@ -631,12 +719,417 @@ export const catalogService = {
           return data;
         }
       }
+
+      // Consultar en codigos_relacionados
+      const relRef = doc(db, 'codigos_relacionados', cleanBarcode);
+      const relSnap = await Promise.race([
+        getDoc(relRef),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('RELATED_LOOKUP_TIMEOUT')), 1500);
+        })
+      ]);
+      if (relSnap && relSnap.exists()) {
+        const relData = { codigo: relSnap.id, ...relSnap.data() };
+        await saveLocalBatch(STORE_RELATED, [relData]).catch(() => {});
+        const currentList = getLocalRelatedData([]);
+        saveLocalRelatedData([relData, ...currentList.filter(r => r.codigo !== cleanBarcode)]);
+
+        let master = null;
+        try {
+          master = await this.findByBarcode(relData.codigoMaestro);
+        } catch (_) {}
+
+        return {
+          ...(master || {}),
+          codigo: relData.codigoMaestro,
+          descripcion: master?.descripcion || relData.descripcion,
+          esRelacionado: true,
+          codigoRelacionado: cleanBarcode,
+          codigoEscaneado: cleanBarcode,
+          codigoMaestro: relData.codigoMaestro,
+          relacionInfo: relData
+        };
+      }
     } catch (_e) {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
 
     return null;
+  },
+
+  async getRelatedCodes() {
+    try {
+      const dbItems = await getAllLocalItems(STORE_RELATED);
+      if (dbItems && dbItems.length > 0) {
+        relatedMemoryCache = dbItems;
+        saveLocalRelatedData(dbItems);
+        return dbItems.sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''));
+      }
+    } catch (_) {}
+    const local = getLocalRelatedData([]);
+    relatedMemoryCache = local;
+    return local.sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''));
+  },
+
+  async getRelatedCode(rawBarcode) {
+    const clean = normalizeBarcode(rawBarcode);
+    if (!clean) return null;
+
+    if (relatedMemoryCache) {
+      const found = relatedMemoryCache.find(r => r.codigo === clean);
+      if (found) return found;
+    }
+
+    try {
+      const item = await getLocalItem(STORE_RELATED, clean);
+      if (item) return item;
+    } catch (_) {}
+
+    const localList = getLocalRelatedData([]);
+    const foundLocal = localList.find(r => r.codigo === clean);
+    if (foundLocal) return foundLocal;
+
+    if (isFirebaseConfigured && db && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+      try {
+        const docRef = doc(db, 'codigos_relacionados', clean);
+        const snap = await getDoc(docRef);
+        if (snap && snap.exists()) {
+          const data = { codigo: snap.id, ...snap.data() };
+          await saveLocalBatch(STORE_RELATED, [data]).catch(() => {});
+          const current = getLocalRelatedData([]);
+          const updated = [data, ...current.filter(c => c.codigo !== clean)];
+          saveLocalRelatedData(updated);
+          relatedMemoryCache = updated;
+          return data;
+        }
+      } catch (_) {}
+    }
+
+    return null;
+  },
+
+  async getRelatedCodesForMaster(rawMasterBarcode) {
+    const cleanMaster = normalizeBarcode(rawMasterBarcode);
+    if (!cleanMaster) return [];
+    const all = await this.getRelatedCodes();
+    return all.filter(r => r.codigoMaestro === cleanMaster);
+  },
+
+  async validateRelatedCode(rawBarcode, masterBarcode, currentEditCode = null) {
+    const cleanCodigo = normalizeBarcode(rawBarcode);
+    const cleanMaster = normalizeBarcode(masterBarcode);
+
+    if (!cleanCodigo) {
+      return { valid: false, error: 'Ingresa un código de barras válido.' };
+    }
+
+    if (cleanMaster && cleanCodigo === cleanMaster) {
+      return {
+        valid: false,
+        error: `El código "${cleanCodigo}" no puede ser idéntico al código maestro del producto.`
+      };
+    }
+
+    // 1. Verificar si ya está en la lista de códigos relacionados
+    const existing = await this.getRelatedCode(cleanCodigo);
+    if (existing) {
+      // Si estamos editando y es exactamente el mismo código asignado, es válido
+      if (currentEditCode && cleanCodigo === normalizeBarcode(currentEditCode)) {
+        return { valid: true, existing, isSelf: true };
+      }
+
+      if (cleanMaster && existing.codigoMaestro === cleanMaster) {
+        return {
+          valid: false,
+          alreadyRelated: true,
+          sameMaster: true,
+          error: `El código "${cleanCodigo}" ya está relacionado a este mismo producto (${existing.descripcion || 'Producto'}).`,
+          existing
+        };
+      } else {
+        return {
+          valid: false,
+          alreadyRelated: true,
+          sameMaster: false,
+          error: `El código "${cleanCodigo}" ya está relacionado con otro producto: "${existing.codigoMaestro} - ${existing.descripcion || 'Producto'}".`,
+          existing
+        };
+      }
+    }
+
+    // 2. Verificar si el código ya existe como producto maestro oficial en el catálogo
+    const masterProduct = await this.findByBarcode(cleanCodigo);
+    if (masterProduct && !masterProduct.esRelacionado && String(masterProduct.codigo) === cleanCodigo) {
+      if (cleanMaster && cleanCodigo !== cleanMaster) {
+        return {
+          valid: false,
+          isMasterProduct: true,
+          error: `El código "${cleanCodigo}" ya existe en el catálogo maestro como el producto oficial "${masterProduct.descripcion}". No puede relacionarse como código alterno.`,
+          masterProduct
+        };
+      }
+    }
+
+    return { valid: true };
+  },
+
+  async saveRelatedCodes(payload, currentUser) {
+    const cleanCodigoMaestro = normalizeBarcode(payload.codigoMaestro);
+    const descripcion = String(payload.descripcion || '').trim().toUpperCase();
+    const notas = String(payload.notas || '').trim();
+
+    const rawCodigos = Array.isArray(payload.codigos)
+      ? payload.codigos
+      : (payload.codigo ? [payload.codigo] : []);
+
+    const cleanCodigos = Array.from(new Set(
+      rawCodigos
+        .map(c => normalizeBarcode(c))
+        .filter(Boolean)
+    ));
+
+    if (cleanCodigos.length === 0) {
+      throw new Error('Debes ingresar al menos un código de barras para relacionar.');
+    }
+    if (!cleanCodigoMaestro) {
+      throw new Error('El código maestro es obligatorio.');
+    }
+    if (!descripcion) {
+      throw new Error('La descripción del producto maestro es obligatoria.');
+    }
+
+    // Validar cada código antes de guardar
+    for (const c of cleanCodigos) {
+      if (c === cleanCodigoMaestro) {
+        throw new Error(`El código "${c}" no puede ser idéntico al código maestro del producto.`);
+      }
+      const existing = await this.getRelatedCode(c);
+      if (existing && existing.codigoMaestro !== cleanCodigoMaestro) {
+        throw new Error(`El código "${c}" ya está relacionado con otro producto maestro: "${existing.codigoMaestro} - ${existing.descripcion}".`);
+      }
+      const masterProduct = await this.findByBarcode(c);
+      if (masterProduct && !masterProduct.esRelacionado && String(masterProduct.codigo) === c && c !== cleanCodigoMaestro) {
+        throw new Error(`El código "${c}" ya existe en el catálogo maestro como el producto oficial "${masterProduct.descripcion}".`);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const itemsToSave = [];
+
+    for (const c of cleanCodigos) {
+      let existing = null;
+      try {
+        existing = await getLocalItem(STORE_RELATED, c);
+      } catch (_) {}
+      if (!existing) {
+        const localList = getLocalRelatedData([]);
+        existing = localList.find(r => r.codigo === c);
+      }
+
+      itemsToSave.push({
+        codigo: c,
+        codigoMaestro: cleanCodigoMaestro,
+        descripcion,
+        notas,
+        createdAt: existing?.createdAt || now,
+        createdBy: existing?.createdBy || currentUser?.username || 'sistema',
+        createdByName: existing?.createdByName || currentUser?.nombre || 'Personal',
+        updatedAt: now,
+        updatedBy: currentUser?.username || 'sistema'
+      });
+    }
+
+    try {
+      await saveLocalBatch(STORE_RELATED, itemsToSave);
+    } catch (e) {
+      console.warn('Error guardando en IndexedDB (usando fallback local):', e);
+    }
+
+    const current = getLocalRelatedData([]);
+    const codeSet = new Set(cleanCodigos);
+    const updated = [...itemsToSave, ...current.filter(r => !codeSet.has(r.codigo))];
+    saveLocalRelatedData(updated);
+    relatedMemoryCache = updated;
+    memoryCache = null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const batch = writeBatch(db);
+        itemsToSave.forEach(it => {
+          const docRef = doc(db, 'codigos_relacionados', it.codigo);
+          batch.set(docRef, it, { merge: true });
+        });
+        await batch.commit();
+      } catch (err) {
+        console.warn('Error guardando códigos relacionados en Firestore (modo offline):', err);
+      }
+    }
+
+    window.dispatchEvent(new CustomEvent('erp_related_codes_changed', { detail: { items: itemsToSave } }));
+    return itemsToSave;
+  },
+
+  async saveRelatedCode(payload, currentUser) {
+    const results = await this.saveRelatedCodes(payload, currentUser);
+    return results[0] || null;
+  },
+
+  async deleteRelatedCode(rawBarcode, currentUser) {
+    const cleanCodigo = normalizeBarcode(rawBarcode);
+    if (!cleanCodigo) throw new Error('Código no válido.');
+
+    const username = (currentUser?.username || '').trim().toLowerCase();
+    const isRootAdmin = username === 'administrador';
+    const isAdminRole = Array.isArray(currentUser?.roles) && currentUser.roles.includes('admin');
+    if (!isRootAdmin && !isAdminRole) {
+      throw new Error('Solo el usuario Administrador tiene permisos para eliminar códigos relacionados.');
+    }
+
+    try {
+      await deleteLocalItem(STORE_RELATED, cleanCodigo);
+    } catch (e) {
+      console.warn('Error eliminando de IndexedDB (usando fallback local):', e);
+    }
+    const current = getLocalRelatedData([]);
+    const updated = current.filter(r => r.codigo !== cleanCodigo);
+    saveLocalRelatedData(updated);
+    relatedMemoryCache = updated;
+    memoryCache = null;
+
+    if (isFirebaseConfigured && db) {
+      try {
+        const docRef = doc(db, 'codigos_relacionados', cleanCodigo);
+        await deleteDoc(docRef);
+      } catch (err) {
+        console.warn('Error eliminando código relacionado de Firestore:', err);
+      }
+    }
+
+    window.dispatchEvent(new CustomEvent('erp_related_codes_changed', { detail: { codigo: cleanCodigo } }));
+    return true;
+  },
+
+  async syncRelatedCodesFromFirestore() {
+    if (!isFirebaseConfigured || !db || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      return await this.getRelatedCodes();
+    }
+    try {
+      if (auth && typeof auth.authStateReady === 'function') {
+        await auth.authStateReady().catch(() => {});
+      }
+      if (!auth?.currentUser) {
+        return await this.getRelatedCodes();
+      }
+
+      const snap = await getDocs(collection(db, 'codigos_relacionados'));
+      const items = snap.docs.map(d => ({ codigo: d.id, ...d.data() }));
+
+      try {
+        const database = await openDB();
+        if (database.objectStoreNames.contains(STORE_RELATED)) {
+          await new Promise((resolve, reject) => {
+            const tx = database.transaction(STORE_RELATED, 'readwrite');
+            const store = tx.objectStore(STORE_RELATED);
+            const clearReq = store.clear();
+            clearReq.onsuccess = () => {
+              items.forEach(it => store.put(it));
+            };
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        }
+      } catch (idbErr) {
+        console.warn('Error guardando códigos relacionados en IndexedDB:', idbErr);
+      }
+
+      saveLocalRelatedData(items);
+      relatedMemoryCache = items;
+      memoryCache = null;
+      return items;
+    } catch (err) {
+      if (err?.code !== 'permission-denied') {
+        console.warn('Error sincronizando códigos relacionados de Firestore:', err);
+      }
+      return await this.getRelatedCodes();
+    }
+  },
+
+  subscribeRelatedCodes(onUpdate) {
+    this.getRelatedCodes().then(initial => {
+      if (onUpdate && initial.length > 0) onUpdate(initial);
+    });
+
+    let firestoreUnsub = null;
+    let authUnsub = null;
+
+    const setupFirestoreSub = () => {
+      if (firestoreUnsub || !isFirebaseConfigured || !db) return;
+      try {
+        firestoreUnsub = onSnapshot(
+          collection(db, 'codigos_relacionados'),
+          async (snap) => {
+            const items = snap.docs.map(d => ({ codigo: d.id, ...d.data() }));
+            try {
+              const database = await openDB();
+              if (database.objectStoreNames.contains(STORE_RELATED)) {
+                await new Promise((resolve, reject) => {
+                  const tx = database.transaction(STORE_RELATED, 'readwrite');
+                  const store = tx.objectStore(STORE_RELATED);
+                  snap.docChanges().forEach(change => {
+                    const it = { codigo: change.doc.id, ...change.doc.data() };
+                    if (change.type === 'removed') {
+                      store.delete(change.doc.id);
+                    } else {
+                      store.put(it);
+                    }
+                  });
+                  tx.oncomplete = () => resolve();
+                  tx.onerror = () => reject(tx.error);
+                });
+              }
+            } catch (_) {}
+
+            saveLocalRelatedData(items);
+            relatedMemoryCache = items;
+            memoryCache = null;
+            if (onUpdate) onUpdate(items);
+          },
+          (err) => {
+            if (err?.code !== 'permission-denied') {
+              console.warn('Error en suscripción de códigos relacionados:', err);
+            }
+          }
+        );
+      } catch (e) {
+        console.warn('Error iniciando snap de codigos_relacionados:', e);
+      }
+    };
+
+    if (isFirebaseConfigured && db) {
+      if (auth?.currentUser) {
+        setupFirestoreSub();
+      } else if (auth && typeof auth.onAuthStateChanged === 'function') {
+        authUnsub = auth.onAuthStateChanged((user) => {
+          if (user) {
+            setupFirestoreSub();
+            this.syncRelatedCodesFromFirestore().catch(() => {});
+          }
+        });
+      }
+    }
+
+    const handler = () => {
+      this.getRelatedCodes().then(list => {
+        if (onUpdate) onUpdate(list);
+      });
+    };
+    window.addEventListener('erp_related_codes_changed', handler);
+    return () => {
+      window.removeEventListener('erp_related_codes_changed', handler);
+      if (typeof firestoreUnsub === 'function') firestoreUnsub();
+      if (typeof authUnsub === 'function') authUnsub();
+    };
   },
 
   async saveToCleanCatalog(barcode, descripcion) {
@@ -958,6 +1451,37 @@ export const catalogService = {
 
         return false;
       });
+
+      // Incluir productos cuyos códigos relacionados coincidan con la búsqueda
+      if (searchCod || q.length >= 2) {
+        try {
+          const relatedItems = await this.getRelatedCodes();
+          for (const rel of relatedItems) {
+            const relCode = String(rel.codigo || '').toLowerCase();
+            const relDesc = String(rel.descripcion || '').toLowerCase();
+            const relNotas = String(rel.notas || '').toLowerCase();
+
+            const matchCode = searchCod && relCode.startsWith(searchCod);
+            const matchDesc = q.length >= 2 && (relDesc.includes(q) || relNotas.includes(q));
+
+            if (matchCode || matchDesc) {
+              const masterCode = String(rel.codigoMaestro || '');
+              if (!results.some(r => String(r.codigo) === masterCode) && (!exactMatch || String(exactMatch.codigo) !== masterCode)) {
+                const master = memoryCache.find(m => String(m.codigo) === masterCode);
+                results.push({
+                  ...(master || {}),
+                  codigo: masterCode,
+                  descripcion: master?.descripcion || rel.descripcion || 'Producto',
+                  esRelacionado: true,
+                  codigoRelacionado: rel.codigo,
+                  codigoMaestro: masterCode,
+                  relacionInfo: rel
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
 
       results.sort((a, b) => {
         const aCod = String(a.codigo || '').toLowerCase();

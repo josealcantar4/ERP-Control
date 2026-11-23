@@ -714,7 +714,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             </button>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden divide-y divide-slate-100 dark:divide-slate-800/80">
             {filteredUsers.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-400">No hay usuarios registrados.</div>
             ) : (
@@ -724,10 +724,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                 const isExcluded = Boolean(user.excluirDestinatario);
 
                 return (
-                  <div key={user.id || user.username} className="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+                  <div key={user.id || user.username} className="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition-colors">
                     <div className="space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="text-sm font-bold text-slate-900 truncate">{user.nombre}</h4>
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{user.nombre}</h4>
                         <span className="font-mono text-[11px] text-slate-400">@{user.username}</span>
                         {isAdmin && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">Principal</span>}
                         {(isAdministrativo || isExcluded) && (
@@ -737,7 +737,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                           </span>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                         <span>{user.sede || 'Sin sede'}</span><span>&bull;</span><span>{user.area || 'Sin área'}</span>
                       </div>
                       <div className="flex items-center gap-1.5 pt-1 flex-wrap">
@@ -759,11 +759,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => handleOpenEditUser(user)} className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer" title="Modificar">
+                      <button onClick={() => handleOpenEditUser(user)} className="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-blue-900/40 text-slate-700 hover:text-blue-700 dark:text-slate-300 dark:hover:text-blue-400 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer" title="Modificar">
                         <Edit2 className="w-3.5 h-3.5" /><span className="hidden sm:inline">Modificar</span>
                       </button>
                       {isRootAdmin && !isAdmin && (
-                        <button onClick={() => handleDeleteUser(user)} className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
+                        <button onClick={() => handleDeleteUser(user)} className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-red-50 dark:bg-slate-800 dark:hover:bg-red-900/40 text-slate-400 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -778,10 +778,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
       {activeTab === 'sedes' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
+          <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Sucursales y Matriz</h3>
-              <p className="text-xs text-slate-400">Puntos de operación y distribución</p>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Sucursales y Matriz</h3>
+              <p className="text-xs text-slate-400 dark:text-slate-400">Puntos de operación y distribución</p>
             </div>
             <button onClick={handleOpenCreateSede} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
               <Plus className="w-4 h-4" /><span>Nueva Sede</span>
@@ -792,17 +792,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
             {sedesList.map((sede) => {
               const areas = Array.isArray(sede.areas) ? sede.areas : [];
               return (
-                <div key={sede.id} className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between gap-3">
+                <div key={sede.id} className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700/80 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition-all">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                      <div className="w-9 h-9 rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 flex items-center justify-center shrink-0">
                         <Building2 className="w-4 h-4" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-slate-900">{sede.nombre}</h4>
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">{sede.nombre}</h4>
                         <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                           <span className="text-[10px] text-slate-400 font-medium">{sede.tipo || 'Sucursal'}</span>
-                          <span className="text-slate-300 text-[10px]">&bull;</span>
+                          <span className="text-slate-300 dark:text-slate-600 text-[10px]">&bull;</span>
                           {sede.esDestino !== false ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                               <CheckCircle2 className="w-2.5 h-2.5" />
@@ -818,26 +818,26 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <button onClick={() => handleOpenEditSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
+                      <button onClick={() => handleOpenEditSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       {isRootAdmin && (
-                        <button onClick={() => handleDeleteSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
+                        <button onClick={() => handleDeleteSede(sede)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/40 dark:hover:text-red-400 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5">
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-1.5">
                     {areas.length > 0 ? (
                       <>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Áreas ({areas.length}):</span>
                         {areas.map((ar, idx) => {
                           const aObj = resolveAreaObj(ar, areasList);
                           return (
-                            <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium border border-slate-200/60">
-                              <Layers className="w-2.5 h-2.5 text-blue-500" />
+                            <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium border border-slate-200/60 dark:border-slate-700/60">
+                              <Layers className="w-2.5 h-2.5 text-blue-500 dark:text-blue-400" />
                               {aObj?.nombre || ar}
                             </span>
                           );
@@ -845,7 +845,7 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                       </>
                     ) : (
                       <span className="text-[11px] text-slate-400 italic flex items-center gap-1">
-                        <Info className="w-3 h-3 text-slate-300" /> Sede directa (sin sub-áreas)
+                        <Info className="w-3 h-3 text-slate-300 dark:text-slate-600" /> Sede directa (sin sub-áreas)
                       </span>
                     )}
                   </div>
@@ -858,10 +858,10 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
       {activeTab === 'areas' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm">
+          <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Áreas y Departamentos</h3>
-              <p className="text-xs text-slate-400">Patente, Genérico, Piso, Naturista, etc. Gestionadas por ID automático de Firebase.</p>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Áreas y Departamentos</h3>
+              <p className="text-xs text-slate-400 dark:text-slate-400">Patente, Genérico, Piso, Naturista, etc. Gestionadas por ID automático de Firebase.</p>
             </div>
             <button onClick={handleOpenCreateArea} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-2xl shadow-sm transition-all cursor-pointer">
               <Plus className="w-4 h-4" /><span>Nueva Área</span>
@@ -870,17 +870,17 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {areasList.map((area) => (
-              <div key={area.id} className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between gap-3">
+              <div key={area.id} className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700/80 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition-all">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 ${
-                    area.excluirTransferencias ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                    area.excluirTransferencias ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400' : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
                   }`}>
                     <Layers className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="text-sm font-bold text-slate-900 truncate">{area.nombre}</h4>
-                      <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-semibold border border-slate-200/60" title={`ID único de Firebase: ${area.id}`}>
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate">{area.nombre}</h4>
+                      <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md font-semibold border border-slate-200/60 dark:border-slate-700/60" title={`ID único de Firebase: ${area.id}`}>
                         ID: {area.id}
                       </span>
                       {area.excluirTransferencias ? (
@@ -901,11 +901,11 @@ export function AdminUsersModule({ currentUser, onBack, onRefresh }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <button onClick={() => handleOpenEditArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
+                  <button onClick={() => handleOpenEditArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40 dark:hover:text-blue-400 flex items-center justify-center transition-colors cursor-pointer" title="Editar">
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                   {isRootAdmin && (
-                    <button onClick={() => handleDeleteArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
+                    <button onClick={() => handleDeleteArea(area)} className="w-8 h-8 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/40 dark:hover:text-red-400 flex items-center justify-center transition-colors cursor-pointer" title="Eliminar">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   )}
@@ -1054,7 +1054,7 @@ function AdminUserModal({
           <button
             type="button"
             onClick={handleClose}
-            className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer transition-colors"
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center justify-center cursor-pointer transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1258,52 +1258,52 @@ function AdminUserModal({
           <div>
             <label className="block text-slate-600 font-semibold mb-1.5 uppercase tracking-wider text-[11px]">Roles Permitidos *</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div onClick={() => toggleRole('solicitar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('solicitar') ? 'bg-blue-50/70 border-blue-400 text-blue-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+              <div onClick={() => toggleRole('solicitar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('solicitar') ? 'bg-blue-50/70 border-blue-400 text-blue-900 shadow-sm dark:bg-blue-950/40 dark:border-blue-500/50 dark:text-blue-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/60'}`}>
                 <div>
                   <span className="font-semibold text-xs block">Solicitar Pedido</span>
                   <span className="text-[10px] text-slate-400 block mt-0.5">Generar y recibir pedidos</span>
                 </div>
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('solicitar') ? 'bg-blue-600 text-white' : 'border border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('solicitar') ? 'bg-blue-600 text-white' : 'border border-slate-300 dark:border-slate-600'}`}>
                   {userForm.roles.includes('solicitar') && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
               </div>
 
-              <div onClick={() => toggleRole('despachar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('despachar') ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+              <div onClick={() => toggleRole('despachar')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('despachar') ? 'bg-emerald-50/70 border-emerald-400 text-emerald-900 shadow-sm dark:bg-emerald-950/40 dark:border-emerald-500/50 dark:text-emerald-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/60'}`}>
                 <div>
                   <span className="font-semibold text-xs block">Despachar Pedido</span>
                   <span className="text-[10px] text-slate-400 block mt-0.5">Surtir transferencias</span>
                 </div>
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('despachar') ? 'bg-emerald-600 text-white' : 'border border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('despachar') ? 'bg-emerald-600 text-white' : 'border border-slate-300 dark:border-slate-600'}`}>
                   {userForm.roles.includes('despachar') && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
               </div>
 
-              <div onClick={() => toggleRole('material')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('material') ? 'bg-amber-50/70 border-amber-400 text-amber-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+              <div onClick={() => toggleRole('material')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('material') ? 'bg-amber-50/70 border-amber-400 text-amber-900 shadow-sm dark:bg-amber-950/40 dark:border-amber-500/50 dark:text-amber-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/60'}`}>
                 <div>
                   <span className="font-semibold text-xs block">Material Brindado</span>
                   <span className="text-[10px] text-slate-400 block mt-0.5">Control de insumos y alertas</span>
                 </div>
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('material') ? 'bg-amber-600 text-white' : 'border border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('material') ? 'bg-amber-600 text-white' : 'border border-slate-300 dark:border-slate-600'}`}>
                   {userForm.roles.includes('material') && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
               </div>
 
-              <div onClick={() => toggleRole('admin')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('admin') ? 'bg-purple-50/70 border-purple-400 text-purple-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
+              <div onClick={() => toggleRole('admin')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('admin') ? 'bg-purple-50/70 border-purple-400 text-purple-900 shadow-sm dark:bg-purple-950/40 dark:border-purple-500/50 dark:text-purple-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/60'}`}>
                 <div>
                   <span className="font-semibold text-xs block">Usuarios, Sedes y Áreas</span>
                   <span className="text-[10px] text-slate-400 block mt-0.5">Gestión de cuentas y organización</span>
                 </div>
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('admin') ? 'bg-purple-600 text-white' : 'border border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('admin') ? 'bg-purple-600 text-white' : 'border border-slate-300 dark:border-slate-600'}`}>
                   {userForm.roles.includes('admin') && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
               </div>
 
-              <div onClick={() => toggleRole('catalogo')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('catalogo') ? 'bg-sky-50/70 border-sky-400 text-sky-900 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'} sm:col-span-2`}>
+              <div onClick={() => toggleRole('catalogo')} className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${userForm.roles.includes('catalogo') ? 'bg-sky-50/70 border-sky-400 text-sky-900 shadow-sm dark:bg-sky-950/40 dark:border-sky-500/50 dark:text-sky-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700/60'} sm:col-span-2`}>
                 <div>
                   <span className="font-semibold text-xs block">Sincronizar Catálogo Central</span>
                   <span className="text-[10px] text-slate-400 block mt-0.5">Sincronización y consulta del catálogo base de medicamentos</span>
                 </div>
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('catalogo') ? 'bg-sky-600 text-white' : 'border border-slate-300'}`}>
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ml-2 ${userForm.roles.includes('catalogo') ? 'bg-sky-600 text-white' : 'border border-slate-300 dark:border-slate-600'}`}>
                   {userForm.roles.includes('catalogo') && <Check className="w-3 h-3 stroke-[3]" />}
                 </div>
               </div>
@@ -1312,17 +1312,17 @@ function AdminUserModal({
 
           <div 
             onClick={() => setUserForm({ ...userForm, excluirDestinatario: !userForm.excluirDestinatario })}
-            className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
+            className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 dark:hover:bg-slate-700/50 transition-colors"
           >
             <input
               type="checkbox"
               checked={userForm.excluirDestinatario}
               onChange={(e) => setUserForm({ ...userForm, excluirDestinatario: e.target.checked })}
-              className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+              className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 cursor-pointer"
             />
             <div>
-              <span className="block text-xs font-bold text-slate-800">Excluir como destinatario</span>
-              <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
+              <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">Excluir como destinatario</span>
+              <span className="block text-[11px] text-slate-500 dark:text-slate-400 leading-tight mt-0.5">
                 No aparecerá en la lista de opciones para recibir solicitudes de transferencias.
               </span>
             </div>
@@ -1330,11 +1330,11 @@ function AdminUserModal({
 
           </div>
 
-          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
+          <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2.5 shrink-0">
             <button
               type="button"
               onClick={handleClose}
-              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold rounded-2xl cursor-pointer transition-colors"
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-2xl cursor-pointer transition-colors"
             >
               Cancelar
             </button>
@@ -1391,7 +1391,7 @@ function AdminSedeModal({
             </div>
             <h3 className="text-base font-bold text-slate-900">{editingSede ? 'Modificar Sede' : 'Agregar Sede'}</h3>
           </div>
-          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center justify-center cursor-pointer transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={handleSaveSede} className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
@@ -1404,7 +1404,7 @@ function AdminSedeModal({
           />
           <div>
             <label className="block text-slate-600 font-semibold mb-1 uppercase tracking-wider text-[11px]">Tipo *</label>
-            <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-slate-900 focus:outline-none focus:border-blue-500">
+            <select value={sedeForm.tipo} onChange={(e) => setSedeForm({ ...sedeForm, tipo: e.target.value })} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-3.5 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500">
               <option value="">-- Seleccionar Tipo --</option>
               <option value="Sucursal">Sucursal</option>
               <option value="Matriz">Matriz / Bodega Central</option>
@@ -1412,7 +1412,7 @@ function AdminSedeModal({
           </div>
 
           <div>
-            <label className="flex items-start gap-2.5 p-3 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-slate-100/70 cursor-pointer transition-colors select-none">
+            <label className="flex items-start gap-2.5 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-slate-100/70 dark:hover:bg-slate-700/50 cursor-pointer transition-colors select-none">
               <input
                 type="checkbox"
                 checked={sedeForm.esDestino !== false}
@@ -1420,8 +1420,8 @@ function AdminSedeModal({
                 className="w-4 h-4 mt-0.5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
               <div className="text-xs">
-                <span className="font-semibold text-slate-800 block">Sede destinataria de pedidos</span>
-                <span className="text-[11px] text-slate-500 block leading-tight mt-0.5">
+                <span className="font-semibold text-slate-800 dark:text-slate-200 block">Sede destinataria de pedidos</span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block leading-tight mt-0.5">
                   Permite que esta sede aparezca en el selector de destino al realizar pedidos o transferencias. Desmárcalo si la sucursal es muy pequeña o no tiene capacidad para recibir pedidos.
                 </span>
               </div>
@@ -1521,8 +1521,8 @@ function AdminSedeModal({
           </div>
           </div>
 
-          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
-            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
+          <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2.5 shrink-0">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
             <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
               {editingSede ? 'Actualizar Sede' : 'Guardar Sede'}
             </button>
@@ -1560,30 +1560,30 @@ function AdminAreaModal({
         style={cardStyle}
         className={`bg-white rounded-3xl w-full max-w-sm shadow-2xl border border-slate-100 max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh] flex flex-col overflow-hidden my-auto overscroll-contain ${cardClass}`}
       >
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0 bg-slate-50/70 dark:bg-slate-900/70">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 flex items-center justify-center shrink-0">
               <Layers className="w-4 h-4" />
             </div>
-            <h3 className="text-base font-bold text-slate-900">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">{editingArea ? 'Modificar Área' : 'Agregar Área'}</h3>
           </div>
-          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={handleClose} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center justify-center cursor-pointer transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={handleSaveArea} className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3.5 overscroll-contain text-xs">
             {editingArea?.id ? (
-              <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-2xl flex items-center justify-between">
                 <div>
                   <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">ID de Firebase</span>
-                  <span className="font-mono text-xs font-bold text-slate-800 select-all">{editingArea.id}</span>
+                  <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200 select-all">{editingArea.id}</span>
                 </div>
-                <span className="text-[10px] font-semibold text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded-full">
+                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-200/70 dark:bg-slate-700 px-2 py-0.5 rounded-full">
                   Autogenerado
                 </span>
               </div>
             ) : (
-              <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-2xl flex items-center gap-2 text-blue-700">
-                <Info className="w-4 h-4 shrink-0 text-blue-500" />
+              <div className="p-3 bg-blue-50/70 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/40 rounded-2xl flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                <Info className="w-4 h-4 shrink-0 text-blue-500 dark:text-blue-400" />
                 <span className="text-[11px] leading-tight">
                   Se generará un ID único de Firebase automáticamente para esta nueva área.
                 </span>
@@ -1600,27 +1600,27 @@ function AdminAreaModal({
 
             <div 
               onClick={() => setAreaForm({ ...areaForm, excluirTransferencias: !areaForm.excluirTransferencias })}
-              className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 transition-colors"
+              className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 rounded-2xl cursor-pointer select-none hover:bg-slate-100/80 dark:hover:bg-slate-700/50 transition-colors"
             >
               <input
                 type="checkbox"
                 checked={areaForm.excluirTransferencias}
                 onChange={(e) => setAreaForm({ ...areaForm, excluirTransferencias: e.target.checked })}
-                className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                className="w-4 h-4 mt-0.5 text-blue-600 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 cursor-pointer"
               />
               <div>
-                <span className="block text-xs font-bold text-slate-800">
+                <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">
                   Excluir de transferencias y pedidos
                 </span>
-                <span className="block text-[11px] text-slate-500 leading-tight mt-0.5">
+                <span className="block text-[11px] text-slate-500 dark:text-slate-400 leading-tight mt-0.5">
                   Esta área no participará para pedir ni despachar productos (ej. Administrativo, Contabilidad, Dirección). No aparecerá como destino de transferencias ni cajas.
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2.5 shrink-0">
-            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
+          <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex items-center justify-end gap-2.5 shrink-0">
+            <button type="button" onClick={handleClose} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold rounded-2xl cursor-pointer transition-colors">Cancelar</button>
             <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-2xl cursor-pointer shadow-sm">
               {editingArea ? 'Actualizar' : 'Guardar Área'}
             </button>

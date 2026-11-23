@@ -19,6 +19,7 @@ export { MarqueeText } from './MarqueeText';
 export { transitionView } from './viewTransition';
 export { QuantityStepper } from './QuantityStepper';
 export { DiscrepancySummaryModal } from './DiscrepancySummaryModal';
+export { ConversationBubbles } from './ConversationBubbles';
 export { FloatingInput } from './FloatingInput';
 export { MarqueeSearchInput } from './MarqueeSearchInput';
 export { AppSidebar } from './AppSidebar';

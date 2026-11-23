@@ -47,6 +47,40 @@ function generateId(prefix = 'mat') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 }
 
+export function canUserReceiveMaterialNotification(item, currentUser) {
+  if (!item || !currentUser) return false;
+
+  const currentUsername = (currentUser.username || '').trim().toLowerCase();
+  const currentNombre = (currentUser.nombre || '').trim().toLowerCase();
+
+  // 1. Solo al "Administrador" (Usuario) o rol 'admin'
+  const isRootAdmin = currentUsername === 'administrador';
+  const isAdminRole = Array.isArray(currentUser.roles) && currentUser.roles.includes('admin');
+  if (isRootAdmin || isAdminRole) {
+    return true;
+  }
+
+  // 2. Al usuario que haya brindado ese material (quien realizó ese registro)
+  const createdBy = (item.createdBy || '').trim().toLowerCase();
+  const createdByName = (item.createdByName || '').trim().toLowerCase();
+  const usuarioRegistro = (item.usuarioRegistro || item.usuario || '').trim().toLowerCase();
+  const createdById = item.createdById || item.usuarioRegistroId;
+
+  if (createdById && currentUser.id && String(createdById) === String(currentUser.id)) {
+    return true;
+  }
+
+  if (currentUsername && (createdBy === currentUsername || usuarioRegistro === currentUsername)) {
+    return true;
+  }
+
+  if (currentNombre && (createdByName === currentNombre || createdBy === currentNombre || usuarioRegistro === currentNombre)) {
+    return true;
+  }
+
+  return false;
+}
+
 export const materialService = {
   getLocalMateriales() {
     return getLocalData(LOCAL_MATERIAL_KEY, []);
@@ -108,6 +142,7 @@ export const materialService = {
       notas: payload.notas?.trim() || '',
       createdAt: new Date().toISOString(),
       createdBy: currentUser?.username || 'sistema',
+      createdById: currentUser?.id || null,
       createdByName: currentUser?.nombre || 'Personal',
       updatedAt: new Date().toISOString()
     };
@@ -412,7 +447,11 @@ export const materialService = {
     saveLocalData(LOCAL_PERSONAL_KEY, current.filter(p => p.id !== id), 'erp_material_personal_changed');
   },
 
-  calculateNotifications(materiales = null) {
+  canUserReceiveNotification(item, currentUser) {
+    return canUserReceiveMaterialNotification(item, currentUser);
+  },
+
+  calculateNotifications(materiales = null, currentUser = null) {
     const list = materiales || this.getLocalMateriales();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -421,6 +460,10 @@ export const materialService = {
 
     list.forEach((item) => {
       if (!item.requiereReemplazo || !item.fechaReemplazo || item.estado !== 'activo') {
+        return;
+      }
+
+      if (currentUser && !canUserReceiveMaterialNotification(item, currentUser)) {
         return;
       }
 

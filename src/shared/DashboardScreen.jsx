@@ -13,8 +13,9 @@ export const DashboardScreen = React.memo(function DashboardScreen({ currentUser
   const hasSolicitar = currentUser?.roles?.includes('solicitar');
   const hasDespachar = currentUser?.roles?.includes('despachar');
   const isRootAdmin = currentUser?.username?.toLowerCase() === 'administrador';
-  const hasMaterial = currentUser?.roles?.includes('material') || isRootAdmin;
-  const hasCatalog = currentUser?.roles?.includes('catalogo') || isRootAdmin;
+  const isAdminRole = isRootAdmin || currentUser?.roles?.includes('admin');
+  const hasMaterial = currentUser?.roles?.includes('material') || isAdminRole;
+  const hasCatalog = currentUser?.roles?.includes('catalogo') || isAdminRole;
 
   useEffect(() => {
     const unsub = transferService.subscribeSolicitudes((list) => {
@@ -36,7 +37,7 @@ export const DashboardScreen = React.memo(function DashboardScreen({ currentUser
     };
   }, []);
 
-  const pendingMaterialAlerts = materialService.calculateNotifications(materiales).length;
+  const pendingMaterialAlerts = materialService.calculateNotifications(materiales, currentUser).length;
   const entrantesCount = solicitudes.filter(s => canUserReceive(s, currentUser)).length;
   const pendientesDespachoCount = solicitudes.filter(
     s => (s.estado === 'enviada' || s.estado === 'en_despacho') && canUserDispatch(s, currentUser)

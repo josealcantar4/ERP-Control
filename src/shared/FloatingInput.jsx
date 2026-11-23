@@ -140,15 +140,15 @@ export const FloatingInput = forwardRef(function FloatingInput(
               setIsFocused(false);
               if (onBlur) onBlur(e);
             }}
-            className={`w-full bg-white rounded-2xl p-3.5 text-xs text-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all duration-200 outline-none resize-none ${
+            className={`w-full bg-white dark:bg-slate-900 rounded-2xl p-3.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all duration-200 outline-none resize-none ${
               Icon ? 'pl-10' : 'pl-3.5'
             } ${endAdornment ? 'pr-11' : 'pr-3.5'} ${
               isFocused
                 ? 'border-2 border-blue-500 shadow-sm'
                 : hasValue
                 ? 'border border-slate-300 dark:border-slate-600'
-                : 'border border-slate-200 hover:border-slate-300 dark:hover:border-slate-500'
-            } ${disabled ? 'bg-slate-100 opacity-60 cursor-not-allowed' : ''} ${
+                : 'border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+            } ${disabled ? 'bg-slate-100 dark:bg-slate-800 opacity-60 cursor-not-allowed' : ''} ${
               error ? 'border-red-500 focus:border-red-500' : ''
             } ${className}`}
             {...props}
@@ -172,15 +172,15 @@ export const FloatingInput = forwardRef(function FloatingInput(
               setIsFocused(false);
               if (onBlur) onBlur(e);
             }}
-            className={`w-full bg-white rounded-2xl px-3.5 py-3 text-xs text-slate-900 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all duration-200 outline-none ${
+            className={`w-full bg-white dark:bg-slate-900 rounded-2xl px-3.5 py-3 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all duration-200 outline-none ${
               Icon ? 'pl-10' : 'pl-3.5'
             } ${endAdornment ? 'pr-11' : 'pr-3.5'} ${
               isFocused
                 ? 'border-2 border-blue-500 shadow-sm'
                 : hasValue
                 ? 'border border-slate-300 dark:border-slate-600'
-                : 'border border-slate-200 hover:border-slate-300 dark:hover:border-slate-500'
-            } ${disabled ? 'bg-slate-100 opacity-60 cursor-not-allowed' : ''} ${
+                : 'border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+            } ${disabled ? 'bg-slate-100 dark:bg-slate-800 opacity-60 cursor-not-allowed' : ''} ${
               error ? 'border-red-500 focus:border-red-500' : ''
             } ${className}`}
             {...props}
@@ -232,11 +232,11 @@ export const FloatingInput = forwardRef(function FloatingInput(
               Icon && !isFloating ? 'left-10' : 'left-3.5'
             } ${
               isFloating
-                ? 'top-0 -translate-y-1/2 bg-white px-1.5 text-[10px] font-bold rounded-md z-10 max-w-[calc(100%-2rem)] truncate ' +
-                  (isFocused ? 'text-blue-600' : 'text-slate-600')
+                ? 'top-0 -translate-y-1/2 bg-white dark:bg-slate-900 px-1.5 text-[10px] font-bold rounded-md z-10 max-w-[calc(100%-2rem)] truncate ' +
+                  (isFocused ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400')
                 : multiline
-                ? 'top-3.5 text-xs text-slate-400 font-normal'
-                : 'top-1/2 -translate-y-1/2 text-xs text-slate-400 font-normal'
+                ? 'top-3.5 text-xs text-slate-400 dark:text-slate-500 font-normal'
+                : 'top-1/2 -translate-y-1/2 text-xs text-slate-400 dark:text-slate-500 font-normal'
             } ${showLabelMarquee ? `overflow-hidden ${endAdornment ? 'right-11' : 'right-3.5'}` : ''}`}
           >
             {showLabelMarquee ? (

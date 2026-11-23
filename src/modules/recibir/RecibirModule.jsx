@@ -37,7 +37,8 @@ import {
   DiscrepancySummaryModal,
   ModalDialog,
   MarqueeSearchInput,
-  FloatingInput
+  FloatingInput,
+  ConversationBubbles
 } from '../../shared';
 import { usePendingSync } from '../../hooks';
 
@@ -760,7 +761,9 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
           diferencia: diff,
           tipo: received === 0 ? 'ausencia_total' : (diff < 0 ? 'faltante' : 'extra'),
           observacion: obs,
-          motivoRecepcion: obs
+          motivoRecepcion: obs,
+          esRelacionado: Boolean(item.esRelacionado),
+          codigoRelacionado: item.codigoRelacionado || ''
         });
       }
     });
@@ -1253,6 +1256,11 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                                 Despacho Directo
                               </span>
                             )}
+                            {sol.items?.some(it => it.esRelacionado || it.codigoRelacionado) && (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-transparent text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 uppercase tracking-wider">
+                                Relacionados
+                              </span>
+                            )}
                             {pendingSyncIds.has(sol.id) && (
                               <span
                                 title="En cola para sincronizar al recuperar conexión"
@@ -1373,61 +1381,14 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
               </p>
             </div>
 
-            {(() => {
-              const motivoSucursal =
-                selectedOrder.reporteDiscrepancias?.observaciones ||
-                selectedOrder.observacionesRecepcion ||
-                selectedOrder.reporteFaltantes?.map(rf => rf.observacion || rf.motivo).filter(Boolean).join('; ');
-              const respuestaBodega =
-                selectedOrder.resolucionFaltantes?.notas ||
-                selectedOrder.observaciones;
-              const usuarioSucursal = selectedOrder.reporteDiscrepancias?.usuarioReceptor;
-              const usuarioBodega = selectedOrder.resolucionFaltantes?.usuarioResolucion;
-
-              if (!motivoSucursal && !respuestaBodega) return null;
-
-              return (
-                <div className="pt-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {motivoSucursal && (
-                    <div className="p-3 bg-red-50/70 rounded-2xl border border-red-200/80 text-xs flex flex-col justify-between gap-1.5 shadow-2xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-red-900 text-[11px] flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-red-600 shrink-0" />
-                          <span>Reporte Sucursal</span>
-                        </span>
-                        {usuarioSucursal && (
-                          <span className="text-[10px] font-semibold text-red-700 bg-white/90 px-2 py-0.5 rounded-full border border-red-200/80 shrink-0">
-                            {usuarioSucursal}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-red-950 font-medium italic text-xs leading-snug pl-5 break-words">
-                        &ldquo;{motivoSucursal}&rdquo;
-                      </p>
-                    </div>
-                  )}
-
-                  {respuestaBodega && (
-                    <div className="p-3 bg-purple-50/70 rounded-2xl border border-purple-200/80 text-xs flex flex-col justify-between gap-1.5 shadow-2xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-purple-900 text-[11px] flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                          <span>Respuesta Bodega</span>
-                        </span>
-                        {usuarioBodega && (
-                          <span className="text-[10px] font-semibold text-purple-700 bg-white/90 px-2 py-0.5 rounded-full border border-purple-200/80 shrink-0">
-                            {usuarioBodega}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-purple-950 font-medium italic text-xs leading-snug pl-5 break-words">
-                        &ldquo;{respuestaBodega}&rdquo;
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            <ConversationBubbles
+              solicitud={selectedOrder}
+              currentUser={currentUser}
+              viewerSide="receptor"
+              includeItemReportFallback
+              includeDirectDispatchFallback
+              className="pt-1"
+            />
           </div>
 
           <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden divide-y divide-slate-100">
@@ -1532,6 +1493,11 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                           </div>
                           <div className="flex items-center gap-x-2 gap-y-1 text-[11px] font-mono text-slate-600 mt-1 flex-wrap">
                             <span className="whitespace-nowrap">Código: <strong>{item.codigo}</strong></span>
+                            {(item.esRelacionado || item.codigoRelacionado) && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                                Relacionado
+                              </span>
+                            )}
                             <span className="whitespace-nowrap before:content-['•'] before:mr-2 before:text-slate-300">
                               Despachadas en esta caja: <strong className="text-purple-700 font-bold">{expected} pz</strong>
                             </span>
@@ -1548,18 +1514,18 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                           </div>
 
                           {Boolean(motivoSucursalItem) && (
-                            <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-rose-950 bg-rose-50/90 px-2.5 py-1 rounded-xl border border-rose-200/80">
-                              <FileText className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                              <span className="font-bold text-rose-900 text-[11px]">Motivo reporte:</span>
-                              <span className="italic font-medium text-rose-900 break-words">&ldquo;{motivoSucursalItem}&rdquo;</span>
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-rose-950 dark:text-rose-300 bg-rose-50/90 px-2.5 py-1 rounded-xl border border-rose-200/80 dark:border-rose-500/30">
+                              <FileText className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                              <span className="font-bold text-rose-900 dark:text-rose-300 text-[11px]">Motivo reporte:</span>
+                              <span className="italic font-medium text-rose-900 dark:text-rose-200 break-words">&ldquo;{motivoSucursalItem}&rdquo;</span>
                             </div>
                           )}
 
                           {Boolean(itemMotivo && itemMotivo !== motivoSucursalItem) && (
-                            <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-purple-950 bg-purple-50/90 px-2.5 py-1 rounded-xl border border-purple-200/80">
-                              <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                              <span className="font-bold text-purple-900 text-[11px]">Nota despacho:</span>
-                              <span className="italic font-medium text-purple-900 break-words">&ldquo;{itemMotivo}&rdquo;</span>
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-purple-950 dark:text-purple-300 bg-purple-50/90 px-2.5 py-1 rounded-xl border border-purple-200/80 dark:border-purple-500/30">
+                              <FileText className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                              <span className="font-bold text-purple-900 dark:text-purple-300 text-[11px]">Nota despacho:</span>
+                              <span className="italic font-medium text-purple-900 dark:text-purple-200 break-words">&ldquo;{itemMotivo}&rdquo;</span>
                             </div>
                           )}
                         </div>
@@ -1639,7 +1605,14 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                           No enviado por Bodega ({item.motivoNoDespacho || 'Sin existencia'})
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono text-slate-400 block">Código: {item.codigo}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-slate-400 block">Código: {item.codigo}</span>
+                        {(item.esRelacionado || item.codigoRelacionado) && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                            Relacionado
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="shrink-0 flex items-center self-start sm:self-center">
@@ -1670,7 +1643,14 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                           Recibido anteriormente
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono text-slate-400 block">Código: {item.codigo}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-slate-400 block">Código: {item.codigo}</span>
+                        {(item.esRelacionado || item.codigoRelacionado) && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                            Relacionado
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="shrink-0 flex items-center self-start sm:self-center">
@@ -1695,12 +1675,12 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
             if (hasAunFaltantes) {
               return (
                 <div className="pt-2 space-y-3">
-                  <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-2xl text-xs space-y-1 text-amber-900">
-                    <div className="flex items-center gap-2 font-bold text-amber-950">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 dark:border-amber-500/30 rounded-2xl text-xs space-y-1 text-amber-900 dark:text-amber-300">
+                    <div className="flex items-center gap-2 font-bold text-amber-950 dark:text-amber-300">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                       <span>Falta{totalFaltantesAun === 1 ? ' 1 pieza' : `n ${totalFaltantesAun} piezas`} en este reenvío</span>
                     </div>
-                    <p className="text-[11px] leading-relaxed text-amber-800">
+                    <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
                       Elige si deseas volver a reportar los faltantes a Bodega para solicitar un nuevo surtido, o si prefieres concluir y cerrar el pedido definitivamente con las observaciones.
                     </p>
                   </div>
@@ -1916,6 +1896,11 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
 
                         <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 mt-0.5 flex-wrap">
                           <span>Código: {item.codigo}</span>
+                          {(item.esRelacionado || item.codigoRelacionado) && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                              Relacionado
+                            </span>
+                          )}
                           <span>•</span>
                           <span>
                             Despachadas: <strong className="text-slate-700">{cantDespachada} pzas</strong>{' '}
@@ -1928,9 +1913,9 @@ export const RecibirModule = React.memo(function RecibirModule({ currentUser, on
                         </div>
 
                         {itemMotivo && (
-                          <div className="mt-1.5 w-fit max-w-full flex items-start gap-1.5 text-xs text-amber-950 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80">
-                            <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-[2px]" />
-                            <span className="italic font-medium text-amber-900 break-words min-w-0 max-w-full whitespace-pre-line">
+                          <div className="mt-1.5 w-fit max-w-full flex items-start gap-1.5 text-xs text-amber-950 dark:text-amber-300 bg-amber-50/90 px-2.5 py-1 rounded-xl border border-amber-200/80 dark:border-amber-500/30">
+                            <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-[2px]" />
+                            <span className="italic font-medium text-amber-900 dark:text-amber-200 break-words min-w-0 max-w-full whitespace-pre-line">
                               &ldquo;{itemMotivo}&rdquo;
                             </span>
                           </div>

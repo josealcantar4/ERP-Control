@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { formatTransferFolio, playCheckSound } from '../transferencias';
 import { MarqueeText } from '../../shared/MarqueeText';
-import { FloatingInput } from '../../shared';
+import { FloatingInput, ConversationBubbles } from '../../shared';
 import { useModalAnimation } from '../../hooks';
 
 export function DespacharFaltantesModal({
@@ -190,7 +190,9 @@ export function DespacharFaltantesModal({
           motivoParcial: i.despachado && validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : '',
           motivo: !i.despachado ? i.motivoNoDespacho : (validQty < i.cantidadFaltanteReportada ? (i.motivoParcial || '') : ''),
           observacionRecepcion: i.observacionRecepcion || '',
-          motivoSucursal: i.observacionRecepcion || ''
+          motivoSucursal: i.observacionRecepcion || '',
+          esRelacionado: Boolean(i.esRelacionado),
+          codigoRelacionado: i.codigoRelacionado || ''
         };
       })
     };
@@ -238,27 +240,13 @@ export function DespacharFaltantesModal({
         </div>
 
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
-          {(currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion) && (
-            <div className="p-3.5 bg-red-50/90 dark:bg-transparent border border-red-200/90 dark:border-slate-800 rounded-2xl text-xs space-y-1">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="font-bold text-red-950 dark:text-red-400 flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-red-600 shrink-0" />
-                  <span>Motivo reportado por la sucursal:</span>
-                </span>
-                {currentSolicitud.reporteDiscrepancias?.usuarioReceptor && (
-                  <span className="text-[10px] font-semibold text-red-700 bg-white/80 px-2 py-0.5 rounded-full border border-red-200">
-                    Receptor: {currentSolicitud.reporteDiscrepancias.usuarioReceptor}
-                  </span>
-                )}
-              </div>
-              <p className="italic font-medium text-red-900 dark:text-red-300 text-xs pl-5 leading-snug">
-                &ldquo;{currentSolicitud.reporteDiscrepancias?.observaciones || currentSolicitud.observacionesRecepcion}&rdquo;
-              </p>
-            </div>
-          )}
+          <ConversationBubbles
+            solicitud={currentSolicitud}
+            viewerSide="bodega"
+          />
 
-          <div className="p-3.5 bg-amber-50/80 dark:bg-transparent border border-amber-200/80 dark:border-slate-800 rounded-2xl text-xs text-amber-900 dark:text-amber-400 flex items-start gap-2.5">
-            <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="p-3.5 bg-amber-50/80 dark:bg-transparent border border-amber-200/80 dark:border-amber-500/30 rounded-2xl text-xs text-amber-900 dark:text-amber-300 flex items-start gap-2.5">
+            <Package className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <div className="leading-relaxed">
               <strong>Gestión de faltantes:</strong> Indica qué productos se enviarán a la sucursal para cubrir el reporte y cuáles no se pudieron surtir. El historial conservará el registro del faltante original y su resolución.
             </div>
@@ -316,8 +304,13 @@ export function DespacharFaltantesModal({
                   </div>
 
                   <div className="space-y-1 text-[11px] font-mono text-slate-600">
-                    <div>
-                      Código: <strong className="text-slate-800">{it.codigo}</strong>
+                    <div className="flex items-center gap-2">
+                      <span>Código: <strong className="text-slate-800">{it.codigo}</strong></span>
+                      {(it.esRelacionado || it.codigoRelacionado) && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                          Relacionado
+                        </span>
+                      )}
                     </div>
                     <div>
                       Recibidas: <strong className="text-slate-800">{it.cantidadRecibida} de {it.cantidadEsperada} pz</strong>
@@ -328,21 +321,21 @@ export function DespacharFaltantesModal({
                   </div>
 
                   {it.observacionRecepcion && (
-                    <div className="p-2.5 bg-rose-50/90 dark:bg-transparent border border-rose-200/80 dark:border-slate-800 rounded-xl text-xs flex items-start gap-2 text-rose-950 dark:text-rose-400">
-                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="p-2.5 bg-rose-50/90 dark:bg-transparent border border-rose-200/80 dark:border-rose-500/30 rounded-xl text-xs flex items-start gap-2 text-rose-950 dark:text-rose-300">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1 leading-snug">
-                        <span className="font-bold text-rose-900 mr-1.5">Motivo reporte sucursal:</span>
-                        <span className="italic font-medium text-rose-900 break-words">&ldquo;{it.observacionRecepcion}&rdquo;</span>
+                        <span className="font-bold text-rose-900 dark:text-rose-300 mr-1.5">Motivo reporte sucursal:</span>
+                        <span className="italic font-medium text-rose-900 dark:text-rose-200 break-words">&ldquo;{it.observacionRecepcion}&rdquo;</span>
                       </div>
                     </div>
                   )}
 
                   {it.motivoOriginal && (
-                    <div className="p-2.5 bg-amber-50/90 dark:bg-transparent border border-amber-200/80 dark:border-slate-800 rounded-xl text-xs flex items-start gap-2 text-amber-950 dark:text-amber-400">
-                      <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="p-2.5 bg-amber-50/90 dark:bg-transparent border border-amber-200/80 dark:border-amber-500/30 rounded-xl text-xs flex items-start gap-2 text-amber-950 dark:text-amber-300">
+                      <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                       <div className="min-w-0 flex-1 leading-snug">
-                        <span className="font-bold text-amber-900 mr-1.5">Ajuste previo despacho:</span>
-                        <span className="italic font-medium text-amber-900 break-words">&ldquo;{it.motivoOriginal}&rdquo;</span>
+                        <span className="font-bold text-amber-900 dark:text-amber-300 mr-1.5">Ajuste previo despacho:</span>
+                        <span className="italic font-medium text-amber-900 dark:text-amber-200 break-words">&ldquo;{it.motivoOriginal}&rdquo;</span>
                       </div>
                     </div>
                   )}

@@ -186,7 +186,13 @@ function prepareCameraList(devices = []) {
   return classified;
 }
 
-export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = false }) {
+export function BarcodeScannerModal({
+  isOpen,
+  onClose,
+  onDetected,
+  isPaused = false,
+  zIndexClass = 'z-[150]'
+}) {
   const {
     shouldRender,
     isClosing,
@@ -198,7 +204,8 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
     cardStyle
   } = useModalAnimation({
     isOpen,
-    onClose
+    onClose,
+    preventClose: isPaused
   });
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -1534,7 +1541,7 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
   const modalContent = (
     <div
       onClick={(e) => handleBackdropClick(e, handleClose)}
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
+      className={`fixed inset-0 ${zIndexClass} flex items-center justify-center p-3 sm:p-4 bg-slate-900/70 select-none overflow-y-auto overscroll-contain ${backdropClass}`}
     >
       <div
         ref={cardRef}
@@ -1847,9 +1854,16 @@ export function BarcodeScannerModal({ isOpen, onClose, onDetected, isPaused = fa
                           className="font-semibold text-slate-900 text-xs"
                         />
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500 shrink-0 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
-                        {med.codigo}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {med.esRelacionado && (
+                          <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full">
+                            Relacionado
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
+                          {med.codigo}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>

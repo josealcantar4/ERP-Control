@@ -35,6 +35,10 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    match /codigos_relacionados/{document} {
+      allow read, write: if isAuthenticated();
+    }
+
     match /material_brindado/{document} {
       allow read, write: if isAuthenticated();
     }

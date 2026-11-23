@@ -139,9 +139,16 @@ export function DiscrepancySummaryModal({
                     <h4 className="text-xs sm:text-sm font-bold text-slate-900 leading-tight">
                       {disc.descripcion}
                     </h4>
-                    <span className="text-[10px] sm:text-[11px] font-mono text-slate-400">
-                      Código: {disc.codigo}
-                    </span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] sm:text-[11px] font-mono text-slate-400">
+                        Código: {disc.codigo}
+                      </span>
+                      {(disc.esRelacionado || disc.codigoRelacionado) && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700">
+                          Relacionado
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider shrink-0 ${
